@@ -883,6 +883,37 @@ public class MainController {
         return new SourceRange(selection.getStart(), selection.getEnd());
     }
 
+    /**
+     * The line range a block operation should cover.
+     *
+     * <p>Deliberately not text matching: headings, lists and quotes rewrite whole lines,
+     * and the enclosing block already knows which lines those are. Falls back to the
+     * editor's selection when the preview has none.
+     */
+    private SourceRange resolveBlockRange() {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            return null;
+        }
+        String source = document.getEditor().getText();
+
+        String meta = previewString("window.__mdBlockInfo()");
+        if (!meta.isEmpty()) {
+            String[] parts = meta.split(",");
+            try {
+                int start = Math.max(0, Integer.parseInt(parts[0].trim()));
+                int end = Math.min(source.length(), Integer.parseInt(parts[1].trim()));
+                if (start <= end) {
+                    return new SourceRange(start, end);
+                }
+            } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+                // Fall through to the editor selection.
+            }
+        }
+        var selection = document.getEditor().getSelection();
+        return new SourceRange(selection.getStart(), selection.getEnd());
+    }
+
     private String previewString(String js) {
         if (!previewReady) {
             return "";
@@ -911,7 +942,12 @@ public class MainController {
             return;
         }
 
-        SourceRange range = resolveTargetRange();
+        // Whole-line operations resolve differently from inline ones; see resolveBlockRange.
+        boolean lineOperation = switch (action) {
+            case HEADING_1, HEADING_2, HEADING_3, BULLET_LIST, ORDERED_LIST, QUOTE -> true;
+            default -> false;
+        };
+        SourceRange range = lineOperation ? resolveBlockRange() : resolveTargetRange();
         if (range == null) {
             return;
         }
@@ -987,7 +1023,9 @@ public class MainController {
 
             String relative = baseDir.relativize(target).toString().replace('\\', '/');
             String alt = stripExtension(target.getFileName().toString());
-            String snippet = "![" + alt + "](" + relative + ")";
+            // Built through ImageRef so the destination is escaped in one place: a
+            // screenshot filename with spaces is not a valid bare Markdown destination.
+            String snippet = new ImageRef(alt, relative, null, null).toMarkup();
 
             TextArea editor = document.getEditor();
             int caret = editor.getCaretPosition();
@@ -1562,6 +1600,34 @@ public class MainController {
             window.__mdSelectionText = function () {
               var sel = window.getSelection();
               return sel ? sel.toString() : '';
+            };
+
+            /* Block operations - headings, lists, quotes - work on whole lines, so they
+               anchor to the enclosing block rather than the innermost inline. Anchoring
+               them to an inline would scope a multi-line selection to, say, the <strong>
+               it happens to start in, and the selected text would not be found there. */
+            var MD_BLOCK_TAGS = {P:1,H1:1,H2:1,H3:1,H4:1,H5:1,H6:1,
+                                 LI:1,BLOCKQUOTE:1,TD:1,TH:1,PRE:1};
+            function mdBlockAnchor(node) {
+              var el = node && node.nodeType === 1 ? node : (node ? node.parentNode : null);
+              while (el && !(MD_BLOCK_TAGS[el.tagName] && el.getAttribute
+                             && el.getAttribute('data-md-start'))) {
+                el = el.parentElement;
+              }
+              return el;
+            }
+            window.__mdBlockInfo = function () {
+              var sel = window.getSelection();
+              if (!sel || sel.rangeCount === 0) { return ''; }
+              var range = sel.getRangeAt(0);
+              var first = mdBlockAnchor(range.startContainer);
+              var last = mdBlockAnchor(range.endContainer) || first;
+              if (!first) { first = last; }
+              if (!first || !last) { return ''; }
+              var s = parseInt(first.getAttribute('data-md-start'), 10);
+              var e = parseInt(last.getAttribute('data-md-end'), 10);
+              if (isNaN(s) || isNaN(e)) { return ''; }
+              return Math.min(s, e) + ',' + Math.max(s, e);
             };
 
             /* Clicking an image selects it for the positioning controls. */

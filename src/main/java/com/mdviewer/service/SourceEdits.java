@@ -137,10 +137,15 @@ public final class SourceEdits {
                 out.append(line);
                 continue;
             }
-            String bare = stripMarker(line, kind);
             if (allMarked) {
-                out.append(bare);
+                // Removing: take off one level of this marker only, so un-quoting a
+                // nested quote steps out one level rather than flattening it.
+                out.append(stripMarker(line, kind));
             } else {
+                // Applying: bullet, number and quote are mutually exclusive line styles,
+                // so switching between them converts rather than nests. Same rule as
+                // setHeading, which also clears an existing marker first.
+                String bare = stripAllMarkers(line);
                 out.append(switch (kind) {
                     case BULLET -> "- " + bare;
                     case ORDERED -> (number++) + ". " + bare;
@@ -167,6 +172,19 @@ public final class SourceEdits {
             case QUOTE -> QUOTE_LINE.matcher(line);
         };
         return m.find() ? line.substring(m.end()) : line;
+    }
+
+    /** Removes every stacked list/quote marker, so "- &gt; text" becomes "text". */
+    private static String stripAllMarkers(String line) {
+        String result = line;
+        for (int i = 0; i < 4; i++) { // Bounded: markers cannot stack meaningfully deeper.
+            int length = markerLength(result);
+            if (length == 0) {
+                return result;
+            }
+            result = result.substring(length);
+        }
+        return result;
     }
 
     /** Length of any list or quote marker at the start of the line. */

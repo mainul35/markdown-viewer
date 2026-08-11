@@ -162,8 +162,10 @@ public final class MarkdownService {
             return dest;
         }
         try {
-            // Strip any fragment/query a local path would not have, then decode %20 etc.
-            String decoded = java.net.URLDecoder.decode(dest, java.nio.charset.StandardCharsets.UTF_8);
+            // Decode %20 and friends. "+" is protected first because URLDecoder treats it
+            // as a space, which would corrupt any filename that legitimately contains one.
+            String decoded = java.net.URLDecoder.decode(
+                    dest.replace("+", "%2B"), java.nio.charset.StandardCharsets.UTF_8);
             Path resolved = baseDir.resolve(decoded).normalize();
             return resolved.toUri().toString();
         } catch (IllegalArgumentException e) {
