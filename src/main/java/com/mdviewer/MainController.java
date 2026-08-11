@@ -41,6 +41,12 @@ public class MainController {
     @FXML
     private Label modeLabel;
 
+    @FXML
+    private Button themeButton;
+
+    @FXML
+    private MenuItem themeMenuItem;
+
     private Stage primaryStage;
     private HostServices hostServices;
     private File currentFile;
@@ -73,6 +79,11 @@ public class MainController {
     private final MarkdownService markdownService = new MarkdownService();
     private final DiagramService diagramService = new DiagramService();
 
+    /** Style class toggled on the scene root; see styles.css. */
+    private static final String DARK_STYLE_CLASS = "dark-theme";
+
+    private boolean darkMode = false;
+
     public enum EditorMode {
         RAW, SPLIT, FULL_PREVIEW
     }
@@ -81,7 +92,8 @@ public class MainController {
     public void initialize() {
         textEditor = new TextArea();
         textEditor.setPromptText("Write your Markdown here...");
-        textEditor.setStyle("-fx-font-family: 'Consolas', monospace; -fx-font-size: 14px; -fx-padding: 10px;");
+        // Font and padding come from styles.css - an inline style would override the
+        // theme's colours, since inline styles beat stylesheet rules.
         textEditor.setWrapText(false);
 
         webView = new WebView();
@@ -107,6 +119,44 @@ public class MainController {
         updateWordCount();
         updateStatus();
         updateLayout();
+        applyTheme();
+    }
+
+    // ------------------------------------------------------------------ theme
+
+    @FXML
+    private void handleToggleTheme() {
+        darkMode = !darkMode;
+        applyTheme();
+    }
+
+    /** Applies the current theme to the JavaFX chrome and to the preview document. */
+    private void applyTheme() {
+        if (darkMode) {
+            if (!rootPane.getStyleClass().contains(DARK_STYLE_CLASS)) {
+                rootPane.getStyleClass().add(DARK_STYLE_CLASS);
+            }
+        } else {
+            rootPane.getStyleClass().remove(DARK_STYLE_CLASS);
+        }
+
+        String next = darkMode ? "Light Mode" : "Dark Mode";
+        themeButton.setText(next);
+        themeMenuItem.setText(next);
+
+        applyPreviewTheme();
+    }
+
+    private void applyPreviewTheme() {
+        if (!previewReady) {
+            return; // Re-applied by the load-worker listener once the shell is up.
+        }
+        try {
+            webView.getEngine().executeScript(
+                    "window.__mdSetTheme(" + toJsStringLiteral(darkMode ? "dark" : "light") + ");");
+        } catch (RuntimeException e) {
+            // Preview page not in a usable state; the shell reload path re-applies it.
+        }
     }
 
     public void setPrimaryStage(Stage stage) {
@@ -131,6 +181,7 @@ public class MainController {
             if (newState == Worker.State.SUCCEEDED) {
                 injectMermaid();
                 previewReady = true;
+                applyPreviewTheme();
                 applyPreviewHtml(currentPreviewHtml);
                 pushDiagrams(currentDiagrams, previewGeneration);
             } else if (newState == Worker.State.FAILED || newState == Worker.State.CANCELLED) {
@@ -280,12 +331,40 @@ public class MainController {
             "<head>" +
                 "<meta charset=\"UTF-8\">" +
                 "<style>" +
+                    // Both palettes ship in the page; __mdSetTheme flips the data-theme
+                    // attribute, so switching costs no reload and keeps scroll position.
+                    ":root {" +
+                        "--bg: #ffffff;" +
+                        "--fg: #24292e;" +
+                        "--muted: #6a737d;" +
+                        "--rule: #eaecef;" +
+                        "--line: #dfe2e5;" +
+                        "--code-bg: #f6f8fa;" +
+                        "--stripe: #f6f8fa;" +
+                        "--link: #0366d6;" +
+                        "--err-fg: #b31d28;" +
+                        "--err-bg: #ffeef0;" +
+                        "--err-line: #fdaeb7;" +
+                    "}" +
+                    "html[data-theme=\"dark\"] {" +
+                        "--bg: #0d1117;" +
+                        "--fg: #c9d1d9;" +
+                        "--muted: #8b949e;" +
+                        "--rule: #21262d;" +
+                        "--line: #30363d;" +
+                        "--code-bg: #161b22;" +
+                        "--stripe: #161b22;" +
+                        "--link: #58a6ff;" +
+                        "--err-fg: #ff7b72;" +
+                        "--err-bg: #2d1214;" +
+                        "--err-line: #6e2b30;" +
+                    "}" +
                     "body {" +
                         "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;" +
                         "padding: 20px;" +
                         "line-height: 1.6;" +
-                        "color: #24292e;" +
-                        "background: #ffffff;" +
+                        "color: var(--fg);" +
+                        "background: var(--bg);" +
                         "word-wrap: break-word;" +
                     "}" +
                     "h1, h2, h3, h4, h5, h6 {" +
@@ -294,18 +373,18 @@ public class MainController {
                         "font-weight: 600;" +
                         "line-height: 1.25;" +
                     "}" +
-                    "h1 { font-size: 2em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }" +
-                    "h2 { font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }" +
+                    "h1 { font-size: 2em; border-bottom: 1px solid var(--rule); padding-bottom: 0.3em; }" +
+                    "h2 { font-size: 1.5em; border-bottom: 1px solid var(--rule); padding-bottom: 0.3em; }" +
                     "h3 { font-size: 1.25em; }" +
                     "code {" +
-                        "background-color: #f6f8fa;" +
+                        "background-color: var(--code-bg);" +
                         "padding: 0.2em 0.4em;" +
                         "border-radius: 3px;" +
                         "font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;" +
                         "font-size: 85%;" +
                     "}" +
                     "pre {" +
-                        "background-color: #f6f8fa;" +
+                        "background-color: var(--code-bg);" +
                         "padding: 16px;" +
                         "border-radius: 3px;" +
                         "overflow: auto;" +
@@ -316,9 +395,9 @@ public class MainController {
                         "font-size: 100%;" +
                     "}" +
                     "blockquote {" +
-                        "border-left: 4px solid #dfe2e5;" +
+                        "border-left: 4px solid var(--line);" +
                         "padding: 0 1em;" +
-                        "color: #6a737d;" +
+                        "color: var(--muted);" +
                         "margin-left: 0;" +
                     "}" +
                     "table {" +
@@ -328,38 +407,40 @@ public class MainController {
                         "overflow: auto;" +
                     "}" +
                     "th, td {" +
-                        "border: 1px solid #dfe2e5;" +
+                        "border: 1px solid var(--line);" +
                         "padding: 6px 13px;" +
                     "}" +
                     "tr:nth-child(2n) {" +
-                        "background-color: #f6f8fa;" +
+                        "background-color: var(--stripe);" +
                     "}" +
-                    "hr { height: 1px; border: 0; background-color: #e1e4e8; margin: 24px 0; }" +
+                    "hr { height: 1px; border: 0; background-color: var(--line); margin: 24px 0; }" +
                     "img { max-width: 100%; }" +
-                    "a { color: #0366d6; text-decoration: none; }" +
+                    "a { color: var(--link); text-decoration: none; }" +
                     "a:hover { text-decoration: underline; }" +
                     "ul, ol { padding-left: 2em; }" +
                     // Diagrams: SVG scales down to the pane, never forces horizontal scroll.
+                    // The card stays light in both themes because PlantUML and mermaid bake
+                    // dark strokes and text into the SVG - on a dark card they vanish.
                     ".mdv-diagram, pre.mermaid {" +
                         "margin: 16px 0;" +
                         "padding: 8px;" +
                         "background: #ffffff;" +
-                        "border: 1px solid #eaecef;" +
+                        "border: 1px solid var(--line);" +
                         "border-radius: 3px;" +
                         "overflow-x: auto;" +
                         "text-align: center;" +
                     "}" +
                     ".mdv-diagram svg, pre.mermaid svg { max-width: 100%; height: auto; }" +
                     ".mdv-diagram-pending {" +
-                        "color: #6a737d;" +
+                        "color: var(--muted);" +
                         "font-style: italic;" +
                         "text-align: left;" +
-                        "background: #f6f8fa;" +
+                        "background: var(--code-bg);" +
                     "}" +
                     ".mdv-diagram-error {" +
-                        "color: #b31d28;" +
-                        "background: #ffeef0;" +
-                        "border: 1px solid #fdaeb7;" +
+                        "color: var(--err-fg);" +
+                        "background: var(--err-bg);" +
+                        "border: 1px solid var(--err-line);" +
                         "border-radius: 3px;" +
                         "padding: 12px;" +
                         "text-align: left;" +
@@ -368,6 +449,9 @@ public class MainController {
                     "}" +
                 "</style>" +
                 "<script>" +
+                    "window.__mdSetTheme = function (theme) {" +
+                        "document.documentElement.setAttribute('data-theme', theme);" +
+                    "};" +
                     "window.__mdRunMermaid = function () {" +
                         "if (!window.mermaid) { return; }" +
                         "try {" +

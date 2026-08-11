@@ -1,26 +1,60 @@
+/*
+ * Theme colours are declared once as looked-up colours and overridden wholesale by the
+ * .dark-theme class that MainController toggles on the scene root. Rules below reference
+ * only those names, so a new theme means editing one block rather than every selector.
+ */
 .root {
     -fx-font-family: "Segoe UI", Arial, sans-serif;
+
+    -mdv-surface: #ffffff;
+    -mdv-surface-alt: #f6f8fa;
+    -mdv-border: #eaecef;
+    -mdv-text: #24292e;
+    -mdv-text-muted: #57606a;
+    -mdv-accent: #0366d6;
+}
+
+.root.dark-theme {
+    -mdv-surface: #1e1e1e;
+    -mdv-surface-alt: #252526;
+    -mdv-border: #3c3c3c;
+    -mdv-text: #e6e6e6;
+    -mdv-text-muted: #9d9d9d;
+    -mdv-accent: #4da3ff;
+
+    /* Re-tint JavaFX's built-in control palette so menus, dialogs, scrollbars and the
+       text editor follow the theme without needing a rule for each control. */
+    -fx-base: #2b2b2b;
+    -fx-background: #1e1e1e;
+    -fx-control-inner-background: #1e1e1e;
+    -fx-control-inner-background-alt: #252526;
+    -fx-text-background-color: #e6e6e6;
+    -fx-accent: #094771;
+    -fx-focus-color: #4da3ff;
+    -fx-faint-focus-color: #4da3ff22;
 }
 
 .status-bar {
-    -fx-background-color: #f6f8fa;
-    -fx-border-color: #eaecef;
+    -fx-background-color: -mdv-surface-alt;
+    -fx-border-color: -mdv-border;
     -fx-border-width: 1 0 0 0;
     -fx-padding: 5 15 5 15;
     -fx-font-size: 12px;
 }
 
 .status-bar .label {
-    -fx-text-fill: #24292e;
+    -fx-text-fill: -mdv-text;
 }
 
 .menu-bar {
-    -fx-background-color: #ffffff;
+    -fx-background-color: -mdv-surface;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 0 1 0;
 }
 
 .tool-bar {
-    -fx-background-color: #f6f8fa;
-    -fx-border-color: #eaecef;
+    -fx-background-color: -mdv-surface-alt;
+    -fx-border-color: -mdv-border;
     -fx-border-width: 0 0 1 0;
 }
 
@@ -28,8 +62,17 @@
     -fx-font-family: "Consolas", "Courier New", monospace;
     -fx-font-size: 14px;
     -fx-padding: 10;
+    -fx-text-fill: -mdv-text;
+}
+
+.text-area .content {
+    -fx-background-color: -mdv-surface;
+}
+
+.split-pane {
+    -fx-background-color: -mdv-surface;
 }
 
 .split-pane > .split-pane-divider {
-    -fx-background-color: #eaecef;
+    -fx-background-color: -mdv-border;
 }
