@@ -63,6 +63,33 @@ public final class MarkdownService {
     private static final Pattern BARE_DIAGRAM =
             Pattern.compile("(?s)^@start(\\w+)\\b.*@end\\1\\s*$");
 
+    /**
+     * An unfenced Mermaid diagram, recognised from its opening keyword.
+     *
+     * <p>Mermaid has no closing delimiter, so unlike PlantUML there is nothing to confirm
+     * the guess with — the opener is the whole of the evidence. The list is therefore
+     * deliberately conservative:
+     *
+     * <ul>
+     *   <li>{@code graph} and {@code flowchart} must carry a direction, so a sentence
+     *       beginning "graph" cannot match.</li>
+     *   <li>Only keywords that are not ordinary English words are included.
+     *       {@code pie}, {@code journey} and {@code timeline} are left out precisely
+     *       because a paragraph could genuinely start with them; those still need a fence.</li>
+     *   <li>A second line is required, since a one-line paragraph is prose.</li>
+     * </ul>
+     *
+     * Turning a paragraph of prose into a diagram error is worse than leaving a diagram
+     * unrendered, so the rule errs towards leaving text alone.
+     */
+    private static final Pattern BARE_MERMAID = Pattern.compile(
+            "(?s)^(?:(?:graph|flowchart)\\s+(?:TB|TD|BT|RL|LR)"
+                    + "|sequenceDiagram|classDiagram(?:-v2)?|stateDiagram(?:-v2)?|erDiagram"
+                    + "|gitGraph|mindmap|gantt|quadrantChart|requirementDiagram"
+                    + "|xychart-beta|sankey-beta|block-beta"
+                    + "|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment)"
+                    + "\\s*:?;?[ \\t]*\\r?\\n.*$");
+
     /** First opening tag of a raw HTML block; deliberately does not match "&lt;/div&gt;". */
     private static final Pattern OPENING_TAG = Pattern.compile("<([A-Za-z][\\w-]*)");
 
@@ -266,10 +293,17 @@ public final class MarkdownService {
          * ordinary paragraph.
          */
         private void renderParagraph(Paragraph paragraph) {
-            String diagram = bareDiagram(paragraph);
-            if (diagram != null) {
+            String text = sourceOf(paragraph);
+
+            if (text != null && text.startsWith("@start") && BARE_DIAGRAM.matcher(text).matches()) {
                 html.line();
-                emitDiagramPlaceholder(diagram);
+                emitDiagramPlaceholder(text);
+                html.line();
+                return;
+            }
+            if (text != null && BARE_MERMAID.matcher(text).matches()) {
+                html.line();
+                emitMermaid(text);
                 html.line();
                 return;
             }
@@ -285,15 +319,6 @@ public final class MarkdownService {
             renderChildren(paragraph);
             html.tag("/p");
             html.line();
-        }
-
-        /** @return the diagram source if this paragraph is a complete bare diagram */
-        private String bareDiagram(Paragraph paragraph) {
-            String text = sourceOf(paragraph);
-            if (text == null || !text.startsWith("@start")) {
-                return null;
-            }
-            return BARE_DIAGRAM.matcher(text).matches() ? text : null;
         }
 
         private String sourceOf(Node node) {
@@ -324,6 +349,13 @@ public final class MarkdownService {
                 context.render(child);
                 child = next;
             }
+        }
+
+        /** mermaid.js reads textContent, so ordinary HTML escaping is what it wants. */
+        private void emitMermaid(String diagramSource) {
+            html.tag("pre", Map.of("class", "mermaid"));
+            html.text(diagramSource);
+            html.tag("/pre");
         }
 
         private void emitDiagramPlaceholder(String diagramSource) {
@@ -375,11 +407,8 @@ public final class MarkdownService {
             String literal = fence.getLiteral() == null ? "" : fence.getLiteral();
 
             if (MERMAID_TAGS.contains(tag)) {
-                // mermaid.js reads textContent, so normal HTML escaping is what it wants.
                 html.line();
-                html.tag("pre", Map.of("class", "mermaid"));
-                html.text(literal);
-                html.tag("/pre");
+                emitMermaid(literal);
                 html.line();
                 return;
             }
