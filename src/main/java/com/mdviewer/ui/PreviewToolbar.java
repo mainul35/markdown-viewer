@@ -37,12 +37,10 @@ public final class PreviewToolbar extends HBox {
         IMAGE_INSERT,
         /** Alignment applies to the selected image, or to the selected text if there is none. */
         ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT,
-        IMAGE_WIDTH_25, IMAGE_WIDTH_50, IMAGE_WIDTH_75, IMAGE_WIDTH_100,
+        IMAGE_WIDTH_75, IMAGE_WIDTH_100, IMAGE_WIDTH_125, IMAGE_WIDTH_150,
         IMAGE_CAPTION, IMAGE_REPLACE, IMAGE_CROP, IMAGE_COPY_PATH, IMAGE_REMOVE
     }
 
-    private final List<Node> imageControls = new ArrayList<>();
-    private final Label imageHint = new Label("Select an image to position or resize it");
     private Consumer<Action> onAction = a -> { };
 
     public PreviewToolbar() {
@@ -67,46 +65,17 @@ public final class PreviewToolbar extends HBox {
                 divider(),
                 iconButton(imageIcon(), "Insert image", Action.IMAGE_INSERT));
 
-        // Alignment applies to whatever is selected - an image, or otherwise the text -
-        // so unlike the width controls it is always available.
+        // Alignment applies to whatever is selected - an image, or otherwise the text.
+        // Image sizing is not here: it only ever applies to an image, so it lives on the
+        // image's own right-click menu where the target is unambiguous.
         getChildren().addAll(
                 iconButton(alignIcon(Align.LEFT), "Align left", Action.ALIGN_LEFT),
                 iconButton(alignIcon(Align.CENTER), "Centre", Action.ALIGN_CENTER),
                 iconButton(alignIcon(Align.RIGHT), "Align right", Action.ALIGN_RIGHT));
-
-        // Width only means something for an image, so those stay disabled until one is
-        // selected rather than offering an action that would silently do nothing.
-        addImageControl(widthButton("25%", Action.IMAGE_WIDTH_25));
-        addImageControl(widthButton("50%", Action.IMAGE_WIDTH_50));
-        addImageControl(widthButton("75%", Action.IMAGE_WIDTH_75));
-        addImageControl(widthButton("100%", Action.IMAGE_WIDTH_100));
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        imageHint.getStyleClass().add("toolbar-hint");
-        imageHint.setMinWidth(0); // The hint is what truncates when space runs out, not the buttons.
-        getChildren().addAll(spacer, imageHint);
-
-        setImageSelected(false);
-    }
-
-    private void addImageControl(Button button) {
-        imageControls.add(button);
-        getChildren().add(button);
     }
 
     public void setOnAction(Consumer<Action> onAction) {
         this.onAction = onAction == null ? a -> { } : onAction;
-    }
-
-    /** Enables the positioning and sizing controls, which only apply to a chosen image. */
-    public void setImageSelected(boolean selected) {
-        for (Node control : imageControls) {
-            control.setDisable(!selected);
-        }
-        imageHint.setText(selected
-                ? "Image selected - size and position apply to it"
-                : "Select an image to resize it; alignment applies to the selection");
     }
 
     // ----------------------------------------------------------------- pieces
@@ -118,16 +87,6 @@ public final class PreviewToolbar extends HBox {
         button.setFocusTraversable(false);
         // Without this the HBox shrinks labelled buttons below their text and they
         // collapse to an ellipsis, which is worse than no label at all.
-        button.setMinWidth(Region.USE_PREF_SIZE);
-        button.setOnAction(e -> onAction.accept(action));
-        return button;
-    }
-
-    private Button widthButton(String text, Action action) {
-        Button button = new Button(text);
-        button.getStyleClass().addAll("toolbar-button", "toolbar-width");
-        button.setTooltip(new Tooltip("Set image width to " + text));
-        button.setFocusTraversable(false);
         button.setMinWidth(Region.USE_PREF_SIZE);
         button.setOnAction(e -> onAction.accept(action));
         return button;

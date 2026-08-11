@@ -809,10 +809,10 @@ public class MainController {
         // Right-clicking an image is asking about that image, not about text.
         Menu size = new Menu("Resize");
         size.getItems().addAll(
-                formatItem("25%", PreviewToolbar.Action.IMAGE_WIDTH_25),
-                formatItem("50%", PreviewToolbar.Action.IMAGE_WIDTH_50),
                 formatItem("75%", PreviewToolbar.Action.IMAGE_WIDTH_75),
-                formatItem("Full width", PreviewToolbar.Action.IMAGE_WIDTH_100));
+                formatItem("100% (natural)", PreviewToolbar.Action.IMAGE_WIDTH_100),
+                formatItem("125%", PreviewToolbar.Action.IMAGE_WIDTH_125),
+                formatItem("150%", PreviewToolbar.Action.IMAGE_WIDTH_150));
         Menu position = new Menu("Position");
         position.getItems().addAll(
                 formatItem("Left", PreviewToolbar.Action.ALIGN_LEFT),
@@ -835,14 +835,12 @@ public class MainController {
             // The page records the image under the pointer on mousedown, which fires
             // before this, so the choice of menu is already known.
             boolean onImage = !previewString("window.__mdImageInfo()").isEmpty();
-            refreshImageSelection();
             (onImage ? imageMenu : textMenu).show(webView, event.getScreenX(), event.getScreenY());
             event.consume();
         });
         webView.setOnMousePressed(event -> {
             textMenu.hide();
             imageMenu.hide();
-            Platform.runLater(this::refreshImageSelection);
         });
     }
 
@@ -861,9 +859,6 @@ public class MainController {
         return item;
     }
 
-    private void refreshImageSelection() {
-        previewToolbar.setImageSelected(!previewString("window.__mdImageInfo()").isEmpty());
-    }
 
     /** A range of the Markdown source that a toolbar action should act on. */
     private record SourceRange(int start, int end) {}
@@ -1177,10 +1172,10 @@ public class MainController {
             case ALIGN_LEFT -> current.withAlign("left");
             case ALIGN_CENTER -> current.withAlign("center");
             case ALIGN_RIGHT -> current.withAlign("right");
-            case IMAGE_WIDTH_25 -> current.withWidth("25%");
-            case IMAGE_WIDTH_50 -> current.withWidth("50%");
             case IMAGE_WIDTH_75 -> current.withWidth("75%");
             case IMAGE_WIDTH_100 -> current.withWidth("100%");
+            case IMAGE_WIDTH_125 -> current.withWidth("125%");
+            case IMAGE_WIDTH_150 -> current.withWidth("150%");
             case IMAGE_CAPTION -> captionOf(current);
             case IMAGE_REPLACE -> replacementFor(document, current);
             case IMAGE_CROP -> croppedFrom(document, current);
@@ -1397,7 +1392,6 @@ public class MainController {
         try {
             webView.getEngine().executeScript("window.__mdSetBody(" + toJsStringLiteral(html) + ");");
             webView.getEngine().executeScript("window.__mdScrollTo(" + (long) pendingScrollY + ");");
-            previewToolbar.setImageSelected(false);
         } catch (RuntimeException e) {
             // The hook is gone (page replaced) - rebuild the shell and retry on load.
             loadPreviewShell();
@@ -1609,6 +1603,9 @@ public class MainController {
             tbody tr:last-child td { border-bottom:none; }
 
             img { max-width:100%; border-radius:6px; }
+            /* An explicitly sized image is allowed past the prose column - that is the
+               point of choosing 125% or 150%, which the default clamp would swallow. */
+            img[width] { max-width:none; }
             /* An image clicked in the preview is the target of the position and size
                controls, so it has to be visibly the chosen one. */
             img.mdv-img-selected { outline:2px solid var(--accent); outline-offset:2px; }
