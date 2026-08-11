@@ -31,7 +31,7 @@ public record ImageRef(String alt, String src, String width, String align) {
 
         Matcher md = MARKDOWN.matcher(trimmed);
         if (md.matches()) {
-            return new ImageRef(md.group(1), md.group(2), null, null);
+            return new ImageRef(md.group(1), unbracket(md.group(2)), null, null);
         }
 
         Matcher img = HTML_IMG.matcher(trimmed);
@@ -67,10 +67,26 @@ public record ImageRef(String alt, String src, String width, String align) {
         return new ImageRef(alt, src, width, align);
     }
 
+    private static String unbracket(String destination) {
+        String d = destination.strip();
+        return d.startsWith("<") && d.endsWith(">") ? d.substring(1, d.length() - 1) : d;
+    }
+
+    /**
+     * A Markdown link destination containing spaces or parentheses must be wrapped in
+     * angle brackets, otherwise the parser does not see an image at all and the whole
+     * reference renders as literal text. Screenshot filenames routinely contain spaces.
+     */
+    public static String markdownDestination(String src) {
+        boolean needsBrackets = src.chars().anyMatch(Character::isWhitespace)
+                || src.indexOf('(') >= 0 || src.indexOf(')') >= 0;
+        return needsBrackets ? "<" + src + ">" : src;
+    }
+
     /** Plain Markdown when nothing needs HTML, otherwise the smallest HTML that does. */
     public String toMarkup() {
         if (width == null && align == null) {
-            return "![" + alt + "](" + src + ")";
+            return "![" + alt + "](" + markdownDestination(src) + ")";
         }
         StringBuilder tag = new StringBuilder("<img src=\"").append(src).append('"');
         if (alt != null && !alt.isEmpty()) {
