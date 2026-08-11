@@ -101,6 +101,7 @@ Appended per Protocol §3 rather than rewriting the sections above.
 - **Images:** relative paths resolve against the document's own folder, for Markdown and raw HTML `<img>` alike.
 - **Dark / light theme** across the JavaFX chrome and the preview document.
 - **Workspace explorer + two-level tabs:** workspace tabs on top, that workspace's file tabs beneath, markdown-only lazy file tree, reveal-in-tree target button.
+- **Cross-document link navigation:** relative links to other Markdown files open in the viewer and reveal in the tree, expanding the folders on the way — including through folders the markdown-only filter hides, such as `.claude/rules/`.
 - **Standalone distribution:** one self-contained ~57 MB jar (JavaFX natives, commonmark, PlantUML, mermaid inside).
 
 ### Constraints discovered — do not regress these

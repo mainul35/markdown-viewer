@@ -161,16 +161,14 @@ public final class FileTreePanel extends VBox {
             current.setExpanded(true);
 
             for (Path segment : root.relativize(target)) {
-                Path childPath = current.getValue().resolve(segment);
-                TreeItem<Path> next = null;
-                for (TreeItem<Path> child : current.getChildren()) {
-                    if (child.getValue().equals(childPath)) {
-                        next = child;
-                        break;
-                    }
+                if (!(current instanceof PathTreeItem item)) {
+                    break;
                 }
+                // ensureChild rather than a plain lookup: the path may run through a folder
+                // the listing filter hides, and a file the user opened should still be shown.
+                TreeItem<Path> next = item.ensureChild(current.getValue().resolve(segment));
                 if (next == null) {
-                    break; // File was added after the directory was cached, or is filtered out.
+                    break; // Segment does not exist on disk.
                 }
                 current = next;
                 if (!current.getValue().equals(target)) {

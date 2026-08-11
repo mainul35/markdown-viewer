@@ -18,11 +18,13 @@ import com.mdviewer.service.DiagramService;
 import com.mdviewer.service.MarkdownService;
 import com.mdviewer.ui.DocumentView;
 import com.mdviewer.ui.FileTreePanel;
+import com.mdviewer.ui.MarkdownFiles;
 import com.mdviewer.ui.WorkspaceView;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -729,7 +731,10 @@ public class MainController {
                 return;
             }
             String loc = newLoc.toLowerCase(Locale.ROOT);
-            if (loc.startsWith("http://") || loc.startsWith("https://") || loc.startsWith("mailto:")) {
+            if (loc.startsWith("file:")) {
+                engine.getLoadWorker().cancel();
+                followLocalLink(newLoc);
+            } else if (loc.startsWith("http://") || loc.startsWith("https://") || loc.startsWith("mailto:")) {
                 engine.getLoadWorker().cancel();
                 if (hostServices != null) {
                     hostServices.showDocument(newLoc);
@@ -739,6 +744,40 @@ public class MainController {
         });
 
         loadPreviewShell();
+    }
+
+    /**
+     * Opens a document linked from the preview and reveals it in the explorer.
+     *
+     * <p>Markdown files cross-reference each other constantly, so a link to a sibling
+     * document should navigate the viewer rather than the WebView. The shell is reloaded
+     * because the cancelled navigation may already have torn the page down; reloading
+     * first means the newly opened document is applied when the shell comes back up.
+     */
+    private void followLocalLink(String url) {
+        Path target;
+        try {
+            // Path.of(URI) rejects a fragment, and "file.md#section" is a normal link.
+            int hash = url.indexOf('#');
+            String bare = hash >= 0 ? url.substring(0, hash) : url;
+            target = Path.of(URI.create(bare)).toAbsolutePath().normalize();
+        } catch (RuntimeException e) {
+            return; // Not a usable local path; leave the preview alone.
+        }
+
+        Platform.runLater(() -> {
+            loadPreviewShell();
+            if (!Files.isRegularFile(target)) {
+                setTransientStatus("Linked file not found: " + target);
+                return;
+            }
+            if (!MarkdownFiles.isMarkdown(target)) {
+                setTransientStatus("Not a Markdown file, so not opened: " + target.getFileName());
+                return;
+            }
+            openFile(target.toFile());
+            handleRevealInTree();
+        });
     }
 
     private void loadPreviewShell() {

@@ -122,7 +122,16 @@ rather than the module path.
   - GitHub-style CSS theme
   - Support for tables, code blocks, blockquotes
   - Preview scroll position is preserved while editing
-  - Links open in the system browser instead of hijacking the preview pane
+  - Web links open in the system browser instead of hijacking the preview pane
+
+- **Following links between documents:** a relative link to another Markdown file
+  (`[rules](.claude/rules/code-style.md)`) opens that file as a new tab in the right
+  workspace and reveals it in the explorer, expanding the folders on the way. This works
+  for Markdown links and raw HTML `<a href>` alike. A file reached this way is surfaced in
+  the tree even if the markdown-only filter would normally hide its folder — a document you
+  deliberately opened is not the noise the filter exists to remove. Links to non-Markdown
+  files are reported in the status bar rather than opened; the app never launches arbitrary
+  local files.
 
 - **Diagrams:**
   - ` ```mermaid ` fences render through the bundled mermaid build
