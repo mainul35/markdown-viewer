@@ -77,6 +77,9 @@ public final class MarkdownService {
      *       {@code pie}, {@code journey} and {@code timeline} are left out precisely
      *       because a paragraph could genuinely start with them; those still need a fence.</li>
      *   <li>A second line is required, since a one-line paragraph is prose.</li>
+     *   <li>The {@code -beta} types are left out. They are not supported, so matching one
+     *       would replace a readable paragraph with a broken diagram plate — the worst of
+     *       both outcomes.</li>
      * </ul>
      *
      * Turning a paragraph of prose into a diagram error is worse than leaving a diagram
@@ -86,7 +89,6 @@ public final class MarkdownService {
             "(?s)^(?:(?:graph|flowchart)\\s+(?:TB|TD|BT|RL|LR)"
                     + "|sequenceDiagram|classDiagram(?:-v2)?|stateDiagram(?:-v2)?|erDiagram"
                     + "|gitGraph|mindmap|gantt|quadrantChart|requirementDiagram"
-                    + "|xychart-beta|sankey-beta|block-beta"
                     + "|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment)"
                     + "\\s*:?;?[ \\t]*\\r?\\n.*$");
 
