@@ -190,18 +190,29 @@ public final class MarkdownService {
             renderPlainCode(tag, literal);
         }
 
-        /** Reproduces CommonMark's default fenced-code output, which we replaced above. */
+        /**
+         * A fenced block becomes a labelled plate: the fence's own language tag is carried
+         * into the markup as a caption. The information is already in the document, it just
+         * never reached the reader.
+         */
         private void renderPlainCode(String tag, String literal) {
             Map<String, String> attrs = new LinkedHashMap<>();
             if (!tag.isEmpty()) {
                 attrs.put("class", "language-" + tag);
             }
             html.line();
+            html.tag("div", Map.of("class", "mdv-code"));
+            if (!tag.isEmpty()) {
+                html.tag("span", Map.of("class", "mdv-code-lang"));
+                html.text(tag);
+                html.tag("/span");
+            }
             html.tag("pre");
             html.tag("code", attrs);
             html.text(literal);
             html.tag("/code");
             html.tag("/pre");
+            html.tag("/div");
             html.line();
         }
 

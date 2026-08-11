@@ -98,6 +98,14 @@ rather than the module path.
   `[` should find that character. Replace All is one edit, so it undoes in a single step.
   Invoking find from Full Preview drops back to Split so there is an editor to search.
 
+- **Design:** a "drafting plate" direction, chosen for the job this tool actually does —
+  long architecture documents read for an hour at a time. Cool vellum rather than warm
+  cream, a blueprint-teal accent, Sitka for headings against Segoe UI body text, and a
+  prose column held to a readable measure while code, tables and diagrams break out of it.
+  Fenced code blocks are presented as labelled plates captioned with their own language
+  tag; diagrams share the same plate family. All fonts are system faces — this is an
+  offline app, so a webfont would simply fail to load.
+
 - **Three Editing Modes:**
   - Raw Mode: Plain text editor for Markdown
   - Split Preview: Side-by-side editor and live preview

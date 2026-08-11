@@ -821,6 +821,9 @@ public class MainController {
         }
 
         Platform.runLater(() -> {
+            // The cancelled navigation leaves the page unusable - executeScript stops
+            // having any effect rather than throwing, so the recovery path in
+            // applyPreviewHtml never triggers. Rebuilding the shell is the reliable route.
             loadPreviewShell();
             if (!Files.isRegularFile(target)) {
                 setTransientStatus("Linked file not found: " + target);
@@ -1001,174 +1004,212 @@ public class MainController {
         return sb.toString();
     }
 
+    /**
+     * The preview page: palette, typography and the JS hooks the controller drives.
+     *
+     * <p>Design direction is "drafting plate" - cool vellum rather than warm cream, a
+     * blueprint teal accent, and fenced blocks presented as labelled technical plates. The
+     * subject is long-form architecture documentation, so the priority is a page that stays
+     * readable for an hour, not one that is striking for a second.
+     *
+     * <p>Fonts are system faces only: this is an offline desktop app with no network at
+     * render time, so a webfont would simply fail to load. Sitka is a reading face that
+     * ships with Windows and gives documents a plate-like voice that a UI sans cannot.
+     */
     private String buildPreviewShell() {
-        return "<!DOCTYPE html>" +
-            "<html>" +
-            "<head>" +
-                "<meta charset=\"UTF-8\">" +
-                "<style>" +
-                    // Both palettes ship in the page; __mdSetTheme flips the data-theme
-                    // attribute, so switching costs no reload and keeps scroll position.
-                    ":root {" +
-                        "--bg: #ffffff;" +
-                        "--fg: #24292e;" +
-                        "--muted: #6a737d;" +
-                        "--rule: #eaecef;" +
-                        "--line: #dfe2e5;" +
-                        "--code-bg: #f6f8fa;" +
-                        "--stripe: #f6f8fa;" +
-                        "--link: #0366d6;" +
-                        "--err-fg: #b31d28;" +
-                        "--err-bg: #ffeef0;" +
-                        "--err-line: #fdaeb7;" +
-                    "}" +
-                    "html[data-theme=\"dark\"] {" +
-                        "--bg: #0d1117;" +
-                        "--fg: #c9d1d9;" +
-                        "--muted: #8b949e;" +
-                        "--rule: #21262d;" +
-                        "--line: #30363d;" +
-                        "--code-bg: #161b22;" +
-                        "--stripe: #161b22;" +
-                        "--link: #58a6ff;" +
-                        "--err-fg: #ff7b72;" +
-                        "--err-bg: #2d1214;" +
-                        "--err-line: #6e2b30;" +
-                    "}" +
-                    "body {" +
-                        "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;" +
-                        "padding: 20px;" +
-                        "line-height: 1.6;" +
-                        "color: var(--fg);" +
-                        "background: var(--bg);" +
-                        "word-wrap: break-word;" +
-                    "}" +
-                    "h1, h2, h3, h4, h5, h6 {" +
-                        "margin-top: 24px;" +
-                        "margin-bottom: 16px;" +
-                        "font-weight: 600;" +
-                        "line-height: 1.25;" +
-                    "}" +
-                    "h1 { font-size: 2em; border-bottom: 1px solid var(--rule); padding-bottom: 0.3em; }" +
-                    "h2 { font-size: 1.5em; border-bottom: 1px solid var(--rule); padding-bottom: 0.3em; }" +
-                    "h3 { font-size: 1.25em; }" +
-                    "code {" +
-                        "background-color: var(--code-bg);" +
-                        "padding: 0.2em 0.4em;" +
-                        "border-radius: 3px;" +
-                        "font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;" +
-                        "font-size: 85%;" +
-                    "}" +
-                    "pre {" +
-                        "background-color: var(--code-bg);" +
-                        "padding: 16px;" +
-                        "border-radius: 3px;" +
-                        "overflow: auto;" +
-                    "}" +
-                    "pre code {" +
-                        "background-color: transparent;" +
-                        "padding: 0;" +
-                        "font-size: 100%;" +
-                    "}" +
-                    "blockquote {" +
-                        "border-left: 4px solid var(--line);" +
-                        "padding: 0 1em;" +
-                        "color: var(--muted);" +
-                        "margin-left: 0;" +
-                    "}" +
-                    "table {" +
-                        "border-collapse: collapse;" +
-                        "margin: 16px 0;" +
-                        "display: block;" +
-                        "overflow: auto;" +
-                    "}" +
-                    "th, td {" +
-                        "border: 1px solid var(--line);" +
-                        "padding: 6px 13px;" +
-                    "}" +
-                    "tr:nth-child(2n) {" +
-                        "background-color: var(--stripe);" +
-                    "}" +
-                    "hr { height: 1px; border: 0; background-color: var(--line); margin: 24px 0; }" +
-                    "img { max-width: 100%; }" +
-                    "a { color: var(--link); text-decoration: none; }" +
-                    "a:hover { text-decoration: underline; }" +
-                    "ul, ol { padding-left: 2em; }" +
-                    // Diagrams: SVG scales down to the pane, never forces horizontal scroll.
-                    // The card stays light in both themes because PlantUML and mermaid bake
-                    // dark strokes and text into the SVG - on a dark card they vanish.
-                    ".mdv-diagram, pre.mermaid {" +
-                        "margin: 16px 0;" +
-                        "padding: 8px;" +
-                        "background: #ffffff;" +
-                        "border: 1px solid var(--line);" +
-                        "border-radius: 3px;" +
-                        "overflow-x: auto;" +
-                        "text-align: center;" +
-                    "}" +
-                    ".mdv-diagram svg, pre.mermaid svg { max-width: 100%; height: auto; }" +
-                    ".mdv-diagram-pending {" +
-                        "color: var(--muted);" +
-                        "font-style: italic;" +
-                        "text-align: left;" +
-                        "background: var(--code-bg);" +
-                    "}" +
-                    ".mdv-diagram-error {" +
-                        "color: var(--err-fg);" +
-                        "background: var(--err-bg);" +
-                        "border: 1px solid var(--err-line);" +
-                        "border-radius: 3px;" +
-                        "padding: 12px;" +
-                        "text-align: left;" +
-                        "font-family: SFMono-Regular, Consolas, monospace;" +
-                        "font-size: 90%;" +
-                    "}" +
-                "</style>" +
-                "<script>" +
-                    "window.__mdSetTheme = function (theme) {" +
-                        "document.documentElement.setAttribute('data-theme', theme);" +
-                    "};" +
-                    // Scroll bookkeeping. __mdScrolled records whether the reader moved the
-                    // page themselves, so a diagram arriving late can restore the intended
-                    // position without fighting someone who has already scrolled on.
-                    "window.__mdScrolled = false;" +
-                    "window.__mdSuppress = false;" +
-                    "window.addEventListener('scroll', function () {" +
-                        "if (!window.__mdSuppress) { window.__mdScrolled = true; }" +
-                    "});" +
-                    "window.__mdScrollY = function () {" +
-                        "return window.pageYOffset || document.documentElement.scrollTop || 0;" +
-                    "};" +
-                    "window.__mdScrollTo = function (y) {" +
-                        "window.__mdSuppress = true;" +
-                        "window.scrollTo(0, y);" +
-                        "window.__mdScrolled = false;" +
-                        "setTimeout(function () { window.__mdSuppress = false; }, 0);" +
-                    "};" +
-                    "window.__mdKeepScroll = function (y) {" +
-                        "if (!window.__mdScrolled) { window.__mdScrollTo(y); }" +
-                    "};" +
-                    "window.__mdRunMermaid = function () {" +
-                        "if (!window.mermaid) { return; }" +
-                        "try {" +
-                            "var p = mermaid.run({ querySelector: '.mermaid' });" +
-                            "if (p && p.catch) { p.catch(function () {}); }" +
-                        "} catch (e) {}" +
-                    "};" +
-                    "window.__mdSetBody = function (html) {" +
-                        "document.body.innerHTML = html;" +
-                        "window.__mdRunMermaid();" +
-                    "};" +
-                    "window.__mdSetDiagram = function (id, svg) {" +
-                        "var el = document.getElementById(id);" +
-                        "if (!el) { return; }" +
-                        "el.className = 'mdv-diagram';" +
-                        "el.innerHTML = svg;" +
-                    "};" +
-                "</script>" +
-            "</head>" +
-            "<body></body>" +
-            "</html>";
+        String css = """
+            :root {
+              --paper:#F6F8FA; --ink:#16202B; --ink-soft:#5A6875;
+              --rule:#DFE5EC; --line:#C7D2DE;
+              --accent:#0B6E7F; --accent-ink:#0A5A68; --accent-soft:#0B6E7F14;
+              --mark:#A23B2E;
+              --code-bg:#EFF3F7; --code-ink:#1B2A38; --stripe:#F1F5F9;
+              --err-fg:#8C2F22; --err-bg:#FBEDEA; --err-line:#E4BDB5;
+              --plate-shadow:0 1px 2px rgba(22,32,43,.05), 0 10px 24px -14px rgba(22,32,43,.22);
+              --mono:"Cascadia Code","Cascadia Mono",Consolas,"Liberation Mono",monospace;
+              --display:"Sitka Heading","Sitka Text",Cambria,Georgia,serif;
+              --body:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
+            }
+            html[data-theme="dark"] {
+              --paper:#0F1620; --ink:#D7DEE6; --ink-soft:#8A9AAA;
+              --rule:#22303F; --line:#2C3D4E;
+              --accent:#3FB8CC; --accent-ink:#5FCBDD; --accent-soft:#3FB8CC1F;
+              --mark:#E08A7B;
+              --code-bg:#131C26; --code-ink:#C9D6E2; --stripe:#141E29;
+              --err-fg:#F2A79A; --err-bg:#2A1614; --err-line:#5E2E28;
+              --plate-shadow:0 1px 2px rgba(0,0,0,.35), 0 12px 28px -16px rgba(0,0,0,.75);
+            }
+
+            body {
+              margin:0; padding:40px 44px 120px;
+              background:var(--paper); color:var(--ink);
+              font-family:var(--body); font-size:16px; line-height:1.68;
+              -webkit-font-smoothing:antialiased; word-wrap:break-word;
+            }
+
+            /* Prose holds a comfortable measure; plates and tables break out of it.
+               The measure is in rem, not ch: ch is relative to each element's own font, so
+               headings would silently get a far wider column than the paragraphs under
+               them and the two would stop sharing a left edge. */
+            body > * { max-width:40rem; margin-left:auto; margin-right:auto; }
+            body > .mdv-code, body > table, body > .mdv-diagram,
+            body > pre.mermaid, body > .mdv-diagram-error, body > hr { max-width:none; }
+
+            h1,h2,h3,h4,h5,h6 {
+              font-family:var(--display); font-weight:600; line-height:1.22;
+              letter-spacing:-.01em; margin:2.1em auto .65em; color:var(--ink);
+            }
+            h1 { font-size:2.3rem; letter-spacing:-.022em; margin-top:.2em; }
+            h1::after {
+              content:""; display:block; width:3.25rem; height:3px;
+              margin-top:.6rem; background:var(--accent); border-radius:2px;
+            }
+            h2 { font-size:1.58rem; padding-bottom:.32em; border-bottom:1px solid var(--rule); }
+            h3 { font-size:1.24rem; }
+            h4 { font-size:1.05rem; color:var(--ink-soft); }
+            h5,h6 { font-size:.95rem; color:var(--ink-soft); }
+
+            p { margin:0 auto 1.15em; }
+            ul,ol { padding-left:1.5em; margin:0 auto 1.15em; }
+            li { margin:.3em 0; }
+            li::marker { color:var(--accent); }
+
+            strong { font-weight:650; }
+            hr { height:1px; border:0; background:var(--rule); margin:2.6em auto; }
+
+            a {
+              color:var(--accent-ink); text-decoration:none;
+              border-bottom:1px solid var(--accent-soft);
+              transition:border-color .12s ease, color .12s ease;
+            }
+            a:hover { border-bottom-color:var(--accent); }
+            a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+            /* Inline code reads as an identifier, not as body text. */
+            :not(pre) > code {
+              font-family:var(--mono); font-size:.86em;
+              background:var(--accent-soft); color:var(--accent-ink);
+              padding:.14em .42em; border-radius:4px;
+            }
+
+            /* The signature: a fenced block is a labelled plate, captioned with its own
+               language tag, hung off an accent rule. */
+            .mdv-code {
+              margin:1.7em auto; background:var(--code-bg);
+              border:1px solid var(--rule); border-left:3px solid var(--accent);
+              border-radius:7px; overflow:hidden; box-shadow:var(--plate-shadow);
+            }
+            .mdv-code-lang {
+              display:block; padding:7px 16px;
+              font-family:var(--mono); font-size:10.5px; font-weight:600;
+              letter-spacing:.16em; text-transform:uppercase; color:var(--ink-soft);
+              border-bottom:1px solid var(--rule);
+            }
+            .mdv-code pre { margin:0; padding:16px 18px; background:none; overflow-x:auto; }
+            pre code {
+              font-family:var(--mono); font-size:13.5px; line-height:1.62;
+              color:var(--code-ink); background:none; padding:0;
+            }
+
+            blockquote {
+              margin:1.6em auto; padding:.1em 0 .1em 1.15em;
+              border-left:3px solid var(--mark); color:var(--ink-soft);
+            }
+            blockquote p:last-child { margin-bottom:0; }
+
+            table {
+              display:block; overflow-x:auto; border-collapse:collapse;
+              margin:1.8em auto; font-size:.94em;
+              border:1px solid var(--rule); border-radius:7px;
+            }
+            th,td { padding:9px 15px; border-bottom:1px solid var(--rule); text-align:left; }
+            thead th {
+              background:var(--stripe); color:var(--ink-soft);
+              font-size:.84em; font-weight:600; letter-spacing:.07em; text-transform:uppercase;
+              border-bottom:1px solid var(--line);
+            }
+            tbody tr:nth-child(2n) { background:var(--stripe); }
+            tbody tr:last-child td { border-bottom:none; }
+
+            img { max-width:100%; border-radius:6px; }
+
+            /* Diagrams share the plate family. The card keeps a light ground in both
+               themes: PlantUML and mermaid bake dark strokes into the SVG, which would
+               disappear on a dark panel. */
+            .mdv-diagram, pre.mermaid {
+              position:relative; margin:1.8em auto; padding:34px 16px 16px;
+              background:#FFFFFF; color:#16202B;
+              border:1px solid var(--rule); border-left:3px solid var(--accent);
+              border-radius:7px; overflow-x:auto; text-align:center;
+              box-shadow:var(--plate-shadow); font-family:var(--body);
+            }
+            .mdv-diagram::before, pre.mermaid::before {
+              position:absolute; top:9px; left:16px;
+              font-family:var(--mono); font-size:10.5px; font-weight:600;
+              letter-spacing:.16em; text-transform:uppercase; color:#7B8895;
+            }
+            .mdv-diagram::before { content:"plantuml"; }
+            pre.mermaid::before { content:"mermaid"; }
+            .mdv-diagram svg, pre.mermaid svg { max-width:100%; height:auto; }
+
+            .mdv-diagram-pending {
+              color:#7B8895; font-style:italic; text-align:left;
+              padding:34px 16px 16px; box-shadow:none;
+            }
+            .mdv-diagram-error {
+              margin:1.7em auto; padding:14px 16px;
+              color:var(--err-fg); background:var(--err-bg);
+              border:1px solid var(--err-line); border-left:3px solid var(--err-fg);
+              border-radius:7px; text-align:left;
+              font-family:var(--mono); font-size:12.5px;
+            }
+            """;
+
+        String js = """
+            window.__mdSetTheme = function (theme) {
+              document.documentElement.setAttribute('data-theme', theme);
+            };
+            /* Scroll bookkeeping. __mdScrolled records whether the reader moved the page
+               themselves, so a diagram arriving late can restore the intended position
+               without fighting someone who has already scrolled on. */
+            window.__mdScrolled = false;
+            window.__mdSuppress = false;
+            window.addEventListener('scroll', function () {
+              if (!window.__mdSuppress) { window.__mdScrolled = true; }
+            });
+            window.__mdScrollY = function () {
+              return window.pageYOffset || document.documentElement.scrollTop || 0;
+            };
+            window.__mdScrollTo = function (y) {
+              window.__mdSuppress = true;
+              window.scrollTo(0, y);
+              window.__mdScrolled = false;
+              setTimeout(function () { window.__mdSuppress = false; }, 0);
+            };
+            window.__mdKeepScroll = function (y) {
+              if (!window.__mdScrolled) { window.__mdScrollTo(y); }
+            };
+            window.__mdRunMermaid = function () {
+              if (!window.mermaid) { return; }
+              try {
+                var p = mermaid.run({ querySelector: '.mermaid' });
+                if (p && p.catch) { p.catch(function () {}); }
+              } catch (e) {}
+            };
+            window.__mdSetBody = function (html) {
+              document.body.innerHTML = html;
+              window.__mdRunMermaid();
+            };
+            window.__mdSetDiagram = function (id, svg) {
+              var el = document.getElementById(id);
+              if (!el) { return; }
+              el.className = 'mdv-diagram';
+              el.innerHTML = svg;
+            };
+            """;
+
+        return "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>"
+                + css + "</style><script>" + js + "</script></head><body></body></html>";
     }
 
     // ----------------------------------------------------------------- status
