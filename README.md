@@ -4,6 +4,16 @@
 
 Professional Markdown desktop application built with JavaFX.
 
+## Download
+
+**Latest Release:** [MDViewer v1.0.0 Early Access](https://github.com/mainul35/markdown-viewer/releases/latest)
+
+1. Download `mdviewer-1.0.0-EA-release.zip` from the Releases page
+2. Extract the zip file
+3. Run: `java -jar mdviewer-1.0.0-EA.jar`
+
+> **Note:** Requires JDK 21 or higher. See installation instructions below.
+
 ## Prerequisites
 
 - **JDK 21 or higher** (Download from https://adoptium.net/)
