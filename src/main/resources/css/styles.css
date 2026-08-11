@@ -17,6 +17,9 @@
     -mdv-text-muted: #5a6875;
     -mdv-accent: #0b6e7f;
     -mdv-accent-soft: #dceef1;
+    /* Deliberately darker than -mdv-border: a scrollbar has to be findable against the
+       panel it floats over, and the border colour is tuned for hairlines on white. */
+    -mdv-scroll-thumb: #aebbc9;
 }
 
 .root.dark-theme {
@@ -28,9 +31,12 @@
     -mdv-text-muted: #8a9aaa;
     -mdv-accent: #3fb8cc;
     -mdv-accent-soft: #16323c;
+    -mdv-scroll-thumb: #3d4f63;
 
-    /* Re-tint JavaFX's built-in control palette so menus, dialogs, scrollbars and the
-       text editor follow the theme without needing a rule for each control. */
+    /* Re-tint JavaFX's built-in control palette so menus, dialogs and the text editor
+       follow the theme without needing a rule for each control. Note this block is dark-
+       only: in light mode the controls keep modena's defaults, which is why scrollbars
+       need explicit rules rather than inheriting a tint. */
     -fx-base: #1b2632;
     -fx-background: #0f1620;
     -fx-control-inner-background: #131c26;
@@ -174,6 +180,68 @@
     -fx-background-radius: 5;
     -fx-cursor: hand;
     -fx-font-size: 11.5px;
+}
+
+/* --------------------------------------------------------------- scrollbars
+
+   Modena's default thumb is #e5e5e5, which against the explorer's #eef2f6 panel is
+   near enough invisible that a tree of forty folders looks like it simply cannot be
+   scrolled. The scrollbar was always there and always working - it just could not be
+   seen. These rules give it the theme's own colours in both modes.
+
+   Applied to every scrollbar rather than scoped to .file-tree, so the raw editor and
+   the dialogs match; the preview's scrollbars are WebKit's own and are styled in the
+   preview stylesheet instead. */
+
+.scroll-bar {
+    -fx-background-color: transparent;
+}
+
+/* Explicit, because modena derives the bar's breadth from the end buttons that the
+   rules below collapse: without this the whole bar shrinks to under a pixel and the
+   thumb goes from invisible to genuinely unclickable. */
+.scroll-bar:vertical {
+    -fx-pref-width: 13;
+}
+
+.scroll-bar:horizontal {
+    -fx-pref-height: 13;
+}
+
+.scroll-bar > .track,
+.scroll-bar > .track-background {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.scroll-bar > .thumb {
+    -fx-background-color: -mdv-scroll-thumb;
+    -fx-background-radius: 7;
+    -fx-background-insets: 3;
+}
+
+.scroll-bar > .thumb:hover,
+.scroll-bar > .thumb:pressed {
+    -fx-background-color: -mdv-accent;
+}
+
+/* The end buttons cost 2x16px at each end and steer nothing a drag cannot: hiding them
+   leaves the thumb the whole length of the bar. -fx-shape:" " rather than removing the
+   arrow node, which modena still reserves space for. */
+.scroll-bar > .increment-button,
+.scroll-bar > .decrement-button {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+.scroll-bar > .increment-button > .increment-arrow,
+.scroll-bar > .decrement-button > .decrement-arrow {
+    -fx-shape: " ";
+    -fx-padding: 0;
+}
+
+.scroll-pane > .corner {
+    -fx-background-color: transparent;
 }
 
 /* ------------------------------------------------------ workspace explorer */
