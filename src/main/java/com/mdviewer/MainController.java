@@ -7,11 +7,13 @@ import javafx.application.HostServices;
 import javafx.application.Platform;
 import javafx.concurrent.Worker;
 import javafx.fxml.FXML;
+import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.web.WebEngine;
@@ -214,6 +216,33 @@ public class MainController {
                 .addListener((obs, old, now) -> onActiveDocumentChanged());
         workspaceTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.ALL_TABS);
 
+        /* The editor area is mounted here, once, and never moved again.
+
+           It used to be the *content* of whichever document tab was selected, which meant
+           every tab switch pulled the WebView out of the scene graph and pushed it back in
+           somewhere else. A WebView does not survive that: its native rendering surface is
+           torn down and rebuilt, and it comes back painting some layers and not others -
+           rules and backgrounds present, no text - until something forces a full repaint.
+           That is the blank preview, and it is why dragging the scrollbar "fixed" it while
+           the wheel did not.
+
+           So the two tab strips are now headers only (document tabs carry no content at
+           all) and the editor area lives permanently below them. Nothing about the two-
+           level tab UI changes on screen; the WebView simply stops being moved. */
+        workspaceTabs.setMaxHeight(Region.USE_PREF_SIZE);
+        VBox rightSide = new VBox(workspaceTabs, editorSplit);
+        VBox.setVgrow(editorSplit, Priority.ALWAYS);
+        // Without this the editor area's preferred height wins over the tab strips when
+        // the window is short, and the headers are squeezed out of view.
+        rightSide.setMinHeight(0);
+        editorSplit.setMinHeight(0);
+        editorPane.setMinHeight(0);
+        previewPane.setMinHeight(0);
+        webView.setMinHeight(0);
+
+        int workspaceSlot = mainSplit.getItems().indexOf(workspaceTabs);
+        mainSplit.getItems().set(workspaceSlot, rightSide);
+
         initPreviewEngine();
 
         updateWordCount();
@@ -296,22 +325,7 @@ public class MainController {
      * hold it at a time - a JavaFX node has a single parent - so this is what makes the
      * tabs act as selectors over one editor rather than N editors and N WebViews.
      */
-    private void mountEditorArea() {
-        DocumentView active = activeDocument();
-        for (WorkspaceView workspace : workspaces) {
-            for (DocumentView document : workspace.getDocuments()) {
-                if (document != active && document.getTab().getContent() == editorSplit) {
-                    document.getTab().setContent(null);
-                }
-            }
-        }
-        if (active != null && active.getTab().getContent() != editorSplit) {
-            active.getTab().setContent(editorSplit);
-        }
-    }
-
     private void onActiveDocumentChanged() {
-        mountEditorArea();
         updateLayout();
         updateWordCount();
         updateStatus();
@@ -980,8 +994,8 @@ public class MainController {
         modeLabel.setText("Mode: " + currentMode.name().replace("_", " "));
 
         DocumentView document = activeDocument();
-        editorSplit.getItems().clear();
         if (document == null) {
+            editorSplit.getItems().clear();
             if (currentMode != EditorMode.RAW) {
                 previewDebounce.stop();
                 updatePreview();
@@ -990,14 +1004,22 @@ public class MainController {
         }
 
         mountEditorPane(document);
-        switch (currentMode) {
-            case RAW -> editorSplit.getItems().add(editorPane);
-            case SPLIT -> {
-                editorSplit.getItems().addAll(editorPane, previewPane);
+
+        /* Only rebuild when the split's contents actually differ. This runs on every tab
+           switch, and clearing it unconditionally removed the WebView from the scene graph
+           and re-added it even when the mode had not changed - the same teardown that
+           blanks the preview, paid on every switch whether or not anything needed to move. */
+        List<Node> wanted = switch (currentMode) {
+            case RAW -> List.of(editorPane);
+            case SPLIT -> List.of(editorPane, previewPane);
+            case FULL_PREVIEW -> List.of(previewPane);
+        };
+        if (!editorSplit.getItems().equals(wanted)) {
+            editorSplit.getItems().setAll(wanted);
+            if (currentMode == EditorMode.SPLIT) {
                 editorSplit.setDividerPositions(0.5);
                 Platform.runLater(() -> editorSplit.setDividerPositions(0.5));
             }
-            case FULL_PREVIEW -> editorSplit.getItems().add(previewPane);
         }
 
         // Content may have changed while RAW mode suppressed preview updates.
