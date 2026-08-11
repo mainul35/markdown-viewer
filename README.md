@@ -68,6 +68,17 @@ rather than the module path.
 
 ## Features
 
+- **Dark / light theme:** toggled from the toolbar or **View → Dark Mode**. One switch
+  themes the JavaFX chrome and the preview document together. The preview carries both
+  palettes and flips a `data-theme` attribute, so switching costs no reload and keeps your
+  scroll position. Diagram cards deliberately stay light in dark mode — PlantUML and mermaid
+  bake dark strokes and text into their SVG, which would be invisible on a dark card.
+  The theme is not persisted between runs; the app always starts in light mode.
+
+- **Toolbar:** file actions live only in the File menu, since duplicate buttons added no
+  quick access the menu did not already provide. The mode buttons stay (mode switching is
+  frequent) and sit on the right, next to the theme switch.
+
 - **Three Editing Modes:**
   - Raw Mode: Plain text editor for Markdown
   - Split Preview: Side-by-side editor and live preview

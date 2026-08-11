@@ -21,19 +21,25 @@
                     <MenuItem text="Raw Editor" onAction="#handleRawMode"/>
                     <MenuItem text="Split Preview" onAction="#handleSplitMode"/>
                     <MenuItem text="Full Preview" onAction="#handleFullPreviewMode"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem fx:id="themeMenuItem" text="Dark Mode" onAction="#handleToggleTheme"/>
                 </Menu>
                 <Menu text="Help">
                     <MenuItem text="About" onAction="#handleAbout"/>
                 </Menu>
             </MenuBar>
+            <!--
+                File actions live only in the File menu - duplicating them as buttons added
+                no quick access the menu did not already give. The view buttons stay because
+                switching modes is frequent, and are pushed right by the growing spacer.
+            -->
             <ToolBar>
-                <Button text="New" onAction="#handleNewFile"/>
-                <Button text="Open" onAction="#handleOpenFile"/>
-                <Button text="Save" onAction="#handleSaveFile"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button fx:id="rawModeButton" text="Raw" onAction="#handleRawMode"/>
+                <Button fx:id="splitModeButton" text="Split" onAction="#handleSplitMode"/>
+                <Button fx:id="previewModeButton" text="Preview" onAction="#handleFullPreviewMode"/>
                 <Separator orientation="VERTICAL"/>
-                <Button text="Raw" onAction="#handleRawMode"/>
-                <Button text="Split" onAction="#handleSplitMode"/>
-                <Button text="Preview" onAction="#handleFullPreviewMode"/>
+                <Button fx:id="themeButton" text="Dark Mode" minWidth="90" onAction="#handleToggleTheme"/>
             </ToolBar>
         </VBox>
     </top>
