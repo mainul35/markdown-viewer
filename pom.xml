@@ -45,6 +45,16 @@
             <artifactId>commonmark-ext-gfm-tables</artifactId>
             <version>0.21.0</version>
         </dependency>
+        <!--
+            MIT-licensed PlantUML build (matches this project's licence). Ships the C4
+            standard library and the pure-Java "smetana" layout engine, so diagrams render
+            with no Graphviz install and no network access.
+        -->
+        <dependency>
+            <groupId>net.sourceforge.plantuml</groupId>
+            <artifactId>plantuml-mit</artifactId>
+            <version>1.2026.6</version>
+        </dependency>
     </dependencies>
 
     <build>

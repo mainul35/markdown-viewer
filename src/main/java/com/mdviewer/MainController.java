@@ -13,16 +13,16 @@ import javafx.scene.web.WebView;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.util.Duration;
-import org.commonmark.ext.gfm.tables.TablesExtension;
-import org.commonmark.node.Node;
-import org.commonmark.parser.Parser;
-import org.commonmark.renderer.html.HtmlRenderer;
+import com.mdviewer.service.DiagramService;
+import com.mdviewer.service.MarkdownService;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.util.Arrays;
+import java.nio.file.Path;
+import java.util.List;
 
 public class MainController {
 
@@ -60,13 +60,18 @@ public class MainController {
     /** Last rendered body HTML, re-applied whenever the shell page is (re)loaded. */
     private String currentPreviewHtml = "";
 
-    private final Parser markdownParser = Parser.builder()
-            .extensions(Arrays.asList(TablesExtension.create()))
-            .build();
+    /** Diagrams belonging to {@link #currentPreviewHtml}, re-pushed after a shell reload. */
+    private List<MarkdownService.Diagram> currentDiagrams = List.of();
 
-    private final HtmlRenderer htmlRenderer = HtmlRenderer.builder()
-            .extensions(Arrays.asList(TablesExtension.create()))
-            .build();
+    /**
+     * Incremented on every preview render. A background PlantUML result is discarded
+     * unless it still carries the current generation, so edits cannot be overwritten
+     * by a slow render of an older document.
+     */
+    private int previewGeneration = 0;
+
+    private final MarkdownService markdownService = new MarkdownService();
+    private final DiagramService diagramService = new DiagramService();
 
     public enum EditorMode {
         RAW, SPLIT, FULL_PREVIEW
@@ -124,8 +129,10 @@ public class MainController {
 
         engine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
             if (newState == Worker.State.SUCCEEDED) {
+                injectMermaid();
                 previewReady = true;
                 applyPreviewHtml(currentPreviewHtml);
+                pushDiagrams(currentDiagrams, previewGeneration);
             } else if (newState == Worker.State.FAILED || newState == Worker.State.CANCELLED) {
                 previewReady = false;
             }
@@ -169,10 +176,63 @@ public class MainController {
         if (currentMode == EditorMode.RAW) {
             return;
         }
-        String markdown = textEditor.getText();
-        Node document = markdownParser.parse(markdown == null ? "" : markdown);
-        currentPreviewHtml = htmlRenderer.render(document);
+        Path baseDir = currentFile != null ? currentFile.toPath().toAbsolutePath().getParent() : null;
+        MarkdownService.Result result = markdownService.render(textEditor.getText(), baseDir);
+
+        currentPreviewHtml = result.html();
+        currentDiagrams = result.diagrams();
+        int generation = ++previewGeneration;
+
         applyPreviewHtml(currentPreviewHtml);
+        pushDiagrams(currentDiagrams, generation);
+    }
+
+    /**
+     * Fills in each PlantUML placeholder. Cached diagrams land synchronously so an
+     * unchanged diagram never flickers; the rest arrive from the render thread.
+     */
+    private void pushDiagrams(List<MarkdownService.Diagram> diagrams, int generation) {
+        for (MarkdownService.Diagram diagram : diagrams) {
+            String cached = diagramService.cached(diagram.source());
+            if (cached != null) {
+                setDiagram(diagram.id(), cached, generation);
+                continue;
+            }
+            diagramService.renderAsync(diagram.source()).thenAccept(svg ->
+                    Platform.runLater(() -> setDiagram(diagram.id(), svg, generation)));
+        }
+    }
+
+    private void setDiagram(String id, String svg, int generation) {
+        if (generation != previewGeneration || !previewReady) {
+            return; // Document moved on while this diagram was rendering.
+        }
+        try {
+            webView.getEngine().executeScript(
+                    "window.__mdSetDiagram(" + toJsStringLiteral(id) + "," + toJsStringLiteral(svg) + ");");
+        } catch (RuntimeException e) {
+            // Preview page was replaced mid-flight; the reload path re-pushes diagrams.
+        }
+    }
+
+    /**
+     * Evaluates the bundled mermaid build inside the preview page. It is injected via
+     * executeScript rather than a &lt;script&gt; tag because the minified source contains
+     * "&lt;/script&gt;" inside string literals, which would terminate the tag early.
+     */
+    private void injectMermaid() {
+        try (InputStream in = getClass().getResourceAsStream("/js/mermaid.min.js")) {
+            if (in == null) {
+                return; // Mermaid blocks stay as plain text; everything else still works.
+            }
+            String source = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            webView.getEngine().executeScript(source);
+            webView.getEngine().executeScript(
+                    "mermaid.initialize({startOnLoad:false, securityLevel:'strict', "
+                            + "theme:'default', fontFamily:'Segoe UI, Helvetica, Arial, sans-serif'});");
+        } catch (IOException | RuntimeException e) {
+            System.err.println("MDViewer: mermaid unavailable - " + e);
+        }
     }
 
     private void applyPreviewHtml(String html) {
@@ -279,10 +339,51 @@ public class MainController {
                     "a { color: #0366d6; text-decoration: none; }" +
                     "a:hover { text-decoration: underline; }" +
                     "ul, ol { padding-left: 2em; }" +
+                    // Diagrams: SVG scales down to the pane, never forces horizontal scroll.
+                    ".mdv-diagram, pre.mermaid {" +
+                        "margin: 16px 0;" +
+                        "padding: 8px;" +
+                        "background: #ffffff;" +
+                        "border: 1px solid #eaecef;" +
+                        "border-radius: 3px;" +
+                        "overflow-x: auto;" +
+                        "text-align: center;" +
+                    "}" +
+                    ".mdv-diagram svg, pre.mermaid svg { max-width: 100%; height: auto; }" +
+                    ".mdv-diagram-pending {" +
+                        "color: #6a737d;" +
+                        "font-style: italic;" +
+                        "text-align: left;" +
+                        "background: #f6f8fa;" +
+                    "}" +
+                    ".mdv-diagram-error {" +
+                        "color: #b31d28;" +
+                        "background: #ffeef0;" +
+                        "border: 1px solid #fdaeb7;" +
+                        "border-radius: 3px;" +
+                        "padding: 12px;" +
+                        "text-align: left;" +
+                        "font-family: SFMono-Regular, Consolas, monospace;" +
+                        "font-size: 90%;" +
+                    "}" +
                 "</style>" +
                 "<script>" +
+                    "window.__mdRunMermaid = function () {" +
+                        "if (!window.mermaid) { return; }" +
+                        "try {" +
+                            "var p = mermaid.run({ querySelector: '.mermaid' });" +
+                            "if (p && p.catch) { p.catch(function () {}); }" +
+                        "} catch (e) {}" +
+                    "};" +
                     "window.__mdSetBody = function (html) {" +
                         "document.body.innerHTML = html;" +
+                        "window.__mdRunMermaid();" +
+                    "};" +
+                    "window.__mdSetDiagram = function (id, svg) {" +
+                        "var el = document.getElementById(id);" +
+                        "if (!el) { return; }" +
+                        "el.className = 'mdv-diagram';" +
+                        "el.innerHTML = svg;" +
                     "};" +
                 "</script>" +
             "</head>" +
@@ -495,5 +596,10 @@ public class MainController {
         alert.setHeaderText(null);
         alert.setContentText(message);
         alert.showAndWait();
+    }
+
+    /** Releases the background diagram renderer; called from {@link MainApp#stop()}. */
+    public void dispose() {
+        diagramService.shutdown();
     }
 }
