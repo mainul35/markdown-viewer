@@ -1,50 +1,47 @@
 /*
- * Theme colours are declared once as looked-up colours and overridden wholesale by the
- * .dark-theme class that MainController toggles on the scene root. Rules below reference
- * only those names, so a new theme means editing one block rather than every selector.
+ * "Drafting plate" - the same palette the preview page uses, so the raw editor and the
+ * rendered document read as one product rather than two.
+ *
+ * Colours are declared once as looked-up colours and overridden wholesale by the
+ * .dark-theme class MainController toggles on the scene root. Rules below reference only
+ * those names, so a new theme means editing one block rather than every selector.
  */
 .root {
-    -fx-font-family: "Segoe UI", Arial, sans-serif;
+    -fx-font-family: "Segoe UI Variable Text", "Segoe UI", Arial, sans-serif;
 
+    -mdv-paper: #f6f8fa;
     -mdv-surface: #ffffff;
-    -mdv-surface-alt: #f6f8fa;
-    -mdv-border: #eaecef;
-    -mdv-text: #24292e;
-    -mdv-text-muted: #57606a;
-    -mdv-accent: #0366d6;
+    -mdv-surface-alt: #eef2f6;
+    -mdv-border: #dfe5ec;
+    -mdv-text: #16202b;
+    -mdv-text-muted: #5a6875;
+    -mdv-accent: #0b6e7f;
+    -mdv-accent-soft: #dceef1;
 }
 
 .root.dark-theme {
-    -mdv-surface: #1e1e1e;
-    -mdv-surface-alt: #252526;
-    -mdv-border: #3c3c3c;
-    -mdv-text: #e6e6e6;
-    -mdv-text-muted: #9d9d9d;
-    -mdv-accent: #4da3ff;
+    -mdv-paper: #0f1620;
+    -mdv-surface: #131c26;
+    -mdv-surface-alt: #16212d;
+    -mdv-border: #22303f;
+    -mdv-text: #d7dee6;
+    -mdv-text-muted: #8a9aaa;
+    -mdv-accent: #3fb8cc;
+    -mdv-accent-soft: #16323c;
 
     /* Re-tint JavaFX's built-in control palette so menus, dialogs, scrollbars and the
        text editor follow the theme without needing a rule for each control. */
-    -fx-base: #2b2b2b;
-    -fx-background: #1e1e1e;
-    -fx-control-inner-background: #1e1e1e;
-    -fx-control-inner-background-alt: #252526;
-    -fx-text-background-color: #e6e6e6;
-    -fx-accent: #094771;
-    -fx-focus-color: #4da3ff;
-    -fx-faint-focus-color: #4da3ff22;
+    -fx-base: #1b2632;
+    -fx-background: #0f1620;
+    -fx-control-inner-background: #131c26;
+    -fx-control-inner-background-alt: #16212d;
+    -fx-text-background-color: #d7dee6;
+    -fx-accent: #14505c;
+    -fx-focus-color: #3fb8cc;
+    -fx-faint-focus-color: #3fb8cc22;
 }
 
-.status-bar {
-    -fx-background-color: -mdv-surface-alt;
-    -fx-border-color: -mdv-border;
-    -fx-border-width: 1 0 0 0;
-    -fx-padding: 5 15 5 15;
-    -fx-font-size: 12px;
-}
-
-.status-bar .label {
-    -fx-text-fill: -mdv-text;
-}
+/* ------------------------------------------------------------------ chrome */
 
 .menu-bar {
     -fx-background-color: -mdv-surface;
@@ -53,147 +50,66 @@
 }
 
 .tool-bar {
-    -fx-background-color: -mdv-surface-alt;
+    -fx-background-color: -mdv-surface;
     -fx-border-color: -mdv-border;
     -fx-border-width: 0 0 1 0;
+    -fx-padding: 5 10 5 10;
 }
 
-.text-area {
-    -fx-font-family: "Consolas", "Courier New", monospace;
-    -fx-font-size: 14px;
-    -fx-padding: 10;
-    -fx-text-fill: -mdv-text;
+.tool-bar .button {
+    -fx-background-radius: 5;
+    -fx-border-radius: 5;
+    -fx-cursor: hand;
 }
 
-.text-area .content {
-    -fx-background-color: -mdv-surface;
+.status-bar {
+    -fx-background-color: -mdv-surface-alt;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 5 15 5 15;
+    -fx-font-size: 11.5px;
+}
+
+.status-bar .label {
+    -fx-text-fill: -mdv-text-muted;
 }
 
 .split-pane {
-    -fx-background-color: -mdv-surface;
+    -fx-background-color: -mdv-paper;
+    -fx-padding: 0;
 }
 
 .split-pane > .split-pane-divider {
     -fx-background-color: -mdv-border;
+    -fx-padding: 0 1 0 1;
 }
 
-/* ------------------------------------------------------ workspace explorer */
+/* ------------------------------------------------------------------ editor */
 
-.file-panel {
-    -fx-background-color: -mdv-surface-alt;
-    -fx-border-color: -mdv-border;
-    -fx-border-width: 0 1 0 0;
-}
-
-.file-panel-header {
-    -fx-padding: 4 4 4 10;
-    -fx-min-height: 30;
-    -fx-border-color: -mdv-border;
-    -fx-border-width: 0 0 1 0;
-}
-
-.file-panel-title {
-    -fx-font-size: 11px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -mdv-text-muted;
-}
-
-.reveal-button {
-    -fx-background-color: transparent;
-    -fx-padding: 3 6 3 6;
-    -fx-cursor: hand;
-}
-
-.reveal-button:hover {
-    -fx-background-color: -mdv-border;
-    -fx-background-radius: 3;
-}
-
-/* Shapes rather than an icon font, so the crosshair follows the theme colour. */
-.reveal-icon-ring,
-.reveal-icon-tick {
-    -fx-fill: transparent;
-    -fx-stroke: -mdv-text-muted;
-    -fx-stroke-width: 1.4;
-}
-
-.reveal-icon-dot {
-    -fx-fill: -mdv-accent;
-    -fx-stroke: transparent;
-}
-
-.reveal-button:hover .reveal-icon-ring,
-.reveal-button:hover .reveal-icon-tick {
-    -fx-stroke: -mdv-accent;
-}
-
-.file-tree {
-    -fx-background-color: -mdv-surface-alt;
-    -fx-border-width: 0;
-}
-
-.file-tree .tree-cell {
-    -fx-background-color: transparent;
-    -fx-text-fill: -mdv-text;
-    -fx-font-size: 12px;
-    -fx-padding: 2 4 2 4;
-}
-
-.file-tree .tree-cell:selected {
-    -fx-background-color: -fx-accent;
-    -fx-text-fill: white;
-}
-
-.file-tree .workspace-root-cell {
-    -fx-font-weight: bold;
-}
-
-/* ------------------------------------------------ workspace / document tabs */
-
-.workspace-tabs > .tab-header-area > .headers-region > .tab {
-    -fx-padding: 4 12 4 12;
-}
-
-.workspace-tabs > .tab-header-area > .tab-header-background {
-    -fx-background-color: -mdv-surface-alt;
-}
-
-/* The inner strip sits directly under its workspace tab; keeping it visually
-   lighter makes the grouping obvious at a glance. */
-.document-tabs > .tab-header-area {
-    -fx-padding: 0;
-}
-
-.document-tabs > .tab-header-area > .tab-header-background {
-    -fx-background-color: -mdv-surface;
-    -fx-border-color: -mdv-border;
-    -fx-border-width: 0 0 1 0;
-}
-
-.document-tabs > .tab-header-area > .headers-region > .tab {
-    -fx-padding: 2 10 2 10;
-}
-
-.document-tabs .tab-label {
-    -fx-font-size: 12px;
+.editor-pane {
+    -fx-background-color: -mdv-paper;
 }
 
 .markdown-editor {
-    -fx-font-family: "Consolas", "Courier New", monospace;
-    -fx-font-size: 14px;
-    -fx-padding: 10;
+    -fx-font-family: "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 13.5px;
+    -fx-padding: 8 4 8 4;
     -fx-text-fill: -mdv-text;
+    -fx-highlight-fill: -mdv-accent-soft;
+    -fx-highlight-text-fill: -mdv-text;
+    -fx-background-color: transparent;
 }
 
 .markdown-editor .content {
-    -fx-background-color: -mdv-surface;
+    -fx-background-color: -mdv-paper;
+    -fx-padding: 6 14 6 14;
+}
+
+.markdown-editor:focused {
+    -fx-background-color: transparent;
 }
 
 /* ---------------------------------------------------------------- find bar */
-
-.editor-pane {
-    -fx-background-color: -mdv-surface;
-}
 
 .find-bar {
     -fx-background-color: -mdv-surface-alt;
@@ -210,7 +126,7 @@
 }
 
 .find-field {
-    -fx-font-family: "Consolas", monospace;
+    -fx-font-family: "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
     -fx-font-size: 12px;
     -fx-background-radius: 5;
     -fx-border-radius: 5;
@@ -249,6 +165,7 @@
 }
 
 .find-icon-button:hover {
+    -fx-background-color: -mdv-accent-soft;
     -fx-background-radius: 5;
     -fx-text-fill: -mdv-accent;
 }
@@ -257,4 +174,142 @@
     -fx-background-radius: 5;
     -fx-cursor: hand;
     -fx-font-size: 11.5px;
+}
+
+/* ------------------------------------------------------ workspace explorer */
+
+.file-panel {
+    -fx-background-color: -mdv-surface-alt;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 1 0 0;
+}
+
+.file-panel-header {
+    -fx-padding: 5 5 5 12;
+    -fx-min-height: 32;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 0 1 0;
+}
+
+.file-panel-title {
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+.reveal-button {
+    -fx-background-color: transparent;
+    -fx-padding: 3 6 3 6;
+    -fx-cursor: hand;
+}
+
+.reveal-button:hover {
+    -fx-background-color: -mdv-accent-soft;
+    -fx-background-radius: 5;
+}
+
+/* Shapes rather than an icon font, so the crosshair follows the theme colour. */
+.reveal-icon-ring,
+.reveal-icon-tick {
+    -fx-fill: transparent;
+    -fx-stroke: -mdv-text-muted;
+    -fx-stroke-width: 1.4;
+}
+
+.reveal-icon-dot {
+    -fx-fill: -mdv-accent;
+    -fx-stroke: transparent;
+}
+
+.reveal-button:hover .reveal-icon-ring,
+.reveal-button:hover .reveal-icon-tick {
+    -fx-stroke: -mdv-accent;
+}
+
+.file-tree {
+    -fx-background-color: -mdv-surface-alt;
+    -fx-border-width: 0;
+}
+
+.file-tree .tree-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: -mdv-text;
+    -fx-font-size: 12px;
+    -fx-padding: 3 4 3 4;
+}
+
+.file-tree .tree-cell:hover {
+    -fx-background-color: -mdv-accent-soft;
+}
+
+.file-tree .tree-cell:selected {
+    -fx-background-color: -mdv-accent;
+    -fx-text-fill: white;
+}
+
+.file-tree .workspace-root-cell {
+    -fx-font-weight: bold;
+}
+
+/* ------------------------------------------------ workspace / document tabs */
+
+.workspace-tabs > .tab-header-area > .tab-header-background {
+    -fx-background-color: -mdv-surface-alt;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 0 1 0;
+}
+
+.workspace-tabs > .tab-header-area > .headers-region > .tab {
+    -fx-background-color: transparent;
+    -fx-background-radius: 0;
+    -fx-padding: 5 14 5 14;
+}
+
+/* An accent rule marks the selected workspace - the tab strips carry the grouping,
+   so which one is active has to be readable at a glance. */
+.workspace-tabs > .tab-header-area > .headers-region > .tab:selected {
+    -fx-background-color: -mdv-surface;
+    -fx-border-color: -mdv-accent transparent transparent transparent;
+    -fx-border-width: 2 0 0 0;
+}
+
+.workspace-tabs > .tab-header-area > .headers-region > .tab .tab-label {
+    -fx-text-fill: -mdv-text-muted;
+    -fx-font-size: 12px;
+}
+
+.workspace-tabs > .tab-header-area > .headers-region > .tab:selected .tab-label {
+    -fx-text-fill: -mdv-text;
+    -fx-font-weight: bold;
+}
+
+.document-tabs > .tab-header-area {
+    -fx-padding: 0;
+}
+
+.document-tabs > .tab-header-area > .tab-header-background {
+    -fx-background-color: -mdv-surface;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 0 1 0;
+}
+
+.document-tabs > .tab-header-area > .headers-region > .tab {
+    -fx-background-color: transparent;
+    -fx-background-radius: 0;
+    -fx-padding: 3 11 3 11;
+}
+
+.document-tabs > .tab-header-area > .headers-region > .tab:selected {
+    -fx-background-color: -mdv-paper;
+    -fx-border-color: transparent transparent -mdv-accent transparent;
+    -fx-border-width: 0 0 2 0;
+}
+
+.document-tabs .tab-label {
+    -fx-font-size: 11.5px;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+.document-tabs > .tab-header-area > .headers-region > .tab:selected .tab-label {
+    -fx-text-fill: -mdv-text;
 }
