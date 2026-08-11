@@ -28,7 +28,9 @@ public final class DiagramService {
     static {
         // Must be set before any PlantUML class initializes.
         System.setProperty("PLANTUML_SECURITY_PROFILE", "SANDBOX");
-        System.setProperty("java.awt.headless", "true");
+        // Deliberately not forcing java.awt.headless: PlantUML renders fine without it,
+        // and headless mode disables Desktop, which is what moves deleted files to the
+        // recycle bin instead of destroying them.
     }
 
     /** {@code !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/<ref>/C4_Xxx.puml} */

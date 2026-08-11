@@ -3,7 +3,10 @@ package com.mdviewer.ui;
 import javafx.geometry.Pos;
 import javafx.scene.Group;
 import javafx.scene.control.Button;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuItem;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.Tooltip;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
@@ -29,6 +32,22 @@ public final class FileTreePanel extends VBox {
     private final Button revealButton = new Button();
 
     private Consumer<Path> onFileActivated = p -> { };
+    private FileActions fileActions;
+
+    /**
+     * File-system operations the explorer offers. The panel decides what to show for the
+     * clicked row; the controller carries them out, because it owns the dialogs and knows
+     * which documents are open.
+     */
+    public interface FileActions {
+        void createFile(Path parentDirectory);
+
+        void createFolder(Path parentDirectory);
+
+        void rename(Path target);
+
+        void delete(Path target);
+    }
 
     public FileTreePanel() {
         getStyleClass().add("file-panel");
@@ -101,6 +120,106 @@ public final class FileTreePanel extends VBox {
 
     public void setOnFileActivated(Consumer<Path> handler) {
         this.onFileActivated = handler == null ? p -> { } : handler;
+    }
+
+    public void setFileActions(FileActions fileActions) {
+        this.fileActions = fileActions;
+        treeView.setContextMenu(null);
+        installContextMenu();
+    }
+
+    /**
+     * Builds the menu against whichever row was right-clicked, so "New file" lands in the
+     * folder you pointed at rather than somewhere implied.
+     */
+    private void installContextMenu() {
+        ContextMenu menu = new ContextMenu();
+        treeView.setContextMenu(menu);
+        menu.setOnShowing(event -> {
+            menu.getItems().clear();
+            if (fileActions == null) {
+                return;
+            }
+            TreeItem<Path> selected = treeView.getSelectionModel().getSelectedItem();
+            Path target = selected == null ? null : selected.getValue();
+            boolean isDirectory = selected instanceof PathTreeItem item && item.isDirectory();
+            // Files get their containing folder, so "New file" beside a file works.
+            Path parent = target == null ? firstRoot()
+                    : (isDirectory ? target : target.getParent());
+
+            if (parent != null) {
+                menu.getItems().addAll(
+                        item("New file...", () -> fileActions.createFile(parent)),
+                        item("New folder...", () -> fileActions.createFolder(parent)));
+            }
+            if (target != null) {
+                if (!menu.getItems().isEmpty()) {
+                    menu.getItems().add(new SeparatorMenuItem());
+                }
+                if (!isDirectory) {
+                    menu.getItems().add(item("Open", () -> onFileActivated.accept(target)));
+                }
+                menu.getItems().addAll(
+                        item("Rename...", () -> fileActions.rename(target)),
+                        item("Delete", () -> fileActions.delete(target)));
+            }
+            if (menu.getItems().isEmpty()) {
+                event.consume();
+            }
+        });
+    }
+
+    private static MenuItem item(String label, Runnable action) {
+        MenuItem menuItem = new MenuItem(label);
+        menuItem.setOnAction(e -> action.run());
+        return menuItem;
+    }
+
+    private Path firstRoot() {
+        return hiddenRoot.getChildren().isEmpty() ? null
+                : hiddenRoot.getChildren().get(0).getValue();
+    }
+
+    /**
+     * Re-reads a directory after it changes on disk. The tree caches listings, so a file
+     * created or removed here would otherwise not appear until the folder was collapsed
+     * and expanded again.
+     */
+    public void refresh(Path directory) {
+        if (directory == null) {
+            return;
+        }
+        Path normalized = directory.toAbsolutePath().normalize();
+        for (TreeItem<Path> rootItem : hiddenRoot.getChildren()) {
+            PathTreeItem found = findItem(rootItem, normalized);
+            if (found != null) {
+                boolean wasExpanded = found.isExpanded();
+                found.invalidate();
+                found.setExpanded(wasExpanded);
+                // Touching children forces the re-read while the node stays expanded.
+                found.getChildren();
+                return;
+            }
+        }
+    }
+
+    private PathTreeItem findItem(TreeItem<Path> node, Path target) {
+        if (!(node instanceof PathTreeItem item) || !item.isDirectory()) {
+            return null;
+        }
+        if (item.getValue().equals(target)) {
+            return item;
+        }
+        if (!target.startsWith(item.getValue())) {
+            return null;
+        }
+        for (TreeItem<Path> child : item.getChildren()) {
+            PathTreeItem found = findItem(child, target);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
     }
 
     public void setOnReveal(Runnable handler) {
