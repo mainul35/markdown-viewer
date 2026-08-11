@@ -19,6 +19,9 @@ import javafx.scene.shape.Circle;
 import javafx.scene.shape.Line;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 /**
@@ -34,6 +37,7 @@ public final class FileTreePanel extends VBox {
 
     private Consumer<Path> onFileActivated = p -> { };
     private FileActions fileActions;
+    private Runnable onRefreshRequested;
 
     /**
      * File-system operations the explorer offers. The panel decides what to show for the
@@ -177,9 +181,21 @@ public final class FileTreePanel extends VBox {
                         item("Delete", () -> fileActions.delete(target)));
             }
         }
+        if (onRefreshRequested != null) {
+            if (!contextMenu.getItems().isEmpty()) {
+                contextMenu.getItems().add(new SeparatorMenuItem());
+            }
+            // Offered on the empty-space menu too, which is the one a user reaches for
+            // when the tree looks wrong and there is no particular row to blame.
+            contextMenu.getItems().add(item("Refresh workspaces", onRefreshRequested));
+        }
         if (!contextMenu.getItems().isEmpty()) {
             contextMenu.show(this, screenX, screenY);
         }
+    }
+
+    public void setOnRefreshRequested(Runnable handler) {
+        this.onRefreshRequested = handler;
     }
 
     private static MenuItem item(String label, Runnable action) {
@@ -216,14 +232,67 @@ public final class FileTreePanel extends VBox {
         }
     }
 
+    /**
+     * The directories whose listings are cached and could therefore be out of date.
+     *
+     * <p>Handed to a background thread, which reads each one with
+     * {@link PathTreeItem#readEntries} and passes the result back to
+     * {@link #applyListings}. Split in two because that read is far too slow for the FX
+     * thread - a single folder can cost thousands of directory entries - while the merge
+     * touches live scene-graph nodes and so can only happen on it.
+     */
+    public List<Path> loadedDirectories() {
+        List<Path> directories = new ArrayList<>();
+        for (TreeItem<Path> rootItem : hiddenRoot.getChildren()) {
+            if (rootItem instanceof PathTreeItem item) {
+                item.collectLoadedDirectories(directories);
+            }
+        }
+        return directories;
+    }
+
+    /**
+     * Merges freshly read listings into the tree, keeping the user's place.
+     *
+     * <p>Expansion state rides on the {@code TreeItem}s themselves, which the merge
+     * preserves; selection is by item and does not survive a {@code setAll}, so it is
+     * captured by path and restored afterwards.
+     *
+     * @return true if any file or folder appeared or disappeared
+     */
+    public boolean applyListings(Map<Path, List<Path>> listings) {
+        TreeItem<Path> selected = treeView.getSelectionModel().getSelectedItem();
+        Path selectedPath = selected == null ? null : selected.getValue();
+
+        boolean changed = false;
+        for (TreeItem<Path> rootItem : hiddenRoot.getChildren()) {
+            if (rootItem instanceof PathTreeItem item && item.applyListings(listings)) {
+                changed = true;
+            }
+        }
+
+        if (changed && selectedPath != null) {
+            for (TreeItem<Path> rootItem : hiddenRoot.getChildren()) {
+                PathTreeItem again = findItem(rootItem, selectedPath);
+                if (again != null) {
+                    treeView.getSelectionModel().select(again);
+                    break;
+                }
+            }
+        }
+        return changed;
+    }
+
     private PathTreeItem findItem(TreeItem<Path> node, Path target) {
-        if (!(node instanceof PathTreeItem item) || !item.isDirectory()) {
+        if (!(node instanceof PathTreeItem item)) {
             return null;
         }
+        // Equality before the directory test: callers look for files too, and a file that
+        // is its own match must not be rejected for having no children to descend into.
         if (item.getValue().equals(target)) {
             return item;
         }
-        if (!target.startsWith(item.getValue())) {
+        if (!item.isDirectory() || !target.startsWith(item.getValue())) {
             return null;
         }
         for (TreeItem<Path> child : item.getChildren()) {

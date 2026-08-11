@@ -94,6 +94,18 @@ rather than the module path.
   scrolls to it, which is the point of it when a workspace holds hundreds of files.
   **View → Hide Explorer** collapses the panel.
 
+- **Workspace refresh:** the explorer caches directory listings, so a file written outside
+  the app — by a build, a `git pull`, or another editor — would otherwise stay invisible
+  until you collapsed and re-expanded its folder. **View → Refresh Workspaces** (F5) and
+  *Refresh workspaces* on the explorer's right-click menu re-read it on demand, and
+  **Settings → Auto-refresh Workspaces** does the same every 5 minutes. The toggle is on by
+  default and is a toggle because a workspace on a network share is exactly where the scan
+  stops being free.
+
+  The refresh is a merge, not a reload: folders that are still there keep their identity, so
+  your expanded folders stay expanded and your selection stays selected. Only directories
+  already read are re-read, so refreshing never forces the lazy tree to load anything.
+
 - **Two-level tabs:** workspace tabs on top, and under each one only the files belonging to
   that workspace. Many open files stay legible because they are grouped by origin instead of
   forming one long strip. Each document keeps its own editor, so undo history and caret

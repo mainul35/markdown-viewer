@@ -1,6 +1,8 @@
 package com.mdviewer;
 
+import javafx.animation.KeyFrame;
 import javafx.animation.PauseTransition;
+import javafx.animation.Timeline;
 import javafx.application.HostServices;
 import javafx.application.Platform;
 import javafx.concurrent.Worker;
@@ -28,6 +30,7 @@ import com.mdviewer.ui.FileTreePanel;
 import com.mdviewer.ui.CropDialog;
 import com.mdviewer.ui.FindBar;
 import com.mdviewer.ui.MarkdownFiles;
+import com.mdviewer.ui.PathTreeItem;
 import com.mdviewer.ui.PreviewToolbar;
 import com.mdviewer.ui.WorkspaceView;
 
@@ -39,8 +42,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class MainController {
 
@@ -73,6 +78,25 @@ public class MainController {
 
     @FXML
     private MenuItem explorerMenuItem;
+
+    @FXML
+    private CheckMenuItem autoRefreshMenuItem;
+
+    /**
+     * Re-reads the workspace tree on a timer. The explorer caches directory listings, so a
+     * file added outside the app - by a build, a git pull, or another editor - is invisible
+     * until something re-reads the folder.
+     *
+     * <p>Five minutes: long enough that the scan never competes with typing, short enough
+     * that a file written in another window is there by the time you look for it. Manual
+     * refresh exists for when that is not soon enough.
+     */
+    private static final Duration WORKSPACE_SYNC_INTERVAL = Duration.minutes(5);
+
+    private Timeline workspaceSync;
+
+    /** Guards against a slow scan overlapping the next tick, or a manual refresh. */
+    private boolean workspaceSyncRunning = false;
 
     private Stage primaryStage;
     private HostServices hostServices;
@@ -173,7 +197,15 @@ public class MainController {
         fileTreePanel.setOnFileActivated(path -> openFile(path.toFile()));
         fileTreePanel.setOnReveal(this::handleRevealInTree);
         fileTreePanel.setFileActions(new ExplorerFileActions());
+        fileTreePanel.setOnRefreshRequested(this::handleRefreshWorkspaces);
         explorerHost.getChildren().add(fileTreePanel);
+
+        workspaceSync = new Timeline(
+                new KeyFrame(WORKSPACE_SYNC_INTERVAL, e -> syncWorkspaces(false)));
+        workspaceSync.setCycleCount(Timeline.INDEFINITE);
+        if (autoRefreshMenuItem.isSelected()) {
+            workspaceSync.play();
+        }
 
         previewDebounce = new PauseTransition(Duration.millis(200));
         previewDebounce.setOnFinished(e -> updatePreview());
@@ -795,6 +827,71 @@ public class MainController {
     @FXML
     private void handleToggleExplorer() {
         showExplorer(!isExplorerVisible());
+    }
+
+    @FXML
+    private void handleRefreshWorkspaces() {
+        syncWorkspaces(true);
+    }
+
+    @FXML
+    private void handleToggleAutoRefresh() {
+        if (autoRefreshMenuItem.isSelected()) {
+            workspaceSync.playFromStart();
+            setTransientStatus("Auto-refresh on - workspaces re-read every 5 minutes.");
+        } else {
+            workspaceSync.stop();
+            setTransientStatus("Auto-refresh off - use View > Refresh Workspaces.");
+        }
+    }
+
+    /**
+     * Re-reads every cached directory and merges what changed into the tree.
+     *
+     * <p>The read happens on a background thread and the merge on the FX thread, because
+     * the two have opposite constraints: listing a folder runs the markdown scan over
+     * potentially thousands of entries, while the merge touches live scene-graph nodes.
+     * Doing the whole thing on the FX thread would stall the UI every five minutes; doing
+     * it all off the thread is not allowed.
+     *
+     * @param announce true for a manual refresh, which reports even when nothing changed -
+     *                 silence would leave the user unsure the click did anything. The timer
+     *                 stays quiet unless it actually found something.
+     */
+    private void syncWorkspaces(boolean announce) {
+        if (workspaceSyncRunning) {
+            if (announce) {
+                setTransientStatus("Already refreshing...");
+            }
+            return;
+        }
+        List<Path> directories = fileTreePanel.loadedDirectories();
+        if (directories.isEmpty()) {
+            if (announce) {
+                setTransientStatus("No workspace is open.");
+            }
+            return;
+        }
+
+        workspaceSyncRunning = true;
+        Thread scan = new Thread(() -> {
+            Map<Path, List<Path>> listings = new HashMap<>();
+            for (Path directory : directories) {
+                listings.put(directory, PathTreeItem.readEntries(directory));
+            }
+            Platform.runLater(() -> {
+                workspaceSyncRunning = false;
+                boolean changed = fileTreePanel.applyListings(listings);
+                if (changed) {
+                    setTransientStatus("Workspace refreshed.");
+                } else if (announce) {
+                    setTransientStatus("Workspace is up to date.");
+                }
+            });
+        }, "workspace-sync");
+        // Daemon: a scan in flight must never hold the JVM open when the window closes.
+        scan.setDaemon(true);
+        scan.start();
     }
 
     private boolean isExplorerVisible() {
