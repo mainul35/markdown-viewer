@@ -30,6 +30,7 @@ public final class FileTreePanel extends VBox {
     private final TreeView<Path> treeView = new TreeView<>();
     private final TreeItem<Path> hiddenRoot = new TreeItem<>(null);
     private final Button revealButton = new Button();
+    private final ContextMenu contextMenu = new ContextMenu();
 
     private Consumer<Path> onFileActivated = p -> { };
     private FileActions fileActions;
@@ -72,6 +73,12 @@ public final class FileTreePanel extends VBox {
         treeView.getStyleClass().add("file-tree");
         treeView.setCellFactory(tv -> new PathCell());
         VBox.setVgrow(treeView, Priority.ALWAYS);
+
+        treeView.setOnContextMenuRequested(event -> {
+            // Reached only when the click missed every cell, since cells consume their own.
+            showContextMenu(null, event.getScreenX(), event.getScreenY());
+            event.consume();
+        });
 
         treeView.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
@@ -124,49 +131,55 @@ public final class FileTreePanel extends VBox {
 
     public void setFileActions(FileActions fileActions) {
         this.fileActions = fileActions;
-        treeView.setContextMenu(null);
-        installContextMenu();
     }
 
     /**
-     * Builds the menu against whichever row was right-clicked, so "New file" lands in the
-     * folder you pointed at rather than somewhere implied.
+     * Opens the menu for one row, built for that row.
+     *
+     * <p>Shown from the cell rather than handed to {@code TreeView.setContextMenu}: JavaFX
+     * skips showing a control's context menu while it has no items, so a menu that is
+     * filled in on the way up never appears at all. Doing it here also fixes the target -
+     * a right click does not move the selection, so a menu built from the selected row
+     * would act on whatever was clicked previously.
      */
-    private void installContextMenu() {
-        ContextMenu menu = new ContextMenu();
-        treeView.setContextMenu(menu);
-        menu.setOnShowing(event -> {
-            menu.getItems().clear();
-            if (fileActions == null) {
-                return;
-            }
-            TreeItem<Path> selected = treeView.getSelectionModel().getSelectedItem();
-            Path target = selected == null ? null : selected.getValue();
-            boolean isDirectory = selected instanceof PathTreeItem item && item.isDirectory();
-            // Files get their containing folder, so "New file" beside a file works.
-            Path parent = target == null ? firstRoot()
-                    : (isDirectory ? target : target.getParent());
+    void showContextMenu(TreeItem<Path> row, double screenX, double screenY) {
+        contextMenu.hide();
+        contextMenu.getItems().clear();
+        if (fileActions == null) {
+            return;
+        }
 
-            if (parent != null) {
-                menu.getItems().addAll(
-                        item("New file...", () -> fileActions.createFile(parent)),
-                        item("New folder...", () -> fileActions.createFolder(parent)));
+        Path target = row == null ? null : row.getValue();
+        boolean isDirectory = row instanceof PathTreeItem item && item.isDirectory();
+        boolean isWorkspaceRoot = row != null && row.getParent() == hiddenRoot;
+        // A file contributes its folder, so creating a sibling works without first
+        // pointing at the folder.
+        Path parent = target == null ? firstRoot() : (isDirectory ? target : target.getParent());
+
+        if (parent != null) {
+            contextMenu.getItems().addAll(
+                    item("New file...", () -> fileActions.createFile(parent)),
+                    item("New folder...", () -> fileActions.createFolder(parent)));
+        }
+        if (target != null) {
+            if (!contextMenu.getItems().isEmpty()) {
+                contextMenu.getItems().add(new SeparatorMenuItem());
             }
-            if (target != null) {
-                if (!menu.getItems().isEmpty()) {
-                    menu.getItems().add(new SeparatorMenuItem());
-                }
-                if (!isDirectory) {
-                    menu.getItems().add(item("Open", () -> onFileActivated.accept(target)));
-                }
-                menu.getItems().addAll(
+            if (!isDirectory) {
+                contextMenu.getItems().add(item("Open", () -> onFileActivated.accept(target)));
+            }
+            // A workspace root is the workspace itself; renaming or binning it from here
+            // would leave the open workspace pointing at nothing. Close it from the File
+            // menu instead.
+            if (!isWorkspaceRoot) {
+                contextMenu.getItems().addAll(
                         item("Rename...", () -> fileActions.rename(target)),
                         item("Delete", () -> fileActions.delete(target)));
             }
-            if (menu.getItems().isEmpty()) {
-                event.consume();
-            }
-        });
+        }
+        if (!contextMenu.getItems().isEmpty()) {
+            contextMenu.show(this, screenX, screenY);
+        }
     }
 
     private static MenuItem item(String label, Runnable action) {
@@ -310,6 +323,20 @@ public final class FileTreePanel extends VBox {
 
     /** Renders the file name; workspace roots are marked so CSS can emphasise them. */
     private final class PathCell extends TreeCell<Path> {
+
+        PathCell() {
+            setOnContextMenuRequested(event -> {
+                TreeItem<Path> row = isEmpty() ? null : getTreeItem();
+                if (row != null) {
+                    // Right-clicking does not move the selection by itself, and the menu
+                    // should act on the row under the pointer.
+                    treeView.getSelectionModel().select(row);
+                }
+                showContextMenu(row, event.getScreenX(), event.getScreenY());
+                event.consume();
+            });
+        }
+
         @Override
         protected void updateItem(Path item, boolean empty) {
             super.updateItem(item, empty);
