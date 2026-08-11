@@ -13,12 +13,14 @@ public class MainApp extends Application {
 
     private static File currentFile;
 
+    private MainController controller;
+
     @Override
     public void start(Stage primaryStage) throws IOException {
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/fxml/main.fxml"));
         Parent root = loader.load();
 
-        MainController controller = loader.getController();
+        controller = loader.getController();
         controller.setPrimaryStage(primaryStage);
         controller.setHostServices(getHostServices());
 
@@ -32,6 +34,13 @@ public class MainApp extends Application {
         if (getParameters().getRaw().size() > 0) {
             String filePath = getParameters().getRaw().get(0);
             controller.openFile(new File(filePath));
+        }
+    }
+
+    @Override
+    public void stop() {
+        if (controller != null) {
+            controller.dispose();
         }
     }
 

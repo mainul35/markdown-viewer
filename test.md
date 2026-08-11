@@ -35,3 +35,27 @@ public class Hello {
 ### Links
 
 [Visit GitHub](https://github.com)
+
+### Mermaid Diagram
+
+```mermaid
+graph LR
+  A[Markdown] --> B[MarkdownService]
+  B --> C[WebView preview]
+  B --> D[DiagramService]
+  D --> C
+```
+
+### PlantUML Diagram
+
+```plantuml
+@startuml
+actor User
+participant MDViewer
+participant PlantUML
+User -> MDViewer: open .md
+MDViewer -> PlantUML: render diagram
+PlantUML --> MDViewer: SVG
+MDViewer --> User: preview
+@enduml
+```
