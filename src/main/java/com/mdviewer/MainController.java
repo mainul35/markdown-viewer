@@ -22,6 +22,7 @@ import com.mdviewer.service.DiagramService;
 import com.mdviewer.service.ImageRef;
 import com.mdviewer.service.MarkdownService;
 import com.mdviewer.service.SourceEdits;
+import com.mdviewer.service.Trash;
 import com.mdviewer.ui.DocumentView;
 import com.mdviewer.ui.FileTreePanel;
 import com.mdviewer.ui.CropDialog;
@@ -171,6 +172,7 @@ public class MainController {
         fileTreePanel = new FileTreePanel();
         fileTreePanel.setOnFileActivated(path -> openFile(path.toFile()));
         fileTreePanel.setOnReveal(this::handleRevealInTree);
+        fileTreePanel.setFileActions(new ExplorerFileActions());
         explorerHost.getChildren().add(fileTreePanel);
 
         previewDebounce = new PauseTransition(Duration.millis(200));
@@ -603,6 +605,174 @@ public class MainController {
         alert.setHeaderText("MDViewer - Markdown Editor");
         alert.setContentText("Version 1.0.0\nA professional desktop Markdown editor built with JavaFX.");
         alert.showAndWait();
+    }
+
+    // ------------------------------------------------------ file operations
+
+    /**
+     * File-system actions offered by the explorer's context menu.
+     *
+     * <p>Every one of these changes the disk, so each confirms or validates first, and
+     * deletion goes to the recycle bin rather than being unrecoverable.
+     */
+    private final class ExplorerFileActions implements FileTreePanel.FileActions {
+
+        @Override
+        public void createFile(Path parentDirectory) {
+            String name = askForName("New file", "File name", "untitled.md");
+            if (name != null) {
+                createFileNamed(parentDirectory, name);
+            }
+        }
+
+        @Override
+        public void createFolder(Path parentDirectory) {
+            String name = askForName("New folder", "Folder name", "new-folder");
+            if (name != null) {
+                createFolderNamed(parentDirectory, name);
+            }
+        }
+
+        @Override
+        public void rename(Path target) {
+            String current = target.getFileName().toString();
+            String name = askForName("Rename", "New name", current);
+            if (name != null && !name.equals(current)) {
+                renameTo(target, name);
+            }
+        }
+
+        @Override
+        public void delete(Path target) {
+            boolean directory = Files.isDirectory(target);
+            String destination = Trash.trashSupported() ? "moved to the recycle bin"
+                    : "deleted permanently - this system has no recycle bin available";
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+            confirm.initOwner(primaryStage);
+            confirm.setTitle("Delete");
+            confirm.setHeaderText("Delete " + target.getFileName() + "?");
+            confirm.setContentText(directory
+                    ? "The folder and everything inside it will be " + destination + "."
+                    : "It will be " + destination + ".");
+            ButtonType deleteButton = new ButtonType("Delete");
+            ButtonType cancel = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+            confirm.getButtonTypes().setAll(deleteButton, cancel);
+            if (confirm.showAndWait().orElse(cancel) == deleteButton) {
+                deleteTarget(target);
+            }
+        }
+    }
+
+    // The operations themselves, without the prompting, so the file-system behaviour can
+    // be exercised directly rather than through modal dialogs.
+
+    private void createFileNamed(Path parentDirectory, String rawName) {
+        String name = MarkdownFiles.isMarkdown(Path.of(rawName)) ? rawName : rawName + ".md";
+        Path target = parentDirectory.resolve(name);
+        if (Files.exists(target)) {
+            showAlert("Already exists", name + " is already in that folder.");
+            return;
+        }
+        try {
+            Files.createFile(target);
+            fileTreePanel.refresh(parentDirectory);
+            openFile(target.toFile());
+        } catch (IOException e) {
+            showAlert("Error", "Could not create the file: " + e.getMessage());
+        }
+    }
+
+    private void createFolderNamed(Path parentDirectory, String name) {
+        Path target = parentDirectory.resolve(name);
+        try {
+            Files.createDirectories(target);
+            fileTreePanel.refresh(parentDirectory);
+            // A folder with no markdown in it is filtered out of the tree, so say so
+            // rather than leaving the user wondering where it went.
+            setTransientStatus(MarkdownFiles.containsMarkdown(target)
+                    ? "Created " + name
+                    : "Created " + name + " - it appears once it holds a Markdown file.");
+        } catch (IOException e) {
+            showAlert("Error", "Could not create the folder: " + e.getMessage());
+        }
+    }
+
+    private void renameTo(Path target, String name) {
+        Path destination = target.resolveSibling(name);
+        if (Files.exists(destination)) {
+            showAlert("Already exists", name + " is already in that folder.");
+            return;
+        }
+        try {
+            Files.move(target, destination);
+        } catch (IOException e) {
+            showAlert("Error", "Could not rename: " + e.getMessage());
+            return;
+        }
+        // A document open from the old path has to follow it, or saving would write the
+        // file back under its previous name.
+        for (WorkspaceView workspace : workspaces) {
+            for (DocumentView document : workspace.getDocuments()) {
+                Path path = document.getPath();
+                if (path == null) {
+                    continue;
+                }
+                if (path.equals(target)) {
+                    document.setPath(destination);
+                } else if (path.startsWith(target)) {
+                    document.setPath(destination.resolve(target.relativize(path)));
+                }
+            }
+        }
+        fileTreePanel.refresh(target.getParent());
+        updateStatus();
+        updateTitle();
+    }
+
+    private void deleteTarget(Path target) {
+        closeDocumentsUnder(target);
+        if (!Trash.moveToTrash(target)) {
+            showAlert("Error", "Could not delete " + target.getFileName()
+                    + ". It may be open in another program.");
+            return;
+        }
+        fileTreePanel.refresh(target.getParent());
+        setTransientStatus(Trash.trashSupported()
+                ? "Moved " + target.getFileName() + " to the recycle bin."
+                : "Deleted " + target.getFileName() + ".");
+    }
+
+    /** Closes tabs for anything being deleted; their file is about to disappear. */
+    private void closeDocumentsUnder(Path target) {
+        for (WorkspaceView workspace : List.copyOf(workspaces)) {
+            for (DocumentView document : List.copyOf(workspace.getDocuments())) {
+                Path path = document.getPath();
+                if (path != null && (path.equals(target) || path.startsWith(target))) {
+                    document.setModified(false); // Do not prompt to save a deleted file.
+                    workspace.getDocuments().remove(document);
+                    workspace.getDocumentTabs().getTabs().remove(document.getTab());
+                }
+            }
+        }
+        onActiveDocumentChanged();
+    }
+
+    private String askForName(String title, String label, String initial) {
+        TextInputDialog dialog = new TextInputDialog(initial);
+        dialog.initOwner(primaryStage);
+        dialog.setTitle(title);
+        dialog.setHeaderText(null);
+        dialog.setContentText(label);
+        String name = dialog.showAndWait().map(String::trim).orElse("");
+        if (name.isEmpty()) {
+            return null;
+        }
+        // A name with a separator in it would silently write outside the chosen folder.
+        if (name.contains("/") || name.contains("\\") || name.contains("..")) {
+            showAlert("Invalid name", "Use a plain file name, without path separators.");
+            return null;
+        }
+        return name;
     }
 
     // -------------------------------------------------------------- explorer
