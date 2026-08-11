@@ -9,24 +9,40 @@
     <top>
         <VBox>
             <MenuBar>
+            <!--
+                "shortcut" rather than "control" so the accelerator is Ctrl on Windows and
+                Linux and Cmd on macOS, which is what each platform's users press.
+            -->
                 <Menu text="File">
-                    <MenuItem text="New" onAction="#handleNewFile"/>
-                    <MenuItem text="Open..." onAction="#handleOpenFile"/>
-                    <MenuItem text="Open Folder..." onAction="#handleOpenFolder"/>
-                    <MenuItem text="Save" onAction="#handleSaveFile"/>
-                    <MenuItem text="Save As..." onAction="#handleSaveAs"/>
+                    <MenuItem text="New" onAction="#handleNewFile">
+                        <accelerator><KeyCodeCombination alt="UP" code="N" control="UP" meta="UP" shift="UP" shortcut="DOWN"/></accelerator>
+                    </MenuItem>
+                    <MenuItem text="Open..." onAction="#handleOpenFile">
+                        <accelerator><KeyCodeCombination alt="UP" code="O" control="UP" meta="UP" shift="UP" shortcut="DOWN"/></accelerator>
+                    </MenuItem>
+                    <MenuItem text="Open Folder..." onAction="#handleOpenFolder">
+                        <accelerator><KeyCodeCombination alt="UP" code="O" control="UP" meta="UP" shift="DOWN" shortcut="DOWN"/></accelerator>
+                    </MenuItem>
+                    <MenuItem text="Save" onAction="#handleSaveFile">
+                        <accelerator><KeyCodeCombination alt="UP" code="S" control="UP" meta="UP" shift="UP" shortcut="DOWN"/></accelerator>
+                    </MenuItem>
+                    <MenuItem text="Save As..." onAction="#handleSaveAs">
+                        <accelerator><KeyCodeCombination alt="UP" code="S" control="UP" meta="UP" shift="DOWN" shortcut="DOWN"/></accelerator>
+                    </MenuItem>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Close Document" onAction="#handleCloseDocument"/>
+                    <MenuItem text="Close Document" onAction="#handleCloseDocument">
+                        <accelerator><KeyCodeCombination alt="UP" code="W" control="UP" meta="UP" shift="UP" shortcut="DOWN"/></accelerator>
+                    </MenuItem>
                     <MenuItem text="Close Workspace" onAction="#handleCloseWorkspace"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="Exit" onAction="#handleExit"/>
                 </Menu>
                 <Menu text="Edit">
                     <MenuItem text="Find..." onAction="#handleFind">
-                        <accelerator><KeyCodeCombination alt="UP" code="F" control="DOWN" meta="UP" shift="UP" shortcut="UP"/></accelerator>
+                        <accelerator><KeyCodeCombination alt="UP" code="F" control="UP" meta="UP" shift="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>
                     <MenuItem text="Find and Replace..." onAction="#handleFindReplace">
-                        <accelerator><KeyCodeCombination alt="UP" code="H" control="DOWN" meta="UP" shift="UP" shortcut="UP"/></accelerator>
+                        <accelerator><KeyCodeCombination alt="UP" code="H" control="UP" meta="UP" shift="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>
                 </Menu>
                 <Menu text="View">
