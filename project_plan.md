@@ -48,7 +48,7 @@
 - **Phase 1: Foundation & Shell** (Project setup, Main Window, Basic Open/Save) ✅ COMPLETED 2026-08-11
 - **Phase 2: The Markdown Engine** (Parser implementation, CSS Theme/GitHub Style) ✅ COMPLETED 2026-08-11
 - **Phase 3: Mode Logic & Workspace** (Raw Editor, Split View sync, Full Preview toggle) ✅ COMPLETED 2026-08-11
-- **Phase 4: Toolbar Bridge & GUI Editor** (Toolbar integration, JS bridge logic) 🔄 IN PROGRESS — toolbar restructured; rich-text bridge not started
+- **Phase 4: Toolbar Bridge & GUI Editor** (Toolbar integration, JS bridge logic) ✅ COMPLETED 2026-08-11 — formatting toolbar over the preview, selection mapped back to source via CommonMark source spans
 - **Phase 5: OS Deployment & Polishing** (Registry/Context menu setup, UX polish) 🔄 IN PROGRESS — standalone jar done; OS context menu not started
 
 ---
@@ -101,6 +101,8 @@ Appended per Protocol §3 rather than rewriting the sections above.
 - **Images:** relative paths resolve against the document's own folder, for Markdown and raw HTML `<img>` alike.
 - **Dark / light theme** across the JavaFX chrome and the preview document.
 - **Workspace explorer + two-level tabs:** workspace tabs on top, that workspace's file tabs beneath, markdown-only lazy file tree, reveal-in-tree target button.
+- **GUI formatting from the preview:** toolbar and context menu apply bold/italic/strike/code, headings, lists, quotes, links and images by editing the Markdown source. Selections are mapped back through `data-md-*` offsets stamped from CommonMark source spans, disambiguated by occurrence index.
+- **Image insert, position and resize:** files are copied into `assets/` beside the document; alignment and width are written as an `<img>` in an aligned paragraph, reverting to plain Markdown when set back to full width and left.
 - **Cross-document link navigation:** relative links to other Markdown files open in the viewer and reveal in the tree, expanding the folders on the way — including through folders the markdown-only filter hides, such as `.claude/rules/`.
 - **Standalone distribution:** one self-contained ~57 MB jar (JavaFX natives, commonmark, PlantUML, mermaid inside).
 
@@ -116,7 +118,7 @@ Appended per Protocol §3 rather than rewriting the sections above.
 1. **Persist session state** (Phase 5). Open workspaces, open documents, the active theme and the window geometry are all forgotten on exit. One `java.util.prefs.Preferences` store should cover all four; it writes to the Windows registry, so confirm before adding.
 2. **Watch the filesystem** (Phase 3 follow-up). The explorer caches directory listings, so files created outside MDViewer only appear after collapsing and re-expanding the folder. A `WatchService` per workspace root would fix it.
 3. **Promote the test harnesses into the repo** (Phase 5). ~140 checks across six JavaFX harnesses currently live in a temporary scratchpad and are lost between sessions. Moving them to `src/test` needs absolute paths replaced with fixtures.
-4. **Rich-text toolbar bridge** (Phase 4, original scope). Integrate the `markdown-editor` toolbar and the Java → JS `JSObject` bridge for formatting buttons.
+4. **Drag-to-resize image handles.** Width is currently set from presets; dragging a corner in the preview would be closer to the markdown-editor package's behaviour.
 5. **OS context-menu registration** (Phase 5, original scope). "Open with MDViewer" via the Windows registry.
 6. **Scroll sync in Split mode** (Phase 3 follow-up). Content sync is live; editor and preview scroll positions are still independent.
 

@@ -6,6 +6,8 @@ import javafx.application.Platform;
 import javafx.concurrent.Worker;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.StackPane;
@@ -17,11 +19,14 @@ import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 import com.mdviewer.service.DiagramService;
+import com.mdviewer.service.ImageRef;
 import com.mdviewer.service.MarkdownService;
+import com.mdviewer.service.SourceEdits;
 import com.mdviewer.ui.DocumentView;
 import com.mdviewer.ui.FileTreePanel;
 import com.mdviewer.ui.FindBar;
 import com.mdviewer.ui.MarkdownFiles;
+import com.mdviewer.ui.PreviewToolbar;
 import com.mdviewer.ui.WorkspaceView;
 
 import java.io.File;
@@ -73,7 +78,9 @@ public class MainController {
 
     private FileTreePanel fileTreePanel;
     private FindBar findBar;
+    private PreviewToolbar previewToolbar;
     private VBox editorPane;
+    private VBox previewPane;
     private WebView webView;
     private SplitPane editorSplit;
 
@@ -138,6 +145,16 @@ public class MainController {
     public void initialize() {
         webView = new WebView();
         webView.setMinWidth(0);
+
+        previewToolbar = new PreviewToolbar();
+        previewToolbar.setOnAction(this::applyFormat);
+
+        // The preview column: formatting toolbar above the rendered document.
+        previewPane = new VBox(previewToolbar, webView);
+        previewPane.getStyleClass().add("preview-pane");
+        VBox.setVgrow(webView, Priority.ALWAYS);
+
+        installPreviewContextMenu();
 
         editorSplit = new SplitPane();
         editorSplit.getStyleClass().add("editor-split");
@@ -708,11 +725,11 @@ public class MainController {
         switch (currentMode) {
             case RAW -> editorSplit.getItems().add(editorPane);
             case SPLIT -> {
-                editorSplit.getItems().addAll(editorPane, webView);
+                editorSplit.getItems().addAll(editorPane, previewPane);
                 editorSplit.setDividerPositions(0.5);
                 Platform.runLater(() -> editorSplit.setDividerPositions(0.5));
             }
-            case FULL_PREVIEW -> editorSplit.getItems().add(webView);
+            case FULL_PREVIEW -> editorSplit.getItems().add(previewPane);
         }
 
         // Content may have changed while RAW mode suppressed preview updates.
@@ -752,6 +769,304 @@ public class MainController {
             updateLayout();
         }
         findBar.show(withReplace);
+    }
+
+    // -------------------------------------------------------------- formatting
+
+    /**
+     * Replaces WebKit's built-in menu, which offers Copy and nothing else, with one that
+     * also carries the formatting actions - the same operations as the toolbar, reachable
+     * where the selection already is.
+     */
+    private void installPreviewContextMenu() {
+        webView.setContextMenuEnabled(false);
+
+        MenuItem copy = new MenuItem("Copy");
+        copy.setOnAction(e -> {
+            String selected = previewString("window.__mdSelectionText()");
+            if (!selected.isEmpty()) {
+                ClipboardContent content = new ClipboardContent();
+                content.putString(selected);
+                Clipboard.getSystemClipboard().setContent(content);
+            }
+        });
+
+        ContextMenu menu = new ContextMenu(copy, new SeparatorMenuItem(),
+                formatItem("Bold", PreviewToolbar.Action.BOLD),
+                formatItem("Italic", PreviewToolbar.Action.ITALIC),
+                formatItem("Strikethrough", PreviewToolbar.Action.STRIKETHROUGH),
+                formatItem("Inline code", PreviewToolbar.Action.CODE),
+                new SeparatorMenuItem(),
+                formatItem("Heading 1", PreviewToolbar.Action.HEADING_1),
+                formatItem("Heading 2", PreviewToolbar.Action.HEADING_2),
+                formatItem("Heading 3", PreviewToolbar.Action.HEADING_3),
+                new SeparatorMenuItem(),
+                formatItem("Bullet list", PreviewToolbar.Action.BULLET_LIST),
+                formatItem("Numbered list", PreviewToolbar.Action.ORDERED_LIST),
+                formatItem("Block quote", PreviewToolbar.Action.QUOTE),
+                formatItem("Link...", PreviewToolbar.Action.LINK),
+                new SeparatorMenuItem(),
+                formatItem("Insert image...", PreviewToolbar.Action.IMAGE_INSERT));
+
+        webView.setOnContextMenuRequested(event -> {
+            menu.show(webView, event.getScreenX(), event.getScreenY());
+            event.consume();
+        });
+        webView.setOnMousePressed(event -> {
+            if (menu.isShowing()) {
+                menu.hide();
+            }
+            // A click may have landed on an image; let the page update first.
+            Platform.runLater(this::refreshImageSelection);
+        });
+    }
+
+    private MenuItem formatItem(String label, PreviewToolbar.Action action) {
+        MenuItem item = new MenuItem(label);
+        item.setOnAction(e -> applyFormat(action));
+        return item;
+    }
+
+    private void refreshImageSelection() {
+        previewToolbar.setImageSelected(!previewString("window.__mdImageInfo()").isEmpty());
+    }
+
+    /** A range of the Markdown source that a toolbar action should act on. */
+    private record SourceRange(int start, int end) {}
+
+    /**
+     * Resolves what the formatting toolbar should act on.
+     *
+     * <p>A preview selection is mapped back to source by looking inside the enclosing
+     * element's own span for the right occurrence of the selected text - occurrence order
+     * survives rendering because Markdown only ever adds characters around text. When the
+     * preview has no selection the editor's own selection is used, which is what makes the
+     * toolbar useful in Split mode too.
+     */
+    private SourceRange resolveTargetRange() {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            return null;
+        }
+        String source = document.getEditor().getText();
+
+        String meta = previewString("window.__mdSelectionInfo()");
+        String selected = previewString("window.__mdSelectionText()");
+        if (!meta.isEmpty() && !selected.isEmpty()) {
+            String[] parts = meta.split(",");
+            try {
+                int blockStart = Math.max(0, Integer.parseInt(parts[0].trim()));
+                int blockEnd = Math.min(source.length(), Integer.parseInt(parts[1].trim()));
+                int ordinal = Integer.parseInt(parts[2].trim());
+                if (blockStart < blockEnd) {
+                    String block = source.substring(blockStart, blockEnd);
+                    int at = -1;
+                    for (int i = 0; i <= ordinal; i++) {
+                        at = block.indexOf(selected, at + 1);
+                        if (at < 0) {
+                            break;
+                        }
+                    }
+                    if (at >= 0) {
+                        return new SourceRange(blockStart + at, blockStart + at + selected.length());
+                    }
+                }
+            } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+                // Fall through to the editor selection.
+            }
+            setTransientStatus("That selection spans formatting, so it could not be matched "
+                    + "in the source. Select it in the editor instead.");
+            return null;
+        }
+
+        var selection = document.getEditor().getSelection();
+        return new SourceRange(selection.getStart(), selection.getEnd());
+    }
+
+    private String previewString(String js) {
+        if (!previewReady) {
+            return "";
+        }
+        try {
+            Object value = webView.getEngine().executeScript(js);
+            return value == null ? "" : value.toString();
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    /** Applies a toolbar action, translating it into one edit of the Markdown source. */
+    private void applyFormat(PreviewToolbar.Action action) {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            setTransientStatus("Open a document before formatting.");
+            return;
+        }
+        if (action == PreviewToolbar.Action.IMAGE_INSERT) {
+            insertImage(document);
+            return;
+        }
+        if (action.name().startsWith("IMAGE_")) {
+            applyImageStyle(document, action);
+            return;
+        }
+
+        SourceRange range = resolveTargetRange();
+        if (range == null) {
+            return;
+        }
+        String source = document.getEditor().getText();
+
+        SourceEdits.Edit edit = switch (action) {
+            case BOLD -> SourceEdits.toggleInline(source, range.start(), range.end(), "**");
+            case ITALIC -> SourceEdits.toggleInline(source, range.start(), range.end(), "*");
+            case STRIKETHROUGH -> SourceEdits.toggleInline(source, range.start(), range.end(), "~~");
+            case CODE -> SourceEdits.toggleInline(source, range.start(), range.end(), "`");
+            case HEADING_1 -> SourceEdits.setHeading(source, range.start(), 1);
+            case HEADING_2 -> SourceEdits.setHeading(source, range.start(), 2);
+            case HEADING_3 -> SourceEdits.setHeading(source, range.start(), 3);
+            case BULLET_LIST -> SourceEdits.toggleBullet(source, range.start(), range.end());
+            case ORDERED_LIST -> SourceEdits.toggleOrdered(source, range.start(), range.end());
+            case QUOTE -> SourceEdits.toggleQuote(source, range.start(), range.end());
+            case LINK -> linkEdit(source, range);
+            default -> null;
+        };
+        if (edit != null) {
+            applyEdit(document, edit);
+        }
+    }
+
+    private SourceEdits.Edit linkEdit(String source, SourceRange range) {
+        TextInputDialog dialog = new TextInputDialog("https://");
+        dialog.initOwner(primaryStage);
+        dialog.setTitle("Insert link");
+        dialog.setHeaderText("Link target");
+        dialog.setContentText("URL");
+        var url = dialog.showAndWait();
+        return url.map(u -> SourceEdits.link(source, range.start(), range.end(), u)).orElse(null);
+    }
+
+    private void applyEdit(DocumentView document, SourceEdits.Edit edit) {
+        TextArea editor = document.getEditor();
+        editor.replaceText(edit.start(), edit.end(), edit.replacement());
+        editor.selectRange(edit.selectionStart(), edit.selectionEnd());
+        previewDebounce.stop();
+        updatePreview();
+    }
+
+    // ----------------------------------------------------------------- images
+
+    /**
+     * Copies the chosen file next to the document and inserts a relative reference.
+     *
+     * <p>Copying rather than linking in place is what keeps the document portable: a
+     * reference to a file elsewhere on this machine breaks the moment the folder is shared
+     * or moved.
+     */
+    private void insertImage(DocumentView document) {
+        Path baseDir = document.getBaseDir();
+        if (baseDir == null) {
+            setTransientStatus("Save the document first so the image can be stored beside it.");
+            return;
+        }
+
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Insert image");
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(
+                "Images", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg", "*.webp", "*.bmp"));
+        File picked = chooser.showOpenDialog(primaryStage);
+        if (picked == null) {
+            return;
+        }
+
+        try {
+            Path assets = baseDir.resolve("assets");
+            Files.createDirectories(assets);
+            Path target = uniqueTarget(assets, picked.getName());
+            Files.copy(picked.toPath(), target);
+
+            String relative = baseDir.relativize(target).toString().replace('\\', '/');
+            String alt = stripExtension(target.getFileName().toString());
+            String snippet = "![" + alt + "](" + relative + ")";
+
+            TextArea editor = document.getEditor();
+            int caret = editor.getCaretPosition();
+            editor.insertText(caret, snippet);
+            editor.selectRange(caret + 2, caret + 2 + alt.length());
+            previewDebounce.stop();
+            updatePreview();
+            setTransientStatus("Copied to assets/" + target.getFileName());
+        } catch (IOException e) {
+            showAlert("Error", "Could not copy the image: " + e.getMessage());
+        }
+    }
+
+    /** Never overwrite: an existing name gets a numeric suffix. */
+    private static Path uniqueTarget(Path folder, String fileName) {
+        Path candidate = folder.resolve(fileName);
+        if (!Files.exists(candidate)) {
+            return candidate;
+        }
+        String stem = stripExtension(fileName);
+        String extension = fileName.substring(stem.length());
+        for (int i = 2; ; i++) {
+            candidate = folder.resolve(stem + "-" + i + extension);
+            if (!Files.exists(candidate)) {
+                return candidate;
+            }
+        }
+    }
+
+    private static String stripExtension(String fileName) {
+        int dot = fileName.lastIndexOf('.');
+        return dot <= 0 ? fileName : fileName.substring(0, dot);
+    }
+
+    /**
+     * Rewrites the selected image as HTML carrying its alignment and width.
+     *
+     * <p>Markdown has no syntax for either, so the reference becomes an {@code <img>} in a
+     * paragraph with an align attribute - the form that also renders correctly on GitHub,
+     * rather than a viewer-specific extension that would only work here.
+     */
+    private void applyImageStyle(DocumentView document, PreviewToolbar.Action action) {
+        String meta = previewString("window.__mdImageInfo()");
+        if (meta.isEmpty()) {
+            setTransientStatus("Click an image in the preview first.");
+            return;
+        }
+        String[] parts = meta.split(",");
+        String source = document.getEditor().getText();
+        int start;
+        int end;
+        try {
+            start = Math.max(0, Integer.parseInt(parts[0].trim()));
+            end = Math.min(source.length(), Integer.parseInt(parts[1].trim()));
+        } catch (RuntimeException e) {
+            return;
+        }
+        if (start >= end) {
+            return;
+        }
+
+        ImageRef current = ImageRef.parse(source.substring(start, end));
+        if (current == null) {
+            setTransientStatus("Could not read that image reference.");
+            return;
+        }
+        ImageRef updated = switch (action) {
+            case IMAGE_ALIGN_LEFT -> current.withAlign("left");
+            case IMAGE_ALIGN_CENTER -> current.withAlign("center");
+            case IMAGE_ALIGN_RIGHT -> current.withAlign("right");
+            case IMAGE_WIDTH_25 -> current.withWidth("25%");
+            case IMAGE_WIDTH_50 -> current.withWidth("50%");
+            case IMAGE_WIDTH_75 -> current.withWidth("75%");
+            case IMAGE_WIDTH_100 -> current.withWidth("100%");
+            default -> current;
+        };
+        String replacement = updated.toMarkup();
+        applyEdit(document, new SourceEdits.Edit(start, end, replacement, start,
+                start + replacement.length()));
     }
 
     // ---------------------------------------------------------------- preview
@@ -1132,6 +1447,12 @@ public class MainController {
             tbody tr:last-child td { border-bottom:none; }
 
             img { max-width:100%; border-radius:6px; }
+            /* An image clicked in the preview is the target of the position and size
+               controls, so it has to be visibly the chosen one. */
+            img.mdv-img-selected { outline:2px solid var(--accent); outline-offset:2px; }
+            p[align="center"] { text-align:center; }
+            p[align="right"] { text-align:right; }
+            p[align="left"] { text-align:left; }
 
             /* Diagrams share the plate family. The card keeps a light ground in both
                themes: PlantUML and mermaid bake dark strokes into the SVG, which would
@@ -1206,6 +1527,59 @@ public class MainController {
               el.className = 'mdv-diagram';
               el.innerHTML = svg;
             };
+
+            /* --- editing from the preview -----------------------------------
+               Every element carries the Markdown offsets it was rendered from.
+               A selection reports the enclosing element's range plus which
+               occurrence of the selected text it is, which is enough for the
+               controller to find the same text in the source: Markdown only
+               adds characters around text, so occurrence order is preserved. */
+            function mdAnchor(node) {
+              var el = node && node.nodeType === 1 ? node : (node ? node.parentNode : null);
+              while (el && !(el.getAttribute && el.getAttribute('data-md-start'))) {
+                el = el.parentElement;
+              }
+              return el;
+            }
+            window.__mdSelectionInfo = function () {
+              var sel = window.getSelection();
+              if (!sel || sel.rangeCount === 0 || sel.isCollapsed) { return ''; }
+              var range = sel.getRangeAt(0);
+              var el = mdAnchor(range.startContainer);
+              if (!el) { return ''; }
+              var text = sel.toString();
+              if (!text) { return ''; }
+              var pre = range.cloneRange();
+              pre.selectNodeContents(el);
+              pre.setEnd(range.startContainer, range.startOffset);
+              var prefix = pre.toString();
+              var ordinal = 0;
+              var at = prefix.indexOf(text);
+              while (at >= 0) { ordinal++; at = prefix.indexOf(text, at + text.length); }
+              return el.getAttribute('data-md-start') + ',' +
+                     el.getAttribute('data-md-end') + ',' + ordinal;
+            };
+            window.__mdSelectionText = function () {
+              var sel = window.getSelection();
+              return sel ? sel.toString() : '';
+            };
+
+            /* Clicking an image selects it for the positioning controls. */
+            window.__mdSelectedImage = '';
+            document.addEventListener('click', function (event) {
+              var previous = document.querySelector('img.mdv-img-selected');
+              if (previous) { previous.classList.remove('mdv-img-selected'); }
+              if (event.target && event.target.tagName === 'IMG') {
+                event.target.classList.add('mdv-img-selected');
+                var el = mdAnchor(event.target);
+                window.__mdSelectedImage = el
+                    ? el.getAttribute('data-md-start') + ',' + el.getAttribute('data-md-end')
+                    : '';
+              } else {
+                window.__mdSelectedImage = '';
+              }
+            });
+            window.__mdImageInfo = function () { return window.__mdSelectedImage; };
             """;
 
         return "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>"
