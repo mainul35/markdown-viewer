@@ -10,11 +10,15 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.StackPane;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 import com.mdviewer.service.DiagramService;
 import com.mdviewer.service.MarkdownService;
+import com.mdviewer.ui.DocumentView;
+import com.mdviewer.ui.FileTreePanel;
+import com.mdviewer.ui.WorkspaceView;
 
 import java.io.File;
 import java.io.IOException;
@@ -22,7 +26,9 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class MainController {
 
@@ -30,7 +36,13 @@ public class MainController {
     private BorderPane rootPane;
 
     @FXML
-    private StackPane centerPane;
+    private SplitPane mainSplit;
+
+    @FXML
+    private StackPane explorerHost;
+
+    @FXML
+    private TabPane workspaceTabs;
 
     @FXML
     private Label statusLabel;
@@ -47,20 +59,33 @@ public class MainController {
     @FXML
     private MenuItem themeMenuItem;
 
+    @FXML
+    private MenuItem explorerMenuItem;
+
     private Stage primaryStage;
     private HostServices hostServices;
-    private File currentFile;
     private EditorMode currentMode = EditorMode.SPLIT;
-    private boolean isModified = false;
 
-    private TextArea textEditor;
+    private FileTreePanel fileTreePanel;
     private WebView webView;
-    private SplitPane splitPane;
+    private SplitPane editorSplit;
+
+    private final List<WorkspaceView> workspaces = new ArrayList<>();
+    private int untitledCounter = 0;
+
+    /** Suppresses the "modified" flag while a document's text is being loaded. */
+    private boolean loadingDocument = false;
+
+    /** Remembered so hiding and re-showing the explorer keeps its width. */
+    private double explorerDivider = 0.2;
 
     /** Debounce so typing does not re-render the preview on every keystroke. */
     private PauseTransition previewDebounce;
 
-    /** True once the preview shell page (CSS + injection hook) has finished loading. */
+    /** Pending restore of the status bar after a transient message. */
+    private PauseTransition statusRestore;
+
+    /** True once the preview shell page (CSS + injection hooks) has finished loading. */
     private boolean previewReady = false;
 
     /** Last rendered body HTML, re-applied whenever the shell page is (re)loaded. */
@@ -82,6 +107,14 @@ public class MainController {
     /** Style class toggled on the scene root; see styles.css. */
     private static final String DARK_STYLE_CLASS = "dark-theme";
 
+    /**
+     * Tab ceilings. Past these the strips stop being scannable, which is the whole point
+     * of grouping files by workspace; opening more is refused with a status-bar message
+     * rather than silently evicting something the user still has open.
+     */
+    private static final int MAX_WORKSPACES = 10;
+    private static final int MAX_DOCUMENTS_PER_WORKSPACE = 20;
+
     private boolean darkMode = false;
 
     public enum EditorMode {
@@ -90,36 +123,490 @@ public class MainController {
 
     @FXML
     public void initialize() {
-        textEditor = new TextArea();
-        textEditor.setPromptText("Write your Markdown here...");
-        // Font and padding come from styles.css - an inline style would override the
-        // theme's colours, since inline styles beat stylesheet rules.
-        textEditor.setWrapText(false);
-
         webView = new WebView();
         webView.setMinWidth(0);
 
-        splitPane = new SplitPane();
+        editorSplit = new SplitPane();
+        editorSplit.getStyleClass().add("editor-split");
+
+        fileTreePanel = new FileTreePanel();
+        fileTreePanel.setOnFileActivated(path -> openFile(path.toFile()));
+        fileTreePanel.setOnReveal(this::handleRevealInTree);
+        explorerHost.getChildren().add(fileTreePanel);
 
         previewDebounce = new PauseTransition(Duration.millis(200));
         previewDebounce.setOnFinished(e -> updatePreview());
 
-        textEditor.textProperty().addListener((obs, oldText, newText) -> {
-            updateWordCount();
-            if (!isModified) {
-                isModified = true;
-                updateTitle();
-            }
-            schedulePreviewUpdate();
-        });
+        workspaceTabs.getSelectionModel().selectedItemProperty()
+                .addListener((obs, old, now) -> onActiveDocumentChanged());
+        workspaceTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.ALL_TABS);
 
         initPreviewEngine();
 
-        centerPane.getChildren().add(splitPane);
         updateWordCount();
         updateStatus();
         updateLayout();
         applyTheme();
+    }
+
+    public void setPrimaryStage(Stage stage) {
+        this.primaryStage = stage;
+    }
+
+    public void setHostServices(HostServices hostServices) {
+        this.hostServices = hostServices;
+    }
+
+    // ------------------------------------------------------- workspace / tabs
+
+    private WorkspaceView activeWorkspace() {
+        Tab tab = workspaceTabs.getSelectionModel().getSelectedItem();
+        return tab == null ? null : (WorkspaceView) tab.getUserData();
+    }
+
+    private DocumentView activeDocument() {
+        WorkspaceView workspace = activeWorkspace();
+        if (workspace == null) {
+            return null;
+        }
+        Tab tab = workspace.getDocumentTabs().getSelectionModel().getSelectedItem();
+        return tab == null ? null : (DocumentView) tab.getUserData();
+    }
+
+    /**
+     * Finds the workspace that owns {@code file}, creating one rooted at its folder.
+     *
+     * @return null if a new workspace was needed but the workspace limit is reached
+     */
+    private WorkspaceView workspaceFor(Path file) {
+        Path normalized = file.toAbsolutePath().normalize();
+        for (WorkspaceView workspace : workspaces) {
+            if (workspace.contains(normalized)) {
+                return workspace;
+            }
+        }
+        return addWorkspace(normalized.getParent());
+    }
+
+    /** @return the workspace, or null if {@link #MAX_WORKSPACES} is already open */
+    private WorkspaceView addWorkspace(Path root) {
+        Path normalized = root == null ? null : root.toAbsolutePath().normalize();
+        if (normalized != null) {
+            for (WorkspaceView existing : workspaces) {
+                if (normalized.equals(existing.getRoot())) {
+                    return existing;
+                }
+            }
+        }
+        if (workspaces.size() >= MAX_WORKSPACES) {
+            setTransientStatus("Workspace limit reached (" + MAX_WORKSPACES
+                    + "). Close a workspace tab before opening another folder.");
+            return null;
+        }
+        WorkspaceView workspace = new WorkspaceView(normalized);
+        workspace.getDocumentTabs().getSelectionModel().selectedItemProperty()
+                .addListener((obs, old, now) -> onActiveDocumentChanged());
+        workspace.getTab().setOnCloseRequest(event -> {
+            if (!closeWorkspace(workspace)) {
+                event.consume();
+            }
+        });
+
+        workspaces.add(workspace);
+        workspaceTabs.getTabs().add(workspace.getTab());
+        fileTreePanel.addWorkspaceRoot(normalized);
+        return workspace;
+    }
+
+    /**
+     * Moves the shared editor/preview area into the selected file tab. Only one tab can
+     * hold it at a time - a JavaFX node has a single parent - so this is what makes the
+     * tabs act as selectors over one editor rather than N editors and N WebViews.
+     */
+    private void mountEditorArea() {
+        DocumentView active = activeDocument();
+        for (WorkspaceView workspace : workspaces) {
+            for (DocumentView document : workspace.getDocuments()) {
+                if (document != active && document.getTab().getContent() == editorSplit) {
+                    document.getTab().setContent(null);
+                }
+            }
+        }
+        if (active != null && active.getTab().getContent() != editorSplit) {
+            active.getTab().setContent(editorSplit);
+        }
+    }
+
+    private void onActiveDocumentChanged() {
+        mountEditorArea();
+        updateLayout();
+        updateWordCount();
+        updateStatus();
+        updateTitle();
+        MainApp.setCurrentFile(activeDocument() != null && activeDocument().getPath() != null
+                ? activeDocument().getPath().toFile() : null);
+    }
+
+    private void selectDocument(WorkspaceView workspace, DocumentView document) {
+        workspaceTabs.getSelectionModel().select(workspace.getTab());
+        workspace.getDocumentTabs().getSelectionModel().select(document.getTab());
+        onActiveDocumentChanged();
+    }
+
+    private DocumentView createDocument(WorkspaceView workspace, Path path, String text) {
+        DocumentView document = new DocumentView(path, "Untitled-" + (++untitledCounter));
+
+        loadingDocument = true;
+        document.getEditor().setText(text);
+        document.getEditor().positionCaret(0);
+        loadingDocument = false;
+
+        document.getEditor().textProperty().addListener((obs, old, now) -> {
+            if (!loadingDocument) {
+                document.setModified(true);
+            }
+            if (document == activeDocument()) {
+                updateWordCount();
+                updateTitle();
+                schedulePreviewUpdate();
+            }
+        });
+
+        document.getTab().setOnCloseRequest(event -> {
+            if (!closeDocument(workspace, document)) {
+                event.consume();
+            }
+        });
+
+        workspace.add(document);
+        return document;
+    }
+
+    // ------------------------------------------------------------------ files
+
+    @FXML
+    private void handleNewFile() {
+        WorkspaceView workspace = activeWorkspace();
+        if (workspace == null) {
+            workspace = addWorkspace(null);
+        }
+        if (workspace == null) {
+            return; // Workspace limit reached.
+        }
+        if (workspace.getDocuments().size() >= MAX_DOCUMENTS_PER_WORKSPACE) {
+            setTransientStatus("\"" + workspace.getDisplayName() + "\" already has "
+                    + MAX_DOCUMENTS_PER_WORKSPACE + " files open. Close one first.");
+            return;
+        }
+        DocumentView document = createDocument(workspace, null, "");
+        selectDocument(workspace, document);
+    }
+
+    @FXML
+    private void handleOpenFile() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Open Markdown File");
+        fileChooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("Markdown Files", "*.md", "*.markdown", "*.txt"),
+                new FileChooser.ExtensionFilter("All Files", "*.*")
+        );
+        DocumentView active = activeDocument();
+        if (active != null && active.getBaseDir() != null) {
+            fileChooser.setInitialDirectory(active.getBaseDir().toFile());
+        }
+
+        File selectedFile = fileChooser.showOpenDialog(primaryStage);
+        if (selectedFile != null) {
+            openFile(selectedFile);
+        }
+    }
+
+    /** Adds a folder as a workspace without opening anything from it. */
+    @FXML
+    private void handleOpenFolder() {
+        DirectoryChooser chooser = new DirectoryChooser();
+        chooser.setTitle("Open Folder as Workspace");
+        File folder = chooser.showDialog(primaryStage);
+        if (folder != null) {
+            WorkspaceView workspace = addWorkspace(folder.toPath());
+            if (workspace != null) {
+                workspaceTabs.getSelectionModel().select(workspace.getTab());
+            }
+        }
+    }
+
+    public void openFile(File file) {
+        if (file == null) {
+            return;
+        }
+        Path path = file.toPath().toAbsolutePath().normalize();
+
+        WorkspaceView workspace = workspaceFor(path);
+        if (workspace == null) {
+            return; // Workspace limit reached; addWorkspace already reported it.
+        }
+        DocumentView existing = workspace.findDocument(path);
+        if (existing != null) {
+            selectDocument(workspace, existing); // Already open - just focus it.
+            return;
+        }
+        if (workspace.getDocuments().size() >= MAX_DOCUMENTS_PER_WORKSPACE) {
+            workspaceTabs.getSelectionModel().select(workspace.getTab());
+            setTransientStatus("\"" + workspace.getDisplayName() + "\" already has "
+                    + MAX_DOCUMENTS_PER_WORKSPACE + " files open. Close one before opening "
+                    + path.getFileName() + ".");
+            return;
+        }
+
+        try {
+            String content = Files.readString(path, StandardCharsets.UTF_8);
+            DocumentView document = createDocument(workspace, path, content);
+            selectDocument(workspace, document);
+        } catch (IOException e) {
+            showAlert("Error", "Failed to open file: " + e.getMessage());
+        }
+    }
+
+    @FXML
+    private void handleSaveFile() {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            return;
+        }
+        if (document.getPath() == null) {
+            handleSaveAs();
+        } else {
+            saveDocument(document, document.getPath());
+        }
+    }
+
+    @FXML
+    private void handleSaveAs() {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            return;
+        }
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Save Markdown File");
+        fileChooser.setInitialFileName(document.getPath() != null
+                ? document.getDisplayName() : "document.md");
+        if (document.getBaseDir() != null) {
+            fileChooser.setInitialDirectory(document.getBaseDir().toFile());
+        }
+        fileChooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("Markdown Files", "*.md", "*.markdown", "*.txt"),
+                new FileChooser.ExtensionFilter("All Files", "*.*")
+        );
+
+        File selectedFile = fileChooser.showSaveDialog(primaryStage);
+        if (selectedFile != null) {
+            saveDocument(document, selectedFile.toPath().toAbsolutePath().normalize());
+        }
+    }
+
+    private boolean saveDocument(DocumentView document, Path target) {
+        try {
+            Files.writeString(target, document.getEditor().getText(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            showAlert("Error", "Failed to save file: " + e.getMessage());
+            return false;
+        }
+
+        boolean pathChanged = !target.equals(document.getPath());
+        document.setPath(target);
+        document.setModified(false);
+
+        if (pathChanged) {
+            rehomeDocument(document, target);
+        }
+        MainApp.setCurrentFile(target.toFile());
+        updateTitle();
+        updateStatus();
+        updatePreview(); // Base directory for relative images may have moved.
+        return true;
+    }
+
+    /** After Save As, a document may belong to a different workspace than the one it sat in. */
+    private void rehomeDocument(DocumentView document, Path target) {
+        WorkspaceView current = owningWorkspace(document);
+        if (current != null && current.contains(target)) {
+            return;
+        }
+        WorkspaceView destination = workspaceFor(target);
+        if (destination == null || destination == current) {
+            return; // At the workspace limit the document simply stays where it is.
+        }
+        if (current != null) {
+            document.getTab().setContent(null);
+            current.remove(document);
+        }
+        destination.add(document);
+        selectDocument(destination, document);
+    }
+
+    private WorkspaceView owningWorkspace(DocumentView document) {
+        for (WorkspaceView workspace : workspaces) {
+            if (workspace.getDocuments().contains(document)) {
+                return workspace;
+            }
+        }
+        return null;
+    }
+
+    // ----------------------------------------------------------------- closing
+
+    @FXML
+    private void handleCloseDocument() {
+        WorkspaceView workspace = activeWorkspace();
+        DocumentView document = activeDocument();
+        if (workspace != null && document != null && closeDocument(workspace, document)) {
+            // closeDocument only detaches the model; closing via the tab's X leaves tab
+            // removal to JavaFX, so the menu path has to remove the tab itself.
+            workspace.getDocumentTabs().getTabs().remove(document.getTab());
+            onActiveDocumentChanged();
+        }
+    }
+
+    @FXML
+    private void handleCloseWorkspace() {
+        WorkspaceView workspace = activeWorkspace();
+        if (workspace != null && closeWorkspace(workspace)) {
+            removeWorkspace(workspace);
+        }
+    }
+
+    /**
+     * Detaches a document from its workspace after confirming unsaved changes. The tab
+     * itself is left alone: when this runs from the tab's close request, JavaFX removes
+     * the tab, and removing it here as well would be a double removal.
+     *
+     * @return true if the document may be closed (saved, discarded, or unmodified)
+     */
+    private boolean closeDocument(WorkspaceView workspace, DocumentView document) {
+        if (!confirmDiscard(document)) {
+            return false;
+        }
+        if (document.getTab().getContent() == editorSplit) {
+            document.getTab().setContent(null);
+        }
+        workspace.getDocuments().remove(document);
+        Platform.runLater(this::onActiveDocumentChanged);
+        return true;
+    }
+
+    private boolean closeWorkspace(WorkspaceView workspace) {
+        for (DocumentView document : List.copyOf(workspace.getDocuments())) {
+            if (!confirmDiscard(document)) {
+                return false;
+            }
+            document.getTab().setContent(null);
+        }
+        Platform.runLater(() -> {
+            removeWorkspace(workspace);
+            onActiveDocumentChanged();
+        });
+        return true;
+    }
+
+    private void removeWorkspace(WorkspaceView workspace) {
+        workspaces.remove(workspace);
+        workspaceTabs.getTabs().remove(workspace.getTab());
+        fileTreePanel.removeWorkspaceRoot(workspace.getRoot());
+    }
+
+    /** @return true if it is safe to discard this document's state */
+    private boolean confirmDiscard(DocumentView document) {
+        if (!document.isModified()) {
+            return true;
+        }
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.initOwner(primaryStage);
+        alert.setTitle("Unsaved Changes");
+        alert.setHeaderText(document.getDisplayName() + " has unsaved changes.");
+        alert.setContentText("Do you want to save before closing?");
+
+        ButtonType save = new ButtonType("Save");
+        ButtonType discard = new ButtonType("Discard Changes");
+        ButtonType cancel = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+        alert.getButtonTypes().setAll(save, discard, cancel);
+
+        var result = alert.showAndWait();
+        if (result.isEmpty() || result.get() == cancel) {
+            return false;
+        }
+        if (result.get() == save) {
+            if (document.getPath() == null) {
+                handleSaveAs();
+                return !document.isModified();
+            }
+            return saveDocument(document, document.getPath());
+        }
+        return true; // Discard
+    }
+
+    @FXML
+    private void handleExit() {
+        for (WorkspaceView workspace : List.copyOf(workspaces)) {
+            for (DocumentView document : List.copyOf(workspace.getDocuments())) {
+                if (!confirmDiscard(document)) {
+                    return;
+                }
+            }
+        }
+        Platform.exit();
+    }
+
+    @FXML
+    private void handleAbout() {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.initOwner(primaryStage);
+        alert.setTitle("About MDViewer");
+        alert.setHeaderText("MDViewer - Markdown Editor");
+        alert.setContentText("Version 1.0.0\nA professional desktop Markdown editor built with JavaFX.");
+        alert.showAndWait();
+    }
+
+    // -------------------------------------------------------------- explorer
+
+    @FXML
+    private void handleRevealInTree() {
+        DocumentView document = activeDocument();
+        if (document == null || document.getPath() == null) {
+            setTransientStatus("Nothing to reveal - the current document has not been saved yet.");
+            return;
+        }
+        if (!isExplorerVisible()) {
+            showExplorer(true);
+        }
+        if (!fileTreePanel.reveal(document.getPath())) {
+            setTransientStatus("Could not locate " + document.getDisplayName() + " in the tree.");
+        }
+    }
+
+    @FXML
+    private void handleToggleExplorer() {
+        showExplorer(!isExplorerVisible());
+    }
+
+    private boolean isExplorerVisible() {
+        return mainSplit.getItems().contains(explorerHost);
+    }
+
+    private void showExplorer(boolean visible) {
+        if (visible == isExplorerVisible()) {
+            return;
+        }
+        if (visible) {
+            mainSplit.getItems().add(0, explorerHost);
+            mainSplit.setDividerPositions(explorerDivider);
+            Platform.runLater(() -> mainSplit.setDividerPositions(explorerDivider));
+        } else {
+            if (mainSplit.getDividerPositions().length > 0) {
+                explorerDivider = mainSplit.getDividerPositions()[0];
+            }
+            mainSplit.getItems().remove(explorerHost);
+        }
+        explorerMenuItem.setText(visible ? "Hide Explorer" : "Show Explorer");
     }
 
     // ------------------------------------------------------------------ theme
@@ -159,18 +646,64 @@ public class MainController {
         }
     }
 
-    public void setPrimaryStage(Stage stage) {
-        this.primaryStage = stage;
+    // ------------------------------------------------------------------ modes
+
+    @FXML
+    private void handleRawMode() {
+        currentMode = EditorMode.RAW;
+        updateLayout();
     }
 
-    public void setHostServices(HostServices hostServices) {
-        this.hostServices = hostServices;
+    @FXML
+    private void handleSplitMode() {
+        currentMode = EditorMode.SPLIT;
+        updateLayout();
+    }
+
+    @FXML
+    private void handleFullPreviewMode() {
+        currentMode = EditorMode.FULL_PREVIEW;
+        updateLayout();
+    }
+
+    /**
+     * Swaps the actual SplitPane children per mode. Collapsing via divider positions
+     * alone does not work: both panes keep their minimum width and stay visible.
+     */
+    private void updateLayout() {
+        modeLabel.setText("Mode: " + currentMode.name().replace("_", " "));
+
+        DocumentView document = activeDocument();
+        editorSplit.getItems().clear();
+        if (document == null) {
+            if (currentMode != EditorMode.RAW) {
+                previewDebounce.stop();
+                updatePreview();
+            }
+            return;
+        }
+
+        switch (currentMode) {
+            case RAW -> editorSplit.getItems().add(document.getEditor());
+            case SPLIT -> {
+                editorSplit.getItems().addAll(document.getEditor(), webView);
+                editorSplit.setDividerPositions(0.5);
+                Platform.runLater(() -> editorSplit.setDividerPositions(0.5));
+            }
+            case FULL_PREVIEW -> editorSplit.getItems().add(webView);
+        }
+
+        // Content may have changed while RAW mode suppressed preview updates.
+        if (currentMode != EditorMode.RAW) {
+            previewDebounce.stop();
+            updatePreview();
+        }
     }
 
     // ---------------------------------------------------------------- preview
 
     /**
-     * Loads the preview "shell" (CSS + a JS hook) exactly once. Document content is
+     * Loads the preview "shell" (CSS + JS hooks) exactly once. Document content is
      * afterwards pushed into the live DOM instead of reloading the whole page, which
      * keeps the preview's scroll position stable while typing.
      */
@@ -195,7 +728,7 @@ public class MainController {
             if (newLoc == null) {
                 return;
             }
-            String loc = newLoc.toLowerCase();
+            String loc = newLoc.toLowerCase(Locale.ROOT);
             if (loc.startsWith("http://") || loc.startsWith("https://") || loc.startsWith("mailto:")) {
                 engine.getLoadWorker().cancel();
                 if (hostServices != null) {
@@ -227,15 +760,30 @@ public class MainController {
         if (currentMode == EditorMode.RAW) {
             return;
         }
-        Path baseDir = currentFile != null ? currentFile.toPath().toAbsolutePath().getParent() : null;
-        MarkdownService.Result result = markdownService.render(textEditor.getText(), baseDir);
+        DocumentView document = activeDocument();
+        String markdown = document == null ? "" : document.getEditor().getText();
+        Path baseDir = document == null ? null : document.getBaseDir();
 
+        MarkdownService.Result result = markdownService.render(markdown, baseDir);
         currentPreviewHtml = result.html();
         currentDiagrams = result.diagrams();
         int generation = ++previewGeneration;
 
         applyPreviewHtml(currentPreviewHtml);
         pushDiagrams(currentDiagrams, generation);
+    }
+
+    private void applyPreviewHtml(String html) {
+        if (!previewReady) {
+            // Shell still loading; the load-worker listener re-applies once it succeeds.
+            return;
+        }
+        try {
+            webView.getEngine().executeScript("window.__mdSetBody(" + toJsStringLiteral(html) + ");");
+        } catch (RuntimeException e) {
+            // The hook is gone (page replaced) - rebuild the shell and retry on load.
+            loadPreviewShell();
+        }
     }
 
     /**
@@ -283,19 +831,6 @@ public class MainController {
                             + "theme:'default', fontFamily:'Segoe UI, Helvetica, Arial, sans-serif'});");
         } catch (IOException | RuntimeException e) {
             System.err.println("MDViewer: mermaid unavailable - " + e);
-        }
-    }
-
-    private void applyPreviewHtml(String html) {
-        if (!previewReady) {
-            // Shell still loading; the load-worker listener re-applies once it succeeds.
-            return;
-        }
-        try {
-            webView.getEngine().executeScript("window.__mdSetBody(" + toJsStringLiteral(html) + ");");
-        } catch (RuntimeException e) {
-            // The hook is gone (page replaced) - rebuild the shell and retry on load.
-            loadPreviewShell();
         }
     }
 
@@ -475,207 +1010,54 @@ public class MainController {
             "</html>";
     }
 
-    // ------------------------------------------------------------------ files
-
-    @FXML
-    private void handleNewFile() {
-        if (checkUnsavedChanges()) {
-            textEditor.clear();
-            currentFile = null;
-            isModified = false;
-            MainApp.setCurrentFile(null);
-            updateTitle();
-            updatePreview();
-            updateStatus();
-        }
-    }
-
-    @FXML
-    private void handleOpenFile() {
-        if (checkUnsavedChanges()) {
-            FileChooser fileChooser = new FileChooser();
-            fileChooser.setTitle("Open Markdown File");
-            fileChooser.getExtensionFilters().addAll(
-                    new FileChooser.ExtensionFilter("Markdown Files", "*.md", "*.markdown", "*.txt"),
-                    new FileChooser.ExtensionFilter("All Files", "*.*")
-            );
-
-            File selectedFile = fileChooser.showOpenDialog(primaryStage);
-            if (selectedFile != null) {
-                openFile(selectedFile);
-            }
-        }
-    }
-
-    public void openFile(File file) {
-        try {
-            String content = Files.readString(file.toPath(), StandardCharsets.UTF_8);
-            textEditor.setText(content);
-            textEditor.positionCaret(0);
-            currentFile = file;
-            isModified = false;
-            MainApp.setCurrentFile(file);
-            updateTitle();
-            updatePreview();
-            updateStatus();
-        } catch (IOException e) {
-            showAlert("Error", "Failed to open file: " + e.getMessage());
-        }
-    }
-
-    @FXML
-    private void handleSaveFile() {
-        if (currentFile == null) {
-            handleSaveAs();
-        } else {
-            saveToFile(currentFile);
-        }
-    }
-
-    @FXML
-    private void handleSaveAs() {
-        FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("Save Markdown File");
-        fileChooser.setInitialFileName("document.md");
-        fileChooser.getExtensionFilters().addAll(
-                new FileChooser.ExtensionFilter("Markdown Files", "*.md", "*.markdown", "*.txt"),
-                new FileChooser.ExtensionFilter("All Files", "*.*")
-        );
-
-        File selectedFile = fileChooser.showSaveDialog(primaryStage);
-        if (selectedFile != null) {
-            saveToFile(selectedFile);
-        }
-    }
-
-    private void saveToFile(File file) {
-        try {
-            Files.writeString(file.toPath(), textEditor.getText(), StandardCharsets.UTF_8);
-            currentFile = file;
-            MainApp.setCurrentFile(file);
-            isModified = false;
-            updateTitle();
-            updateStatus();
-        } catch (IOException e) {
-            showAlert("Error", "Failed to save file: " + e.getMessage());
-        }
-    }
-
-    @FXML
-    private void handleExit() {
-        if (checkUnsavedChanges()) {
-            Platform.exit();
-        }
-    }
-
-    @FXML
-    private void handleAbout() {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle("About MDViewer");
-        alert.setHeaderText("MDViewer - Markdown Editor");
-        alert.setContentText("Version 1.0.0\nA professional desktop Markdown editor built with JavaFX.");
-        alert.showAndWait();
-    }
-
-    // ------------------------------------------------------------------ modes
-
-    @FXML
-    private void handleRawMode() {
-        currentMode = EditorMode.RAW;
-        updateLayout();
-    }
-
-    @FXML
-    private void handleSplitMode() {
-        currentMode = EditorMode.SPLIT;
-        updateLayout();
-    }
-
-    @FXML
-    private void handleFullPreviewMode() {
-        currentMode = EditorMode.FULL_PREVIEW;
-        updateLayout();
-    }
-
-    /**
-     * Swaps the actual SplitPane children per mode. Collapsing via divider positions
-     * alone does not work: both panes keep their minimum width and stay visible.
-     */
-    private void updateLayout() {
-        modeLabel.setText("Mode: " + currentMode.name().replace("_", " "));
-
-        splitPane.getItems().clear();
-        switch (currentMode) {
-            case RAW -> splitPane.getItems().add(textEditor);
-            case SPLIT -> {
-                splitPane.getItems().addAll(textEditor, webView);
-                splitPane.setDividerPositions(0.5);
-                Platform.runLater(() -> splitPane.setDividerPositions(0.5));
-            }
-            case FULL_PREVIEW -> splitPane.getItems().add(webView);
-        }
-
-        // Content may have changed while RAW mode suppressed preview updates.
-        if (currentMode != EditorMode.RAW) {
-            previewDebounce.stop();
-            updatePreview();
-        }
-    }
-
     // ----------------------------------------------------------------- status
 
     private void updateWordCount() {
-        String text = textEditor.getText().trim();
+        DocumentView document = activeDocument();
+        String text = document == null ? "" : document.getEditor().getText().trim();
         int words = text.isEmpty() ? 0 : text.split("\\s+").length;
         wordCountLabel.setText("Words: " + words);
     }
 
     private void updateStatus() {
-        String encoding = currentFile != null ? "UTF-8" : "N/A";
-        String fileName = currentFile != null ? currentFile.getName() : "Untitled";
+        DocumentView document = activeDocument();
+        String encoding = document != null && document.getPath() != null ? "UTF-8" : "N/A";
+        String fileName = document == null ? "No document" : document.getDisplayName();
         statusLabel.setText("File: " + fileName + " | Encoding: " + encoding);
     }
 
-    private void updateTitle() {
-        if (primaryStage == null) return;
-        String title = "MDViewer - ";
-        if (currentFile != null) {
-            title += currentFile.getName();
-        } else {
-            title += "Untitled";
+    /**
+     * Shows a one-off message in the status bar for a few seconds.
+     *
+     * <p>The pending restore is replaced rather than added to: otherwise an earlier
+     * message's timer would fire while a newer message is showing and clear it early.
+     */
+    private void setTransientStatus(String message) {
+        statusLabel.setText(message);
+        if (statusRestore != null) {
+            statusRestore.stop();
         }
-        if (isModified) title += " *";
-        primaryStage.setTitle(title);
+        statusRestore = new PauseTransition(Duration.seconds(4));
+        statusRestore.setOnFinished(e -> updateStatus());
+        statusRestore.play();
     }
 
-    private boolean checkUnsavedChanges() {
-        if (isModified) {
-            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-            alert.setTitle("Unsaved Changes");
-            alert.setHeaderText("You have unsaved changes.");
-            alert.setContentText("Do you want to save before continuing?");
-
-            ButtonType saveButton = new ButtonType("Save");
-            ButtonType discardButton = new ButtonType("Discard Changes");
-            ButtonType cancelButton = new ButtonType("Cancel");
-
-            alert.getButtonTypes().setAll(saveButton, discardButton, cancelButton);
-            var result = alert.showAndWait();
-
-            if (result.isPresent() && result.get() == saveButton) {
-                handleSaveFile();
-                return !isModified;
-            } else if (result.isPresent() && result.get() == cancelButton) {
-                return false;
-            } else if (result.isEmpty()) {
-                return false;
-            }
+    private void updateTitle() {
+        if (primaryStage == null) {
+            return;
         }
-        return true;
+        DocumentView document = activeDocument();
+        String title = "MDViewer - ";
+        title += document == null ? "No document" : document.getDisplayName();
+        if (document != null && document.isModified()) {
+            title += " *";
+        }
+        primaryStage.setTitle(title);
     }
 
     private void showAlert(String title, String message) {
         Alert alert = new Alert(Alert.AlertType.ERROR);
+        alert.initOwner(primaryStage);
         alert.setTitle(title);
         alert.setHeaderText(null);
         alert.setContentText(message);

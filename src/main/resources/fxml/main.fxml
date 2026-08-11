@@ -2,7 +2,6 @@
 
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
-<?import javafx.scene.web.WebView?>
 
 <BorderPane fx:id="rootPane" xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
             fx:controller="com.mdviewer.MainController">
@@ -12,8 +11,12 @@
                 <Menu text="File">
                     <MenuItem text="New" onAction="#handleNewFile"/>
                     <MenuItem text="Open..." onAction="#handleOpenFile"/>
+                    <MenuItem text="Open Folder..." onAction="#handleOpenFolder"/>
                     <MenuItem text="Save" onAction="#handleSaveFile"/>
                     <MenuItem text="Save As..." onAction="#handleSaveAs"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="Close Document" onAction="#handleCloseDocument"/>
+                    <MenuItem text="Close Workspace" onAction="#handleCloseWorkspace"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="Exit" onAction="#handleExit"/>
                 </Menu>
@@ -21,6 +24,9 @@
                     <MenuItem text="Raw Editor" onAction="#handleRawMode"/>
                     <MenuItem text="Split Preview" onAction="#handleSplitMode"/>
                     <MenuItem text="Full Preview" onAction="#handleFullPreviewMode"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem fx:id="explorerMenuItem" text="Hide Explorer" onAction="#handleToggleExplorer"/>
+                    <MenuItem text="Reveal Current File" onAction="#handleRevealInTree"/>
                     <SeparatorMenuItem/>
                     <MenuItem fx:id="themeMenuItem" text="Dark Mode" onAction="#handleToggleTheme"/>
                 </Menu>
@@ -44,8 +50,16 @@
         </VBox>
     </top>
 
+    <!--
+        Explorer on the left, workspace tabs on the right. Each workspace tab's content is
+        its own tab strip of open files, so documents stay grouped by where they came from.
+        The shared editor/preview area is moved into whichever file tab is selected.
+    -->
     <center>
-        <StackPane fx:id="centerPane"/>
+        <SplitPane fx:id="mainSplit" dividerPositions="0.2">
+            <StackPane fx:id="explorerHost"/>
+            <TabPane fx:id="workspaceTabs" styleClass="workspace-tabs"/>
+        </SplitPane>
     </center>
 
     <bottom>
