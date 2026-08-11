@@ -79,6 +79,11 @@ rather than the module path.
   quick access the menu did not already provide. The mode buttons stay (mode switching is
   frequent) and sit on the right, next to the theme switch.
 
+- **Responsive window:** the window opens at 85% of the screen's *visual* bounds (the work
+  area, excluding the taskbar) and is centred there, with a 900x600 floor that is itself
+  clamped so it can never exceed a smaller screen. It scales from a 1024x600 netbook up to
+  4K. Window position and size are not remembered between runs.
+
 - **Three Editing Modes:**
   - Raw Mode: Plain text editor for Markdown
   - Split Preview: Side-by-side editor and live preview
