@@ -121,7 +121,9 @@ rather than the module path.
   - Real-time Markdown rendering, debounced so typing stays responsive
   - GitHub-style CSS theme
   - Support for tables, code blocks, blockquotes
-  - Preview scroll position is preserved while editing
+  - Preview scroll position is preserved while editing, and each document remembers its
+    own position — switching tabs or following a link and coming back resumes where you
+    were rather than jumping to the top
   - Web links open in the system browser instead of hijacking the preview pane
 
 - **Following links between documents:** a relative link to another Markdown file

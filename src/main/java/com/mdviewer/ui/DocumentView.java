@@ -20,6 +20,9 @@ public final class DocumentView {
     private final String untitledName;
     private boolean modified;
 
+    /** Where the preview was scrolled to, so returning to this tab resumes in place. */
+    private double previewScrollY;
+
     public DocumentView(Path path, String untitledName) {
         this.path = path;
         this.untitledName = untitledName;
@@ -59,6 +62,14 @@ public final class DocumentView {
         }
         Path name = path.getFileName();
         return name == null ? path.toString() : name.toString();
+    }
+
+    public double getPreviewScrollY() {
+        return previewScrollY;
+    }
+
+    public void setPreviewScrollY(double previewScrollY) {
+        this.previewScrollY = previewScrollY;
     }
 
     public boolean isModified() {
