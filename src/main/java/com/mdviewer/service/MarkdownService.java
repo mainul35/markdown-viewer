@@ -5,6 +5,7 @@ import org.commonmark.node.AbstractVisitor;
 import org.commonmark.node.Code;
 import org.commonmark.node.FencedCodeBlock;
 import org.commonmark.node.Image;
+import org.commonmark.node.Link;
 import org.commonmark.node.Node;
 import org.commonmark.node.Text;
 import org.commonmark.parser.Parser;
@@ -44,8 +45,9 @@ public final class MarkdownService {
     private static final Set<String> MERMAID_TAGS = Set.of("mermaid");
     private static final Set<String> PLANTUML_TAGS = Set.of("plantuml", "puml", "uml", "plantuml-svg");
 
-    /** Matches src="..." / src='...' in raw HTML that CommonMark passes through untouched. */
+    /** Matches src=/href= in raw HTML that CommonMark passes through untouched. */
     private static final Pattern RAW_IMG_SRC = Pattern.compile("(<img\\b[^>]*?\\bsrc\\s*=\\s*)([\"'])(.*?)\\2");
+    private static final Pattern RAW_LINK_HREF = Pattern.compile("(<a\\b[^>]*?\\bhref\\s*=\\s*)([\"'])(.*?)\\2");
 
     private final Parser parser = Parser.builder()
             .extensions(Arrays.asList(TablesExtension.create()))
@@ -65,7 +67,9 @@ public final class MarkdownService {
                 .nodeRendererFactory(context -> new MdNodeRenderer(context, baseDir, diagrams))
                 .build();
 
-        String html = rewriteRawImageSources(renderer.render(document), baseDir);
+        String html = renderer.render(document);
+        html = rewriteRawAttribute(html, RAW_IMG_SRC, "<img", baseDir);
+        html = rewriteRawAttribute(html, RAW_LINK_HREF, "<a", baseDir);
         return new Result(html, List.copyOf(diagrams));
     }
 
@@ -76,7 +80,7 @@ public final class MarkdownService {
      * with {@code loadContent}, so the document has no base URL and relative paths would
      * otherwise resolve against {@code about:blank} and silently fail to load.
      */
-    static String resolveImageUrl(String destination, Path baseDir) {
+    static String resolveUrl(String destination, Path baseDir) {
         if (destination == null || destination.isBlank()) {
             return destination;
         }
@@ -112,14 +116,14 @@ public final class MarkdownService {
         }
     }
 
-    private static String rewriteRawImageSources(String html, Path baseDir) {
-        if (baseDir == null || !html.contains("<img")) {
+    private static String rewriteRawAttribute(String html, Pattern pattern, String marker, Path baseDir) {
+        if (baseDir == null || !html.contains(marker)) {
             return html;
         }
-        Matcher m = RAW_IMG_SRC.matcher(html);
+        Matcher m = pattern.matcher(html);
         StringBuilder sb = new StringBuilder(html.length());
         while (m.find()) {
-            String url = resolveImageUrl(m.group(3), baseDir);
+            String url = resolveUrl(m.group(3), baseDir);
             m.appendReplacement(sb, Matcher.quoteReplacement(m.group(1) + m.group(2) + url + m.group(2)));
         }
         m.appendTail(sb);
@@ -144,7 +148,7 @@ public final class MarkdownService {
 
         @Override
         public Set<Class<? extends Node>> getNodeTypes() {
-            return Set.of(FencedCodeBlock.class, Image.class);
+            return Set.of(FencedCodeBlock.class, Image.class, Link.class);
         }
 
         @Override
@@ -153,6 +157,8 @@ public final class MarkdownService {
                 renderFence(fence);
             } else if (node instanceof Image image) {
                 renderImage(image);
+            } else if (node instanceof Link link) {
+                renderLink(link);
             }
         }
 
@@ -199,9 +205,29 @@ public final class MarkdownService {
             html.line();
         }
 
+        /**
+         * Same resolution as images, so a link to a sibling document arrives at the
+         * controller as an absolute file: URL it can open rather than a relative path
+         * that would resolve against about:blank and go nowhere.
+         */
+        private void renderLink(Link link) {
+            Map<String, String> attrs = new LinkedHashMap<>();
+            attrs.put("href", resolveUrl(link.getDestination(), baseDir));
+            if (link.getTitle() != null) {
+                attrs.put("title", link.getTitle());
+            }
+            html.tag("a", context.extendAttributes(link, "a", attrs));
+            for (Node child = link.getFirstChild(); child != null; ) {
+                Node next = child.getNext();
+                context.render(child);
+                child = next;
+            }
+            html.tag("/a");
+        }
+
         private void renderImage(Image image) {
             Map<String, String> attrs = new LinkedHashMap<>();
-            attrs.put("src", resolveImageUrl(image.getDestination(), baseDir));
+            attrs.put("src", resolveUrl(image.getDestination(), baseDir));
             attrs.put("alt", altText(image));
             if (image.getTitle() != null) {
                 attrs.put("title", image.getTitle());

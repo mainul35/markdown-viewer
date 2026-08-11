@@ -48,6 +48,44 @@ public final class PathTreeItem extends TreeItem<Path> {
         return super.getChildren();
     }
 
+    /**
+     * Returns the child item for {@code childPath}, inserting one if the listing filter
+     * left it out.
+     *
+     * <p>Needed to reveal a document reached by following a link: the target may sit under
+     * a folder the explorer hides, such as {@code .claude/rules/}. A file the user has
+     * actually opened is not the noise the filter exists to remove, so it gets surfaced -
+     * but only that path, not the whole folder.
+     *
+     * @return the child item, or null if {@code childPath} does not exist on disk
+     */
+    public PathTreeItem ensureChild(Path childPath) {
+        for (TreeItem<Path> child : getChildren()) {
+            if (child.getValue().equals(childPath)) {
+                return (PathTreeItem) child;
+            }
+        }
+        if (!Files.exists(childPath)) {
+            return null;
+        }
+        PathTreeItem item = new PathTreeItem(childPath);
+        int index = 0;
+        while (index < super.getChildren().size()
+                && compare(super.getChildren().get(index).getValue(), childPath) < 0) {
+            index++;
+        }
+        super.getChildren().add(index, item);
+        return item;
+    }
+
+    /** Directories first, then case-insensitive by name - the listing order. */
+    private static int compare(Path a, Path b) {
+        int byType = Boolean.compare(!Files.isDirectory(a), !Files.isDirectory(b));
+        return byType != 0 ? byType
+                : String.CASE_INSENSITIVE_ORDER.compare(
+                        a.getFileName().toString(), b.getFileName().toString());
+    }
+
     /** Drops cached children so the next access re-reads the directory. */
     public void invalidate() {
         childrenLoaded = false;
