@@ -96,6 +96,12 @@ public class MainController {
     /** Diagrams belonging to {@link #currentPreviewHtml}, re-pushed after a shell reload. */
     private List<MarkdownService.Diagram> currentDiagrams = List.of();
 
+    /** The document the preview is currently showing, which may lag the active tab. */
+    private DocumentView previewedDocument;
+
+    /** Offset the preview should sit at once the pending body update lands. */
+    private double pendingScrollY = 0;
+
     /**
      * Incremented on every preview render. A background PlantUML result is discarded
      * unless it still carries the current generation, so edits cannot be overwritten
@@ -732,6 +738,9 @@ public class MainController {
             }
             String loc = newLoc.toLowerCase(Locale.ROOT);
             if (loc.startsWith("file:")) {
+                // Capture before cancelling: once the navigation tears the page down the
+                // offset is unreadable, and this is the position the reader returns to.
+                rememberScroll(previewedDocument);
                 engine.getLoadWorker().cancel();
                 followLocalLink(newLoc);
             } else if (loc.startsWith("http://") || loc.startsWith("https://") || loc.startsWith("mailto:")) {
@@ -800,6 +809,21 @@ public class MainController {
             return;
         }
         DocumentView document = activeDocument();
+
+        // Decide where the preview should sit once the new body is in place: re-rendering
+        // the same document keeps the reader where they are, while switching documents
+        // resumes that document's own last position instead of jumping to the top.
+        if (document != previewedDocument) {
+            rememberScroll(previewedDocument);
+            previewedDocument = document;
+            pendingScrollY = document == null ? 0 : document.getPreviewScrollY();
+        } else {
+            double y = readScrollY();
+            if (y >= 0) {
+                pendingScrollY = y;
+            }
+        }
+
         String markdown = document == null ? "" : document.getEditor().getText();
         Path baseDir = document == null ? null : document.getBaseDir();
 
@@ -812,6 +836,34 @@ public class MainController {
         pushDiagrams(currentDiagrams, generation);
     }
 
+    /** Reads the preview's current offset, or -1 when the page cannot be queried. */
+    private double readScrollY() {
+        if (!previewReady) {
+            return -1;
+        }
+        try {
+            Object value = webView.getEngine().executeScript("window.__mdScrollY()");
+            return value instanceof Number n ? n.doubleValue() : -1;
+        } catch (RuntimeException e) {
+            return -1;
+        }
+    }
+
+    /**
+     * Stores the on-screen position against the document currently displayed. An
+     * unreadable page leaves the remembered position alone rather than resetting it to
+     * the top - that is exactly the case when a link click has already torn the page down.
+     */
+    private void rememberScroll(DocumentView document) {
+        if (document == null) {
+            return;
+        }
+        double y = readScrollY();
+        if (y >= 0) {
+            document.setPreviewScrollY(y);
+        }
+    }
+
     private void applyPreviewHtml(String html) {
         if (!previewReady) {
             // Shell still loading; the load-worker listener re-applies once it succeeds.
@@ -819,6 +871,7 @@ public class MainController {
         }
         try {
             webView.getEngine().executeScript("window.__mdSetBody(" + toJsStringLiteral(html) + ");");
+            webView.getEngine().executeScript("window.__mdScrollTo(" + (long) pendingScrollY + ");");
         } catch (RuntimeException e) {
             // The hook is gone (page replaced) - rebuild the shell and retry on load.
             loadPreviewShell();
@@ -848,6 +901,9 @@ public class MainController {
         try {
             webView.getEngine().executeScript(
                     "window.__mdSetDiagram(" + toJsStringLiteral(id) + "," + toJsStringLiteral(svg) + ");");
+            // A diagram is far taller than its placeholder, so everything below it shifts.
+            // Re-anchor unless the reader has scrolled since the body was applied.
+            webView.getEngine().executeScript("window.__mdKeepScroll(" + (long) pendingScrollY + ");");
         } catch (RuntimeException e) {
             // Preview page was replaced mid-flight; the reload path re-pushes diagrams.
         }
@@ -1025,6 +1081,26 @@ public class MainController {
                 "<script>" +
                     "window.__mdSetTheme = function (theme) {" +
                         "document.documentElement.setAttribute('data-theme', theme);" +
+                    "};" +
+                    // Scroll bookkeeping. __mdScrolled records whether the reader moved the
+                    // page themselves, so a diagram arriving late can restore the intended
+                    // position without fighting someone who has already scrolled on.
+                    "window.__mdScrolled = false;" +
+                    "window.__mdSuppress = false;" +
+                    "window.addEventListener('scroll', function () {" +
+                        "if (!window.__mdSuppress) { window.__mdScrolled = true; }" +
+                    "});" +
+                    "window.__mdScrollY = function () {" +
+                        "return window.pageYOffset || document.documentElement.scrollTop || 0;" +
+                    "};" +
+                    "window.__mdScrollTo = function (y) {" +
+                        "window.__mdSuppress = true;" +
+                        "window.scrollTo(0, y);" +
+                        "window.__mdScrolled = false;" +
+                        "setTimeout(function () { window.__mdSuppress = false; }, 0);" +
+                    "};" +
+                    "window.__mdKeepScroll = function (y) {" +
+                        "if (!window.__mdScrolled) { window.__mdScrollTo(y); }" +
                     "};" +
                     "window.__mdRunMermaid = function () {" +
                         "if (!window.mermaid) { return; }" +
