@@ -1397,6 +1397,7 @@ public class MainController {
         try {
             webView.getEngine().executeScript("window.__mdSetBody(" + toJsStringLiteral(html) + ");");
             webView.getEngine().executeScript("window.__mdScrollTo(" + (long) pendingScrollY + ");");
+            previewToolbar.setImageSelected(false);
         } catch (RuntimeException e) {
             // The hook is gone (page replaced) - rebuild the shell and retry on load.
             loadPreviewShell();
@@ -1611,8 +1612,6 @@ public class MainController {
             /* An image clicked in the preview is the target of the position and size
                controls, so it has to be visibly the chosen one. */
             img.mdv-img-selected { outline:2px solid var(--accent); outline-offset:2px; }
-            /* The wrapper that gives raw HTML a source anchor must not create a box. */
-            .mdv-html { display:contents; }
             figure { margin:1.8em auto; }
             figure img { display:inline-block; }
             figcaption {
@@ -1690,6 +1689,10 @@ public class MainController {
             };
             window.__mdSetBody = function (html) {
               document.body.innerHTML = html;
+              /* The previous DOM is gone, so any image selected in it is too. Leaving the
+                 old offsets behind would send the next size or alignment action at an
+                 element that no longer exists. */
+              window.__mdSelectedImage = '';
               window.__mdRunMermaid();
             };
             window.__mdSetDiagram = function (id, svg) {
