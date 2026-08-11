@@ -52,8 +52,20 @@
                     <SeparatorMenuItem/>
                     <MenuItem fx:id="explorerMenuItem" text="Hide Explorer" onAction="#handleToggleExplorer"/>
                     <MenuItem text="Reveal Current File" onAction="#handleRevealInTree"/>
+                    <MenuItem text="Refresh Workspaces" onAction="#handleRefreshWorkspaces">
+                        <accelerator><KeyCodeCombination alt="UP" code="F5" control="UP" meta="UP" shift="UP" shortcut="UP"/></accelerator>
+                    </MenuItem>
                     <SeparatorMenuItem/>
                     <MenuItem fx:id="themeMenuItem" text="Dark Mode" onAction="#handleToggleTheme"/>
+                </Menu>
+                <!--
+                    Auto-refresh is on by default: a stale tree is a silent wrong answer,
+                    and the cost is one directory listing every five minutes. It is a
+                    toggle rather than a fixed behaviour because a workspace on a network
+                    share or a very large tree is exactly where the scan stops being free.
+                -->
+                <Menu text="Settings">
+                    <CheckMenuItem fx:id="autoRefreshMenuItem" text="Auto-refresh Workspaces (5 min)" selected="true" onAction="#handleToggleAutoRefresh"/>
                 </Menu>
                 <Menu text="Help">
                     <MenuItem text="About" onAction="#handleAbout"/>
