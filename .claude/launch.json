@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mdviewer-site",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "../mdviewer-website", "run", "dev"],
+      "port": 3000
+    }
+  ]
+}

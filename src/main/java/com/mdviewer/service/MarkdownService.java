@@ -7,7 +7,9 @@ import org.commonmark.node.FencedCodeBlock;
 import org.commonmark.node.HtmlBlock;
 import org.commonmark.node.Image;
 import org.commonmark.node.Link;
+import org.commonmark.node.ListBlock;
 import org.commonmark.node.Node;
+import org.commonmark.node.Paragraph;
 import org.commonmark.node.SourceSpan;
 import org.commonmark.node.Text;
 import org.commonmark.parser.IncludeSourceSpans;
@@ -53,6 +55,14 @@ public final class MarkdownService {
     private static final Pattern RAW_IMG_SRC = Pattern.compile("(<img\\b[^>]*?\\bsrc\\s*=\\s*)([\"'])(.*?)\\2");
     private static final Pattern RAW_LINK_HREF = Pattern.compile("(<a\\b[^>]*?\\bhref\\s*=\\s*)([\"'])(.*?)\\2");
 
+    /**
+     * A complete unfenced diagram: an @start tag through its matching @end tag. PlantUML
+     * owns these delimiters, so recognising them costs nothing and saves writing a fence
+     * around syntax that already declares where it begins and ends.
+     */
+    private static final Pattern BARE_DIAGRAM =
+            Pattern.compile("(?s)^@start(\\w+)\\b.*@end\\1\\s*$");
+
     /** First opening tag of a raw HTML block; deliberately does not match "&lt;/div&gt;". */
     private static final Pattern OPENING_TAG = Pattern.compile("<([A-Za-z][\\w-]*)");
 
@@ -79,7 +89,8 @@ public final class MarkdownService {
 
         HtmlRenderer renderer = HtmlRenderer.builder()
                 .extensions(Arrays.asList(TablesExtension.create()))
-                .nodeRendererFactory(context -> new MdNodeRenderer(context, baseDir, diagrams))
+                .nodeRendererFactory(context ->
+                        new MdNodeRenderer(context, baseDir, diagrams, source, lineStarts))
                 .attributeProviderFactory(context -> new SourceSpanAttributes(lineStarts, source.length()))
                 .build();
 
@@ -214,17 +225,23 @@ public final class MarkdownService {
         private final HtmlWriter html;
         private final Path baseDir;
         private final List<Diagram> diagrams;
+        private final String source;
+        private final int[] lineStarts;
 
-        MdNodeRenderer(HtmlNodeRendererContext context, Path baseDir, List<Diagram> diagrams) {
+        MdNodeRenderer(HtmlNodeRendererContext context, Path baseDir, List<Diagram> diagrams,
+                       String source, int[] lineStarts) {
             this.context = context;
             this.html = context.getWriter();
             this.baseDir = baseDir;
             this.diagrams = diagrams;
+            this.source = source;
+            this.lineStarts = lineStarts;
         }
 
         @Override
         public Set<Class<? extends Node>> getNodeTypes() {
-            return Set.of(FencedCodeBlock.class, Image.class, Link.class, HtmlBlock.class);
+            return Set.of(FencedCodeBlock.class, Image.class, Link.class, HtmlBlock.class,
+                    Paragraph.class);
         }
 
         @Override
@@ -237,7 +254,84 @@ public final class MarkdownService {
                 renderLink(link);
             } else if (node instanceof HtmlBlock block) {
                 renderHtmlBlock(block);
+            } else if (node instanceof Paragraph paragraph) {
+                renderParagraph(paragraph);
             }
+        }
+
+        /**
+         * A paragraph is a diagram when it is one: {@code @startuml} and {@code @enduml}
+         * are PlantUML's own delimiters and mean nothing else, so requiring a fence around
+         * them as well is a rule the syntax does not need. Anything else renders as an
+         * ordinary paragraph.
+         */
+        private void renderParagraph(Paragraph paragraph) {
+            String diagram = bareDiagram(paragraph);
+            if (diagram != null) {
+                html.line();
+                emitDiagramPlaceholder(diagram);
+                html.line();
+                return;
+            }
+
+            // Reproduces CommonMark's own paragraph output, including the rule that a
+            // paragraph inside a tight list gets no <p> wrapper.
+            if (isInTightList(paragraph)) {
+                renderChildren(paragraph);
+                return;
+            }
+            html.line();
+            html.tag("p", context.extendAttributes(paragraph, "p", new LinkedHashMap<>()));
+            renderChildren(paragraph);
+            html.tag("/p");
+            html.line();
+        }
+
+        /** @return the diagram source if this paragraph is a complete bare diagram */
+        private String bareDiagram(Paragraph paragraph) {
+            String text = sourceOf(paragraph);
+            if (text == null || !text.startsWith("@start")) {
+                return null;
+            }
+            return BARE_DIAGRAM.matcher(text).matches() ? text : null;
+        }
+
+        private String sourceOf(Node node) {
+            List<SourceSpan> spans = node.getSourceSpans();
+            if (spans.isEmpty()) {
+                return null;
+            }
+            SourceSpan first = spans.get(0);
+            SourceSpan last = spans.get(spans.size() - 1);
+            int start = offsetOf(lineStarts, first.getLineIndex(), first.getColumnIndex());
+            int end = offsetOf(lineStarts, last.getLineIndex(),
+                    last.getColumnIndex() + last.getLength());
+            if (start < 0 || end < start || end > source.length()) {
+                return null;
+            }
+            return source.substring(start, end).strip();
+        }
+
+        private static boolean isInTightList(Paragraph paragraph) {
+            Node parent = paragraph.getParent();
+            Node grandparent = parent == null ? null : parent.getParent();
+            return grandparent instanceof ListBlock list && list.isTight();
+        }
+
+        private void renderChildren(Node parent) {
+            for (Node child = parent.getFirstChild(); child != null; ) {
+                Node next = child.getNext();
+                context.render(child);
+                child = next;
+            }
+        }
+
+        private void emitDiagramPlaceholder(String diagramSource) {
+            String id = "mdv-uml-" + (diagrams.size() + 1);
+            diagrams.add(new Diagram(id, diagramSource));
+            html.tag("div", Map.of("class", "mdv-diagram mdv-diagram-pending", "id", id));
+            html.text("Rendering diagram…");
+            html.tag("/div");
         }
 
         /**
@@ -291,12 +385,8 @@ public final class MarkdownService {
             }
 
             if (PLANTUML_TAGS.contains(tag)) {
-                String id = "mdv-uml-" + (diagrams.size() + 1);
-                diagrams.add(new Diagram(id, literal));
                 html.line();
-                html.tag("div", Map.of("class", "mdv-diagram mdv-diagram-pending", "id", id));
-                html.text("Rendering diagram\u2026");
-                html.tag("/div");
+                emitDiagramPlaceholder(literal);
                 html.line();
                 return;
             }
