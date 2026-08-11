@@ -185,6 +185,11 @@ rather than the module path.
     PlantUML's own delimiters, so a fence adds nothing. The block has to be
     unbroken: a blank line inside one, or `*` bullet syntax such as `@startmindmap`,
     is read as Markdown and still needs a fence
+  - an unfenced Mermaid diagram renders when its opening keyword is unambiguous —
+    `graph`/`flowchart` with a direction, `sequenceDiagram`, `classDiagram`,
+    `stateDiagram`, `erDiagram`, `gitGraph`, `mindmap`, `gantt` and similar.
+    `pie`, `journey` and `timeline` are excluded on purpose, because a paragraph
+    of prose could genuinely start with them; those need a fence
   - C4-PlantUML diagrams work offline: `!include` URLs pointing at the C4-PlantUML GitHub
     repo are rewritten to the C4 standard library bundled inside the PlantUML jar
   - No Graphviz install needed — PlantUML's pure-Java `smetana` layout engine is used
