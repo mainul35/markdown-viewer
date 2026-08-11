@@ -1693,8 +1693,27 @@ public class MainController {
                headings would silently get a far wider column than the paragraphs under
                them and the two would stop sharing a left edge. */
             body > * { max-width:40rem; margin-left:auto; margin-right:auto; }
+            /* Plates break out of the measure to the right only, keeping the prose
+               column's left edge. Centring the breakout instead put every code block
+               and table further left than the heading above it, which reads as a
+               misalignment rather than as emphasis - the left edge is the spine the
+               eye returns to on every line.
+
+               The prose column starts at (100% - 40rem) / 2. A plate that starts
+               there and ends at the right content edge is therefore
+               (100% + 40rem) / 2 wide, which margin-left:auto positions exactly.
+               Below 40rem there is no breakout left to take, and min() collapses
+               it to the full width. */
             body > .mdv-code, body > table, body > .mdv-diagram,
-            body > pre.mermaid, body > .mdv-diagram-error, body > hr { max-width:none; }
+            body > pre.mermaid, body > .mdv-diagram-error, body > hr {
+              max-width:none;
+              width:min(100%, calc((100% + 40rem) / 2));
+              margin-left:auto; margin-right:0;
+              /* border-box, or the plates' own padding and accent border would be
+                 added outside the computed width and drag the left edge back off
+                 the prose column by exactly as much. */
+              box-sizing:border-box;
+            }
 
             h1,h2,h3,h4,h5,h6 {
               font-family:var(--display); font-weight:600; line-height:1.22;
