@@ -120,11 +120,18 @@ rather than the module path.
 
 - **Images from the preview:** *Insert image* copies the chosen file into `assets/` beside
   the document and inserts a relative reference — copying rather than linking in place is
-  what keeps the document portable. Click an image in the preview to select it, then set
-  its width (25/75/50/100%) and position (left/centre/right). Markdown has no syntax for
-  either, so a positioned or resized image is written as an `<img>` in an aligned paragraph
-  — the form that also renders on GitHub. Returning it to full width and left alignment
-  turns it back into plain `![](...)` Markdown, so the HTML never accumulates.
+  what keeps the document portable. Right-click an image in the preview for its own menu:
+  resize (75/100/125/150%), position (left/centre/right), crop, caption, replace, copy path
+  and remove. Markdown has no syntax for size, position or captions, so a styled image is
+  written as an `<img>` in an aligned paragraph — or a `<figure>` when it has a caption —
+  the forms that also render on GitHub. Returning it to 100% width, left alignment and no
+  caption turns it back into plain `![](...)` Markdown, so the HTML never accumulates.
+
+- **Files from the explorer:** right-click any row for New file, New folder, Rename and
+  Delete, plus Open on a file. Deletions go to the recycle bin. Renaming moves any open
+  document with the file, so the next save does not write it back under the old name. A
+  workspace root offers creation only — renaming or binning it would leave the workspace
+  pointing at nothing; use **File → Close Workspace** instead.
 
 - **Three Editing Modes:**
   - Raw Mode: Plain text editor for Markdown
