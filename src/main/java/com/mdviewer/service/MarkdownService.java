@@ -7,9 +7,12 @@ import org.commonmark.node.FencedCodeBlock;
 import org.commonmark.node.Image;
 import org.commonmark.node.Link;
 import org.commonmark.node.Node;
+import org.commonmark.node.SourceSpan;
 import org.commonmark.node.Text;
+import org.commonmark.parser.IncludeSourceSpans;
 import org.commonmark.parser.Parser;
 import org.commonmark.renderer.NodeRenderer;
+import org.commonmark.renderer.html.AttributeProvider;
 import org.commonmark.renderer.html.HtmlNodeRendererContext;
 import org.commonmark.renderer.html.HtmlRenderer;
 import org.commonmark.renderer.html.HtmlWriter;
@@ -49,8 +52,14 @@ public final class MarkdownService {
     private static final Pattern RAW_IMG_SRC = Pattern.compile("(<img\\b[^>]*?\\bsrc\\s*=\\s*)([\"'])(.*?)\\2");
     private static final Pattern RAW_LINK_HREF = Pattern.compile("(<a\\b[^>]*?\\bhref\\s*=\\s*)([\"'])(.*?)\\2");
 
+    /**
+     * Source spans are what make editing from the preview possible: every rendered element
+     * carries the offsets of the Markdown it came from, so a selection in the preview can
+     * be mapped back to the range in the editor that produced it.
+     */
     private final Parser parser = Parser.builder()
             .extensions(Arrays.asList(TablesExtension.create()))
+            .includeSourceSpans(IncludeSourceSpans.BLOCKS_AND_INLINES)
             .build();
 
     /**
@@ -60,17 +69,78 @@ public final class MarkdownService {
      */
     public Result render(String markdown, Path baseDir) {
         List<Diagram> diagrams = new ArrayList<>();
-        Node document = parser.parse(markdown == null ? "" : markdown);
+        String source = markdown == null ? "" : markdown;
+        Node document = parser.parse(source);
+        int[] lineStarts = lineStarts(source);
 
         HtmlRenderer renderer = HtmlRenderer.builder()
                 .extensions(Arrays.asList(TablesExtension.create()))
                 .nodeRendererFactory(context -> new MdNodeRenderer(context, baseDir, diagrams))
+                .attributeProviderFactory(context -> new SourceSpanAttributes(lineStarts, source.length()))
                 .build();
 
         String html = renderer.render(document);
         html = rewriteRawAttribute(html, RAW_IMG_SRC, "<img", baseDir);
         html = rewriteRawAttribute(html, RAW_LINK_HREF, "<a", baseDir);
         return new Result(html, List.copyOf(diagrams));
+    }
+
+    // ----------------------------------------------------------- source spans
+
+    /** Absolute offset of the first character of each line. */
+    private static int[] lineStarts(String text) {
+        List<Integer> starts = new ArrayList<>();
+        starts.add(0);
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == '\n') {
+                starts.add(i + 1);
+            }
+        }
+        int[] result = new int[starts.size()];
+        for (int i = 0; i < result.length; i++) {
+            result[i] = starts.get(i);
+        }
+        return result;
+    }
+
+    private static int offsetOf(int[] lineStarts, int lineIndex, int columnIndex) {
+        if (lineIndex < 0 || lineIndex >= lineStarts.length) {
+            return -1;
+        }
+        return lineStarts[lineIndex] + columnIndex;
+    }
+
+    /**
+     * Stamps every rendered element with the Markdown offsets it was produced from.
+     * CommonMark reports spans as line/column, so they are resolved against the line table
+     * of the exact source string that was parsed.
+     */
+    private static final class SourceSpanAttributes implements AttributeProvider {
+
+        private final int[] lineStarts;
+        private final int sourceLength;
+
+        SourceSpanAttributes(int[] lineStarts, int sourceLength) {
+            this.lineStarts = lineStarts;
+            this.sourceLength = sourceLength;
+        }
+
+        @Override
+        public void setAttributes(Node node, String tagName, Map<String, String> attributes) {
+            List<SourceSpan> spans = node.getSourceSpans();
+            if (spans.isEmpty()) {
+                return;
+            }
+            SourceSpan first = spans.get(0);
+            SourceSpan last = spans.get(spans.size() - 1);
+            int start = offsetOf(lineStarts, first.getLineIndex(), first.getColumnIndex());
+            int end = offsetOf(lineStarts, last.getLineIndex(), last.getColumnIndex() + last.getLength());
+            if (start < 0 || end < start) {
+                return;
+            }
+            attributes.put("data-md-start", String.valueOf(start));
+            attributes.put("data-md-end", String.valueOf(Math.min(end, sourceLength)));
+        }
     }
 
     // ------------------------------------------------------------------ images

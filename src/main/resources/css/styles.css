@@ -313,3 +313,63 @@
 .document-tabs > .tab-header-area > .headers-region > .tab:selected .tab-label {
     -fx-text-fill: -mdv-text;
 }
+
+/* ------------------------------------------------------- preview toolbar */
+
+.preview-pane {
+    -fx-background-color: -mdv-paper;
+}
+
+.preview-toolbar {
+    -fx-background-color: -mdv-surface;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 5 8 5 8;
+}
+
+.toolbar-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 5;
+    -fx-padding: 4 7 4 7;
+    -fx-text-fill: -mdv-text;
+    -fx-font-size: 12px;
+    -fx-cursor: hand;
+}
+
+.toolbar-button:hover {
+    -fx-background-color: -mdv-accent-soft;
+}
+
+.toolbar-button:disabled {
+    -fx-opacity: 0.35;
+}
+
+.toolbar-bold { -fx-font-weight: bold; }
+.toolbar-italic { -fx-font-style: italic; -fx-font-family: "Sitka Text", Cambria, serif; }
+.toolbar-strike { -fx-strikethrough: true; }
+.toolbar-heading { -fx-font-size: 11px; -fx-font-weight: bold; }
+.toolbar-width { -fx-font-size: 10.5px; }
+.toolbar-icon-button { -fx-min-width: 28; }
+
+.toolbar-icon-stroke {
+    -fx-fill: transparent;
+    -fx-stroke: -mdv-text;
+    -fx-stroke-width: 1.5;
+}
+
+.toolbar-icon-fill {
+    -fx-fill: -mdv-text;
+    -fx-stroke: transparent;
+}
+
+.toolbar-button:hover .toolbar-icon-stroke { -fx-stroke: -mdv-accent; }
+.toolbar-button:hover .toolbar-icon-fill { -fx-fill: -mdv-accent; }
+
+.toolbar-divider {
+    -fx-padding: 0 5 0 5;
+}
+
+.toolbar-hint {
+    -fx-text-fill: -mdv-text-muted;
+    -fx-font-size: 10.5px;
+}

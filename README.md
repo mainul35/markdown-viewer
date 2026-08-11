@@ -106,6 +106,26 @@ rather than the module path.
   tag; diagrams share the same plate family. All fonts are system faces — this is an
   offline app, so a webfont would simply fail to load.
 
+- **Formatting from the preview:** a toolbar above the rendered document applies bold,
+  italic, strikethrough, inline code, headings, lists, quotes, links and images without
+  needing to remember the Markdown for them. The same actions are on the preview's
+  right-click menu, which replaces WebKit's Copy-only one.
+
+  Selecting text in the *preview* and pressing a button edits the *source*. Every rendered
+  element carries the offsets of the Markdown it came from, and a selection reports which
+  occurrence of that text it is within its element, so the second "hello" in a paragraph is
+  the one that gets styled. A selection spanning existing formatting cannot be matched back
+  and says so rather than guessing. With no preview selection the buttons fall back to the
+  editor's own selection, which is what makes them useful in Split mode.
+
+- **Images from the preview:** *Insert image* copies the chosen file into `assets/` beside
+  the document and inserts a relative reference — copying rather than linking in place is
+  what keeps the document portable. Click an image in the preview to select it, then set
+  its width (25/75/50/100%) and position (left/centre/right). Markdown has no syntax for
+  either, so a positioned or resized image is written as an `<img>` in an aligned paragraph
+  — the form that also renders on GitHub. Returning it to full width and left alignment
+  turns it back into plain `![](...)` Markdown, so the HTML never accumulates.
+
 - **Three Editing Modes:**
   - Raw Mode: Plain text editor for Markdown
   - Split Preview: Side-by-side editor and live preview
