@@ -229,16 +229,25 @@ public class MainController {
            So the two tab strips are now headers only (document tabs carry no content at
            all) and the editor area lives permanently below them. Nothing about the two-
            level tab UI changes on screen; the WebView simply stops being moved. */
+        /* The tab strips are pinned to their preferred height, and everything else is
+           allowed to shrink to nothing.
+
+           A WebView reports a preferred height of 600px, so the VBox's preferred height
+           always exceeds what the window can give it, and it shrinks children to fit. A
+           TabPane's computed minimum is zero, so without this the two strips are the first
+           thing squeezed away - collapsing to the 2px of the selected tab's underline,
+           which is precisely what "the tabs are gone" looks like. Pinning min to pref
+           takes them out of the negotiation, and the editor area absorbs all of it. */
+        workspaceTabs.setMinHeight(Region.USE_PREF_SIZE);
         workspaceTabs.setMaxHeight(Region.USE_PREF_SIZE);
         VBox rightSide = new VBox(workspaceTabs, editorSplit);
         VBox.setVgrow(editorSplit, Priority.ALWAYS);
-        // Without this the editor area's preferred height wins over the tab strips when
-        // the window is short, and the headers are squeezed out of view.
         rightSide.setMinHeight(0);
         editorSplit.setMinHeight(0);
         editorPane.setMinHeight(0);
         previewPane.setMinHeight(0);
         webView.setMinHeight(0);
+        webView.setPrefHeight(0);
 
         int workspaceSlot = mainSplit.getItems().indexOf(workspaceTabs);
         mainSplit.getItems().set(workspaceSlot, rightSide);
