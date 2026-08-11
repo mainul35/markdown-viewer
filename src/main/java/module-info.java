@@ -5,6 +5,8 @@ module com.mdviewer {
     requires org.commonmark;
     requires org.commonmark.ext.gfm.tables;
     requires net.sourceforge.plantuml;
+    // ImageIO, for writing cropped images out to PNG.
+    requires java.desktop;
 
     opens com.mdviewer to javafx.fxml;
     exports com.mdviewer;

@@ -4,6 +4,7 @@ import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.commonmark.node.AbstractVisitor;
 import org.commonmark.node.Code;
 import org.commonmark.node.FencedCodeBlock;
+import org.commonmark.node.HtmlBlock;
 import org.commonmark.node.Image;
 import org.commonmark.node.Link;
 import org.commonmark.node.Node;
@@ -220,7 +221,7 @@ public final class MarkdownService {
 
         @Override
         public Set<Class<? extends Node>> getNodeTypes() {
-            return Set.of(FencedCodeBlock.class, Image.class, Link.class);
+            return Set.of(FencedCodeBlock.class, Image.class, Link.class, HtmlBlock.class);
         }
 
         @Override
@@ -231,7 +232,28 @@ public final class MarkdownService {
                 renderImage(image);
             } else if (node instanceof Link link) {
                 renderLink(link);
+            } else if (node instanceof HtmlBlock block) {
+                renderHtmlBlock(block);
             }
+        }
+
+        /**
+         * Raw HTML passes through verbatim, which means it carries none of the source
+         * offsets the rest of the document has. Wrapping it in an annotated div gives it
+         * an anchor - without which an image that has been positioned or resized (and is
+         * therefore now HTML) could never be adjusted a second time.
+         *
+         * <p>The wrapper is {@code display: contents}, so it adds an anchor without
+         * adding a box.
+         */
+        private void renderHtmlBlock(HtmlBlock block) {
+            Map<String, String> attrs = new LinkedHashMap<>();
+            attrs.put("class", "mdv-html");
+            html.line();
+            html.tag("div", context.extendAttributes(block, "div", attrs));
+            html.raw(block.getLiteral());
+            html.tag("/div");
+            html.line();
         }
 
         private void renderFence(FencedCodeBlock fence) {

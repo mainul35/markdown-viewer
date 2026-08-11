@@ -24,6 +24,7 @@ import com.mdviewer.service.MarkdownService;
 import com.mdviewer.service.SourceEdits;
 import com.mdviewer.ui.DocumentView;
 import com.mdviewer.ui.FileTreePanel;
+import com.mdviewer.ui.CropDialog;
 import com.mdviewer.ui.FindBar;
 import com.mdviewer.ui.MarkdownFiles;
 import com.mdviewer.ui.PreviewToolbar;
@@ -782,16 +783,9 @@ public class MainController {
         webView.setContextMenuEnabled(false);
 
         MenuItem copy = new MenuItem("Copy");
-        copy.setOnAction(e -> {
-            String selected = previewString("window.__mdSelectionText()");
-            if (!selected.isEmpty()) {
-                ClipboardContent content = new ClipboardContent();
-                content.putString(selected);
-                Clipboard.getSystemClipboard().setContent(content);
-            }
-        });
+        copy.setOnAction(e -> copyPreviewSelection());
 
-        ContextMenu menu = new ContextMenu(copy, new SeparatorMenuItem(),
+        ContextMenu textMenu = new ContextMenu(copy, new SeparatorMenuItem(),
                 formatItem("Bold", PreviewToolbar.Action.BOLD),
                 formatItem("Italic", PreviewToolbar.Action.ITALIC),
                 formatItem("Strikethrough", PreviewToolbar.Action.STRIKETHROUGH),
@@ -804,21 +798,61 @@ public class MainController {
                 formatItem("Bullet list", PreviewToolbar.Action.BULLET_LIST),
                 formatItem("Numbered list", PreviewToolbar.Action.ORDERED_LIST),
                 formatItem("Block quote", PreviewToolbar.Action.QUOTE),
-                formatItem("Link...", PreviewToolbar.Action.LINK),
                 new SeparatorMenuItem(),
+                formatItem("Align left", PreviewToolbar.Action.ALIGN_LEFT),
+                formatItem("Centre", PreviewToolbar.Action.ALIGN_CENTER),
+                formatItem("Align right", PreviewToolbar.Action.ALIGN_RIGHT),
+                new SeparatorMenuItem(),
+                formatItem("Link...", PreviewToolbar.Action.LINK),
                 formatItem("Insert image...", PreviewToolbar.Action.IMAGE_INSERT));
 
+        // Right-clicking an image is asking about that image, not about text.
+        Menu size = new Menu("Resize");
+        size.getItems().addAll(
+                formatItem("25%", PreviewToolbar.Action.IMAGE_WIDTH_25),
+                formatItem("50%", PreviewToolbar.Action.IMAGE_WIDTH_50),
+                formatItem("75%", PreviewToolbar.Action.IMAGE_WIDTH_75),
+                formatItem("Full width", PreviewToolbar.Action.IMAGE_WIDTH_100));
+        Menu position = new Menu("Position");
+        position.getItems().addAll(
+                formatItem("Left", PreviewToolbar.Action.ALIGN_LEFT),
+                formatItem("Centre", PreviewToolbar.Action.ALIGN_CENTER),
+                formatItem("Right", PreviewToolbar.Action.ALIGN_RIGHT));
+
+        ContextMenu imageMenu = new ContextMenu(
+                size, position,
+                formatItem("Crop...", PreviewToolbar.Action.IMAGE_CROP),
+                new SeparatorMenuItem(),
+                formatItem("Caption...", PreviewToolbar.Action.IMAGE_CAPTION),
+                formatItem("Replace image...", PreviewToolbar.Action.IMAGE_REPLACE),
+                new SeparatorMenuItem(),
+                formatItem("Copy image path", PreviewToolbar.Action.IMAGE_COPY_PATH),
+                formatItem("Remove image", PreviewToolbar.Action.IMAGE_REMOVE));
+
         webView.setOnContextMenuRequested(event -> {
-            menu.show(webView, event.getScreenX(), event.getScreenY());
+            textMenu.hide();
+            imageMenu.hide();
+            // The page records the image under the pointer on mousedown, which fires
+            // before this, so the choice of menu is already known.
+            boolean onImage = !previewString("window.__mdImageInfo()").isEmpty();
+            refreshImageSelection();
+            (onImage ? imageMenu : textMenu).show(webView, event.getScreenX(), event.getScreenY());
             event.consume();
         });
         webView.setOnMousePressed(event -> {
-            if (menu.isShowing()) {
-                menu.hide();
-            }
-            // A click may have landed on an image; let the page update first.
+            textMenu.hide();
+            imageMenu.hide();
             Platform.runLater(this::refreshImageSelection);
         });
+    }
+
+    private void copyPreviewSelection() {
+        String selected = previewString("window.__mdSelectionText()");
+        if (!selected.isEmpty()) {
+            ClipboardContent content = new ClipboardContent();
+            content.putString(selected);
+            Clipboard.getSystemClipboard().setContent(content);
+        }
     }
 
     private MenuItem formatItem(String label, PreviewToolbar.Action action) {
@@ -937,8 +971,29 @@ public class MainController {
             insertImage(document);
             return;
         }
+        boolean imageSelected = !previewString("window.__mdImageInfo()").isEmpty();
         if (action.name().startsWith("IMAGE_")) {
-            applyImageStyle(document, action);
+            applyImageAction(document, action);
+            return;
+        }
+        // Alignment goes to the image when one is selected, and to the text otherwise.
+        if (action == PreviewToolbar.Action.ALIGN_LEFT
+                || action == PreviewToolbar.Action.ALIGN_CENTER
+                || action == PreviewToolbar.Action.ALIGN_RIGHT) {
+            String align = switch (action) {
+                case ALIGN_CENTER -> "center";
+                case ALIGN_RIGHT -> "right";
+                default -> "left";
+            };
+            if (imageSelected) {
+                applyImageAction(document, action);
+            } else {
+                SourceRange target = resolveBlockRange();
+                if (target != null) {
+                    applyEdit(document, SourceEdits.alignBlock(document.getEditor().getText(),
+                            target.start(), target.end(), align));
+                }
+            }
             return;
         }
 
@@ -1006,36 +1061,48 @@ public class MainController {
             return;
         }
 
+        Path target = chooseAndCopyImage(document, "Insert image");
+        if (target == null) {
+            return;
+        }
+        String alt = stripExtension(target.getFileName().toString());
+        // Built through ImageRef so the destination is escaped in one place: a
+        // screenshot filename with spaces is not a valid bare Markdown destination.
+        String snippet = new ImageRef(alt, relativeAsset(document, target)).toMarkup();
+
+        TextArea editor = document.getEditor();
+        int caret = editor.getCaretPosition();
+        editor.insertText(caret, snippet);
+        editor.selectRange(caret + 2, caret + 2 + alt.length());
+        previewDebounce.stop();
+        updatePreview();
+        setTransientStatus("Copied to assets/" + target.getFileName());
+    }
+
+    /** Chooser plus copy-into-assets, shared by Insert image and Replace image. */
+    private Path chooseAndCopyImage(DocumentView document, String title) {
+        Path baseDir = document.getBaseDir();
+        if (baseDir == null) {
+            setTransientStatus("Save the document first so the image can be stored beside it.");
+            return null;
+        }
         FileChooser chooser = new FileChooser();
-        chooser.setTitle("Insert image");
+        chooser.setTitle(title);
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(
                 "Images", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg", "*.webp", "*.bmp"));
         File picked = chooser.showOpenDialog(primaryStage);
         if (picked == null) {
-            return;
+            return null;
         }
-
         try {
             Path assets = baseDir.resolve("assets");
             Files.createDirectories(assets);
             Path target = uniqueTarget(assets, picked.getName());
             Files.copy(picked.toPath(), target);
-
-            String relative = baseDir.relativize(target).toString().replace('\\', '/');
-            String alt = stripExtension(target.getFileName().toString());
-            // Built through ImageRef so the destination is escaped in one place: a
-            // screenshot filename with spaces is not a valid bare Markdown destination.
-            String snippet = new ImageRef(alt, relative, null, null).toMarkup();
-
-            TextArea editor = document.getEditor();
-            int caret = editor.getCaretPosition();
-            editor.insertText(caret, snippet);
-            editor.selectRange(caret + 2, caret + 2 + alt.length());
-            previewDebounce.stop();
-            updatePreview();
-            setTransientStatus("Copied to assets/" + target.getFileName());
+            return target;
         } catch (IOException e) {
             showAlert("Error", "Could not copy the image: " + e.getMessage());
+            return null;
         }
     }
 
@@ -1067,7 +1134,7 @@ public class MainController {
      * paragraph with an align attribute - the form that also renders correctly on GitHub,
      * rather than a viewer-specific extension that would only work here.
      */
-    private void applyImageStyle(DocumentView document, PreviewToolbar.Action action) {
+    private void applyImageAction(DocumentView document, PreviewToolbar.Action action) {
         String meta = previewString("window.__mdImageInfo()");
         if (meta.isEmpty()) {
             setTransientStatus("Click an image in the preview first.");
@@ -1092,19 +1159,75 @@ public class MainController {
             setTransientStatus("Could not read that image reference.");
             return;
         }
+
+        if (action == PreviewToolbar.Action.IMAGE_COPY_PATH) {
+            ClipboardContent content = new ClipboardContent();
+            content.putString(current.src());
+            Clipboard.getSystemClipboard().setContent(content);
+            setTransientStatus("Copied " + current.src());
+            return;
+        }
+        if (action == PreviewToolbar.Action.IMAGE_REMOVE) {
+            applyEdit(document, new SourceEdits.Edit(start, end, "", start, start));
+            setTransientStatus("Image reference removed. The file itself is still in assets/.");
+            return;
+        }
+
         ImageRef updated = switch (action) {
-            case IMAGE_ALIGN_LEFT -> current.withAlign("left");
-            case IMAGE_ALIGN_CENTER -> current.withAlign("center");
-            case IMAGE_ALIGN_RIGHT -> current.withAlign("right");
+            case ALIGN_LEFT -> current.withAlign("left");
+            case ALIGN_CENTER -> current.withAlign("center");
+            case ALIGN_RIGHT -> current.withAlign("right");
             case IMAGE_WIDTH_25 -> current.withWidth("25%");
             case IMAGE_WIDTH_50 -> current.withWidth("50%");
             case IMAGE_WIDTH_75 -> current.withWidth("75%");
             case IMAGE_WIDTH_100 -> current.withWidth("100%");
+            case IMAGE_CAPTION -> captionOf(current);
+            case IMAGE_REPLACE -> replacementFor(document, current);
+            case IMAGE_CROP -> croppedFrom(document, current);
             default -> current;
         };
+        if (updated == null || updated.equals(current)) {
+            return;
+        }
         String replacement = updated.toMarkup();
         applyEdit(document, new SourceEdits.Edit(start, end, replacement, start,
                 start + replacement.length()));
+    }
+
+    /** @return the reference with an edited caption, or null if the dialog was cancelled */
+    private ImageRef captionOf(ImageRef current) {
+        TextInputDialog dialog = new TextInputDialog(
+                current.caption() == null ? "" : current.caption());
+        dialog.initOwner(primaryStage);
+        dialog.setTitle("Image caption");
+        dialog.setHeaderText("Caption shown beneath the image");
+        dialog.setContentText("Caption");
+        // An empty caption removes it, which is the only way back to a plain image.
+        return dialog.showAndWait().map(current::withCaption).orElse(null);
+    }
+
+    private ImageRef replacementFor(DocumentView document, ImageRef current) {
+        Path copied = chooseAndCopyImage(document, "Replace image");
+        return copied == null ? null : current.withSrc(relativeAsset(document, copied));
+    }
+
+    private ImageRef croppedFrom(DocumentView document, ImageRef current) {
+        Path baseDir = document.getBaseDir();
+        if (baseDir == null) {
+            setTransientStatus("Save the document before cropping.");
+            return null;
+        }
+        Path file = baseDir.resolve(current.src().replace('/', File.separatorChar)).normalize();
+        if (!Files.isRegularFile(file)) {
+            setTransientStatus("Cannot find the image file to crop: " + current.src());
+            return null;
+        }
+        Path cropped = CropDialog.cropInPlaceCopy(primaryStage, file);
+        return cropped == null ? null : current.withSrc(relativeAsset(document, cropped));
+    }
+
+    private String relativeAsset(DocumentView document, Path file) {
+        return document.getBaseDir().relativize(file).toString().replace('\\', '/');
     }
 
     // ---------------------------------------------------------------- preview
@@ -1488,6 +1611,16 @@ public class MainController {
             /* An image clicked in the preview is the target of the position and size
                controls, so it has to be visibly the chosen one. */
             img.mdv-img-selected { outline:2px solid var(--accent); outline-offset:2px; }
+            /* The wrapper that gives raw HTML a source anchor must not create a box. */
+            .mdv-html { display:contents; }
+            figure { margin:1.8em auto; }
+            figure img { display:inline-block; }
+            figcaption {
+              margin-top:.6em; color:var(--ink-soft);
+              font-size:.88em; font-style:italic;
+            }
+            figure[align="center"], div[align="center"] { text-align:center; }
+            figure[align="right"], div[align="right"] { text-align:right; }
             p[align="center"] { text-align:center; }
             p[align="right"] { text-align:right; }
             p[align="left"] { text-align:left; }
@@ -1630,9 +1763,12 @@ public class MainController {
               return Math.min(s, e) + ',' + Math.max(s, e);
             };
 
-            /* Clicking an image selects it for the positioning controls. */
+            /* Pressing on an image selects it for the image controls. This listens for
+               mousedown rather than click for two reasons: a right-click never produces a
+               click event, and mousedown lands before the context menu is built, so by the
+               time the menu opens it already knows whether an image is under the pointer. */
             window.__mdSelectedImage = '';
-            document.addEventListener('click', function (event) {
+            document.addEventListener('mousedown', function (event) {
               var previous = document.querySelector('img.mdv-img-selected');
               if (previous) { previous.classList.remove('mdv-img-selected'); }
               if (event.target && event.target.tagName === 'IMG') {

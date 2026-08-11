@@ -373,3 +373,26 @@
     -fx-text-fill: -mdv-text-muted;
     -fx-font-size: 10.5px;
 }
+
+/* ------------------------------------------------------------ crop dialog */
+
+.crop-root {
+    -fx-background-color: -mdv-paper;
+}
+
+.crop-buttons {
+    -fx-padding: 10 12 10 12;
+    -fx-background-color: -mdv-surface;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 1 0 0 0;
+}
+
+.crop-hint {
+    -fx-text-fill: -mdv-text-muted;
+    -fx-font-size: 11.5px;
+}
+
+.crop-buttons .button {
+    -fx-background-radius: 5;
+    -fx-cursor: hand;
+}
