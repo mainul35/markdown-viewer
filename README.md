@@ -91,6 +91,13 @@ rather than the module path.
   that, opening is refused with a status-bar message rather than silently closing something
   you still had open.
 
+- **Find and replace** in the raw editor: **Ctrl+F** to find, **Ctrl+H** to find and
+  replace, both under the Edit menu. Enter and Shift+Enter step through matches, `Aa`
+  toggles case sensitivity, Esc closes. Matching is plain text rather than regex, because
+  Markdown is full of characters that are regex metacharacters and typing a literal `*` or
+  `[` should find that character. Replace All is one edit, so it undoes in a single step.
+  Invoking find from Full Preview drops back to Split so there is an editor to search.
+
 - **Three Editing Modes:**
   - Raw Mode: Plain text editor for Markdown
   - Split Preview: Side-by-side editor and live preview
