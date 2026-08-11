@@ -178,7 +178,24 @@ rather than the module path.
   local files.
 
 - **Diagrams:**
-  - ` ```mermaid ` fences render through the bundled mermaid build
+  - ` ```mermaid ` fences render through the bundled mermaid build. The supported
+    diagram types are:
+
+    | Type | Opening keyword |
+    |---|---|
+    | Flowchart | `flowchart TD` |
+    | Sequence | `sequenceDiagram` |
+    | Class | `classDiagram` |
+    | State | `stateDiagram-v2` |
+    | Entity relationship | `erDiagram` |
+    | Gantt | `gantt` |
+    | Mindmap | `mindmap` |
+    | Git graph | `gitGraph` |
+
+    **Beta diagram types are not supported** — `block-beta`, `sankey-beta`,
+    `xychart-beta` and anything else mermaid marks as beta. The bundled mermaid is
+    pinned to 10.9.3 (see the table below for why it cannot be upgraded), and the
+    beta grammars are the part of mermaid that moves between releases
   - ` ```plantuml ` (also `puml`, `uml`) fences render to inline SVG, on a background
     thread so large diagrams never freeze the UI
   - a bare `@startuml` … `@enduml` block renders without a fence too — those are
@@ -186,10 +203,10 @@ rather than the module path.
     unbroken: a blank line inside one, or `*` bullet syntax such as `@startmindmap`,
     is read as Markdown and still needs a fence
   - an unfenced Mermaid diagram renders when its opening keyword is unambiguous —
-    `graph`/`flowchart` with a direction, `sequenceDiagram`, `classDiagram`,
-    `stateDiagram`, `erDiagram`, `gitGraph`, `mindmap`, `gantt` and similar.
-    `pie`, `journey` and `timeline` are excluded on purpose, because a paragraph
-    of prose could genuinely start with them; those need a fence
+    the eight types above, plus `quadrantChart` and `requirementDiagram`. `pie`,
+    `journey` and `timeline` are excluded on purpose, because a paragraph of prose
+    could genuinely start with them; those need a fence. `flowchart` and `graph`
+    have to carry a direction (`flowchart TD`) for the same reason
   - C4-PlantUML diagrams work offline: `!include` URLs pointing at the C4-PlantUML GitHub
     repo are rewritten to the C4 standard library bundled inside the PlantUML jar
   - No Graphviz install needed — PlantUML's pure-Java `smetana` layout engine is used

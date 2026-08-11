@@ -97,7 +97,7 @@ Appended per Protocol §3 rather than rewriting the sections above.
 - **`project_plan.md` itself was stored backslash-escaped** and rendered as literal `#` and `**`. Unescaped; word content verified identical.
 
 ### Features
-- **Diagrams:** `mermaid` and `plantuml` fences render. PlantUML runs locally (bundled C4 stdlib, pure-Java `smetana` layout) so no Graphviz, no network, and no diagram source leaves the machine.
+- **Diagrams:** `mermaid` and `plantuml` fences render. PlantUML runs locally (bundled C4 stdlib, pure-Java `smetana` layout) so no Graphviz, no network, and no diagram source leaves the machine. Supported mermaid types: `flowchart TD`, `sequenceDiagram`, `classDiagram`, `stateDiagram-v2`, `erDiagram`, `gantt`, `mindmap`, `gitGraph`. The `-beta` types are **not** supported.
 - **Images:** relative paths resolve against the document's own folder, for Markdown and raw HTML `<img>` alike.
 - **Dark / light theme** across the JavaFX chrome and the preview document.
 - **Workspace explorer + two-level tabs:** workspace tabs on top, that workspace's file tabs beneath, markdown-only lazy file tree, reveal-in-tree target button.
@@ -107,7 +107,7 @@ Appended per Protocol §3 rather than rewriting the sections above.
 - **Standalone distribution:** one self-contained ~57 MB jar (JavaFX natives, commonmark, PlantUML, mermaid inside).
 
 ### Constraints discovered — do not regress these
-- **mermaid must stay on 10.9.3.** 11.x uses JavaScript that JavaFX's WebKit 615.1 cannot parse; it fails with `SyntaxError` and silently never loads.
+- **mermaid must stay on 10.9.3.** 11.x uses JavaScript that JavaFX's WebKit 615.1 cannot parse; it fails with `SyntaxError` and silently never loads. This pin is also why the `-beta` diagram grammars are out of scope — they are the part of mermaid that changes between releases, and the release that would carry them is the one that cannot be adopted.
 - **`Launcher`, not `MainApp`, is the jar's main class.** The JVM refuses to start an `Application` subclass when JavaFX is on the classpath.
 - **The shaded jar is platform-specific** — it embeds the JavaFX natives of the OS it was built on.
 
