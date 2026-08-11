@@ -1,0 +1,35 @@
+.root {
+    -fx-font-family: "Segoe UI", Arial, sans-serif;
+}
+
+.status-bar {
+    -fx-background-color: #f6f8fa;
+    -fx-border-color: #eaecef;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 5 15 5 15;
+    -fx-font-size: 12px;
+}
+
+.status-bar .label {
+    -fx-text-fill: #24292e;
+}
+
+.menu-bar {
+    -fx-background-color: #ffffff;
+}
+
+.tool-bar {
+    -fx-background-color: #f6f8fa;
+    -fx-border-color: #eaecef;
+    -fx-border-width: 0 0 1 0;
+}
+
+.text-area {
+    -fx-font-family: "Consolas", "Courier New", monospace;
+    -fx-font-size: 14px;
+    -fx-padding: 10;
+}
+
+.split-pane > .split-pane-divider {
+    -fx-background-color: #eaecef;
+}

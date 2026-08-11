@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.web.WebView?>
+
+<BorderPane fx:id="rootPane" xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.mdviewer.MainController">
+    <top>
+        <VBox>
+            <MenuBar>
+                <Menu text="File">
+                    <MenuItem text="New" onAction="#handleNewFile"/>
+                    <MenuItem text="Open..." onAction="#handleOpenFile"/>
+                    <MenuItem text="Save" onAction="#handleSaveFile"/>
+                    <MenuItem text="Save As..." onAction="#handleSaveAs"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="Exit" onAction="#handleExit"/>
+                </Menu>
+                <Menu text="View">
+                    <MenuItem text="Raw Editor" onAction="#handleRawMode"/>
+                    <MenuItem text="Split Preview" onAction="#handleSplitMode"/>
+                    <MenuItem text="Full Preview" onAction="#handleFullPreviewMode"/>
+                </Menu>
+                <Menu text="Help">
+                    <MenuItem text="About" onAction="#handleAbout"/>
+                </Menu>
+            </MenuBar>
+            <ToolBar>
+                <Button text="New" onAction="#handleNewFile"/>
+                <Button text="Open" onAction="#handleOpenFile"/>
+                <Button text="Save" onAction="#handleSaveFile"/>
+                <Separator orientation="VERTICAL"/>
+                <Button text="Raw" onAction="#handleRawMode"/>
+                <Button text="Split" onAction="#handleSplitMode"/>
+                <Button text="Preview" onAction="#handleFullPreviewMode"/>
+            </ToolBar>
+        </VBox>
+    </top>
+
+    <center>
+        <StackPane fx:id="centerPane"/>
+    </center>
+
+    <bottom>
+        <HBox spacing="20" styleClass="status-bar">
+            <Label fx:id="statusLabel" text="File: Untitled | Encoding: N/A"/>
+            <Label fx:id="wordCountLabel" text="Words: 0"/>
+            <Label fx:id="modeLabel" text="Mode: SPLIT" HBox.hgrow="ALWAYS"/>
+        </HBox>
+    </bottom>
+</BorderPane>
