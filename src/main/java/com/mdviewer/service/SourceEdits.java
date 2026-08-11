@@ -205,6 +205,11 @@ public final class SourceEdits {
     private static final Pattern ALIGN_CLOSE =
             Pattern.compile("^</div>$", Pattern.CASE_INSENSITIVE);
 
+    /** A complete wrapper, opening tag through closing tag, as one range. */
+    private static final Pattern WRAPPED_BLOCK = Pattern.compile(
+            "(?s)^<div\\s+align=\"(left|center|right)\"\\s*>\\s*(.*?)\\s*</div>$",
+            Pattern.CASE_INSENSITIVE);
+
     /**
      * Aligns a block of text, or removes the alignment when it already has that one.
      *
@@ -217,26 +222,44 @@ public final class SourceEdits {
         int from = lineStart(source, start);
         int to = lineEnd(source, Math.max(end - 1, start));
 
+        // The range may already be a whole wrapper rather than the text inside one - that
+        // is exactly what the selection left behind by a previous alignment looks like.
+        // Without this the wrapper would be treated as ordinary content and wrapped again,
+        // stacking a new div on every click.
+        Matcher self = WRAPPED_BLOCK.matcher(source.substring(from, to));
+        if (self.matches()) {
+            String inner = self.group(2).strip();
+            return replaceWrapper(from, to, inner, self.group(1), align);
+        }
+
         Wrapper existing = findWrapper(source, from, to);
         if (existing != null) {
             String inner = source.substring(existing.innerStart(), existing.innerEnd()).strip();
-            if (existing.align().equalsIgnoreCase(align)) {
-                // Same alignment again: unwrap back to plain Markdown.
-                return new Edit(existing.start(), existing.end(), inner,
-                        existing.start(), existing.start() + inner.length());
-            }
-            String replacement = wrap(inner, align);
-            return new Edit(existing.start(), existing.end(), replacement,
-                    existing.start(), existing.start() + replacement.length());
+            return replaceWrapper(existing.start(), existing.end(), inner, existing.align(), align);
         }
 
         String inner = source.substring(from, to).strip();
-        String replacement = wrap(inner, align);
-        return new Edit(from, to, replacement, from, from + replacement.length());
+        return wrapEdit(from, to, inner, align);
     }
 
-    private static String wrap(String inner, String align) {
-        return "<div align=\"" + align + "\">\n\n" + inner + "\n\n</div>";
+    /** Same alignment again unwraps; a different one swaps the attribute. */
+    private static Edit replaceWrapper(int start, int end, String inner,
+                                       String currentAlign, String align) {
+        if (currentAlign.equalsIgnoreCase(align)) {
+            return new Edit(start, end, inner, start, start + inner.length());
+        }
+        return wrapEdit(start, end, inner, align);
+    }
+
+    /**
+     * Leaves the selection on the content rather than on the whole wrapper, so pressing
+     * another alignment button acts on the text again instead of on the div around it.
+     */
+    private static Edit wrapEdit(int start, int end, String inner, String align) {
+        String opening = "<div align=\"" + align + "\">\n\n";
+        String replacement = opening + inner + "\n\n</div>";
+        int innerStart = start + opening.length();
+        return new Edit(start, end, replacement, innerStart, innerStart + inner.length());
     }
 
     private record Wrapper(int start, int end, int innerStart, int innerEnd, String align) {}

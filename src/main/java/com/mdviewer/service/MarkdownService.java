@@ -53,6 +53,9 @@ public final class MarkdownService {
     private static final Pattern RAW_IMG_SRC = Pattern.compile("(<img\\b[^>]*?\\bsrc\\s*=\\s*)([\"'])(.*?)\\2");
     private static final Pattern RAW_LINK_HREF = Pattern.compile("(<a\\b[^>]*?\\bhref\\s*=\\s*)([\"'])(.*?)\\2");
 
+    /** First opening tag of a raw HTML block; deliberately does not match "&lt;/div&gt;". */
+    private static final Pattern OPENING_TAG = Pattern.compile("<([A-Za-z][\\w-]*)");
+
     /**
      * Source spans are what make editing from the preview possible: every rendered element
      * carries the offsets of the Markdown it came from, so a selection in the preview can
@@ -238,22 +241,39 @@ public final class MarkdownService {
         }
 
         /**
-         * Raw HTML passes through verbatim, which means it carries none of the source
-         * offsets the rest of the document has. Wrapping it in an annotated div gives it
-         * an anchor - without which an image that has been positioned or resized (and is
-         * therefore now HTML) could never be adjusted a second time.
+         * Raw HTML passes through verbatim, so it carries none of the source offsets the
+         * rest of the document has - and without an offset, an image that has been
+         * positioned or resized (and is therefore now HTML) could never be adjusted again.
          *
-         * <p>The wrapper is {@code display: contents}, so it adds an anchor without
-         * adding a box.
+         * <p>The offsets are injected into the block's own opening tag rather than added
+         * by wrapping it. An HTML block is frequently one half of a pair, such as a bare
+         * {@code <div align="center">} whose {@code </div>} is a separate block further
+         * down; wrapping would close that div immediately and the content it is meant to
+         * align would end up outside it.
          */
         private void renderHtmlBlock(HtmlBlock block) {
-            Map<String, String> attrs = new LinkedHashMap<>();
-            attrs.put("class", "mdv-html");
+            Map<String, String> attrs = context.extendAttributes(
+                    block, "div", new LinkedHashMap<>());
             html.line();
-            html.tag("div", context.extendAttributes(block, "div", attrs));
-            html.raw(block.getLiteral());
-            html.tag("/div");
+            html.raw(injectAttributes(block.getLiteral(), attrs));
             html.line();
+        }
+
+        /** Adds attributes to the first opening tag; a closing-tag-only block is left alone. */
+        private static String injectAttributes(String literal, Map<String, String> attrs) {
+            if (attrs.isEmpty()) {
+                return literal;
+            }
+            Matcher m = OPENING_TAG.matcher(literal);
+            if (!m.find()) {
+                return literal;
+            }
+            StringBuilder extra = new StringBuilder();
+            for (Map.Entry<String, String> entry : attrs.entrySet()) {
+                extra.append(' ').append(entry.getKey()).append("=\"")
+                        .append(entry.getValue().replace("\"", "&quot;")).append('"');
+            }
+            return new StringBuilder(literal).insert(m.end(), extra).toString();
         }
 
         private void renderFence(FencedCodeBlock fence) {
