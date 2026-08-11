@@ -35,8 +35,10 @@ public final class PreviewToolbar extends HBox {
         HEADING_1, HEADING_2, HEADING_3,
         BULLET_LIST, ORDERED_LIST, QUOTE, LINK,
         IMAGE_INSERT,
-        IMAGE_ALIGN_LEFT, IMAGE_ALIGN_CENTER, IMAGE_ALIGN_RIGHT,
-        IMAGE_WIDTH_25, IMAGE_WIDTH_50, IMAGE_WIDTH_75, IMAGE_WIDTH_100
+        /** Alignment applies to the selected image, or to the selected text if there is none. */
+        ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT,
+        IMAGE_WIDTH_25, IMAGE_WIDTH_50, IMAGE_WIDTH_75, IMAGE_WIDTH_100,
+        IMAGE_CAPTION, IMAGE_REPLACE, IMAGE_CROP, IMAGE_COPY_PATH, IMAGE_REMOVE
     }
 
     private final List<Node> imageControls = new ArrayList<>();
@@ -65,11 +67,15 @@ public final class PreviewToolbar extends HBox {
                 divider(),
                 iconButton(imageIcon(), "Insert image", Action.IMAGE_INSERT));
 
-        // Image controls stay disabled until an image is actually selected, so the toolbar
-        // never offers an action that would silently do nothing.
-        addImageControl(iconButton(alignIcon(Align.LEFT), "Align image left", Action.IMAGE_ALIGN_LEFT));
-        addImageControl(iconButton(alignIcon(Align.CENTER), "Centre image", Action.IMAGE_ALIGN_CENTER));
-        addImageControl(iconButton(alignIcon(Align.RIGHT), "Align image right", Action.IMAGE_ALIGN_RIGHT));
+        // Alignment applies to whatever is selected - an image, or otherwise the text -
+        // so unlike the width controls it is always available.
+        getChildren().addAll(
+                iconButton(alignIcon(Align.LEFT), "Align left", Action.ALIGN_LEFT),
+                iconButton(alignIcon(Align.CENTER), "Centre", Action.ALIGN_CENTER),
+                iconButton(alignIcon(Align.RIGHT), "Align right", Action.ALIGN_RIGHT));
+
+        // Width only means something for an image, so those stay disabled until one is
+        // selected rather than offering an action that would silently do nothing.
         addImageControl(widthButton("25%", Action.IMAGE_WIDTH_25));
         addImageControl(widthButton("50%", Action.IMAGE_WIDTH_50));
         addImageControl(widthButton("75%", Action.IMAGE_WIDTH_75));
@@ -99,8 +105,8 @@ public final class PreviewToolbar extends HBox {
             control.setDisable(!selected);
         }
         imageHint.setText(selected
-                ? "Image selected - position and size apply to it"
-                : "Select an image in the preview to position or resize it");
+                ? "Image selected - size and position apply to it"
+                : "Select an image to resize it; alignment applies to the selection");
     }
 
     // ----------------------------------------------------------------- pieces

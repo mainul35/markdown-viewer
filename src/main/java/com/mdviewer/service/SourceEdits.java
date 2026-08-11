@@ -198,6 +198,96 @@ public final class SourceEdits {
         return 0;
     }
 
+    // ------------------------------------------------------------- alignment
+
+    private static final Pattern ALIGN_OPEN =
+            Pattern.compile("^<div\\s+align=\"(left|center|right)\"\\s*>$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ALIGN_CLOSE =
+            Pattern.compile("^</div>$", Pattern.CASE_INSENSITIVE);
+
+    /**
+     * Aligns a block of text, or removes the alignment when it already has that one.
+     *
+     * <p>Markdown has no alignment syntax, so this wraps the block in a div. The blank
+     * lines inside the wrapper matter: they end the HTML block, so CommonMark keeps
+     * parsing the content as Markdown. Without them the text between the tags would be
+     * passed through verbatim and any bold or links inside it would stop rendering.
+     */
+    public static Edit alignBlock(String source, int start, int end, String align) {
+        int from = lineStart(source, start);
+        int to = lineEnd(source, Math.max(end - 1, start));
+
+        Wrapper existing = findWrapper(source, from, to);
+        if (existing != null) {
+            String inner = source.substring(existing.innerStart(), existing.innerEnd()).strip();
+            if (existing.align().equalsIgnoreCase(align)) {
+                // Same alignment again: unwrap back to plain Markdown.
+                return new Edit(existing.start(), existing.end(), inner,
+                        existing.start(), existing.start() + inner.length());
+            }
+            String replacement = wrap(inner, align);
+            return new Edit(existing.start(), existing.end(), replacement,
+                    existing.start(), existing.start() + replacement.length());
+        }
+
+        String inner = source.substring(from, to).strip();
+        String replacement = wrap(inner, align);
+        return new Edit(from, to, replacement, from, from + replacement.length());
+    }
+
+    private static String wrap(String inner, String align) {
+        return "<div align=\"" + align + "\">\n\n" + inner + "\n\n</div>";
+    }
+
+    private record Wrapper(int start, int end, int innerStart, int innerEnd, String align) {}
+
+    /** Looks for an alignment div immediately around the given line range. */
+    private static Wrapper findWrapper(String source, int from, int to) {
+        int openEnd = -1;
+        int openStart = -1;
+        String align = null;
+
+        int cursor = from;
+        while (cursor > 0) {
+            int lineFrom = lineStart(source, cursor - 1);
+            String line = source.substring(lineFrom, lineEnd(source, lineFrom)).strip();
+            if (line.isEmpty()) {
+                cursor = lineFrom;
+                continue;
+            }
+            Matcher m = ALIGN_OPEN.matcher(line);
+            if (m.matches()) {
+                align = m.group(1);
+                openStart = lineFrom;
+                openEnd = lineEnd(source, lineFrom);
+            }
+            break;
+        }
+        if (align == null) {
+            return null;
+        }
+
+        cursor = to;
+        while (cursor < source.length()) {
+            int lineFrom = Math.min(cursor + 1, source.length());
+            lineFrom = lineStart(source, lineFrom);
+            int lineTo = lineEnd(source, lineFrom);
+            String line = source.substring(lineFrom, lineTo).strip();
+            if (line.isEmpty()) {
+                if (lineTo >= source.length()) {
+                    break;
+                }
+                cursor = lineTo;
+                continue;
+            }
+            if (ALIGN_CLOSE.matcher(line).matches()) {
+                return new Wrapper(openStart, lineTo, openEnd, lineFrom, align);
+            }
+            break;
+        }
+        return null;
+    }
+
     // ------------------------------------------------------------------ lines
 
     public static int lineStart(String source, int offset) {
