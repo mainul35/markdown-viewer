@@ -174,6 +174,10 @@ rather than the module path.
   - ` ```mermaid ` fences render through the bundled mermaid build
   - ` ```plantuml ` (also `puml`, `uml`) fences render to inline SVG, on a background
     thread so large diagrams never freeze the UI
+  - a bare `@startuml` … `@enduml` block renders without a fence too — those are
+    PlantUML's own delimiters, so a fence adds nothing. The block has to be
+    unbroken: a blank line inside one, or `*` bullet syntax such as `@startmindmap`,
+    is read as Markdown and still needs a fence
   - C4-PlantUML diagrams work offline: `!include` URLs pointing at the C4-PlantUML GitHub
     repo are rewritten to the C4 standard library bundled inside the PlantUML jar
   - No Graphviz install needed — PlantUML's pure-Java `smetana` layout engine is used
