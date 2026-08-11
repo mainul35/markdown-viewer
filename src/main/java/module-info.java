@@ -9,4 +9,5 @@ module com.mdviewer {
     opens com.mdviewer to javafx.fxml;
     exports com.mdviewer;
     exports com.mdviewer.service;
+    exports com.mdviewer.ui;
 }

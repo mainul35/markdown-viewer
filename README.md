@@ -68,6 +68,34 @@ rather than the module path.
 
 ## Features
 
+- **Workspaces:** a workspace is a folder. Opening a file adopts its folder as a workspace;
+  opening another file from anywhere inside that folder joins the same one, while a file
+  from elsewhere starts a second workspace. **File → Open Folder...** adds one directly.
+
+- **Workspace explorer** (left panel): a markdown-only file tree over every open workspace.
+  It lists `.md`, `.markdown` and `.txt` files, and only those folders with markdown
+  somewhere inside them — everything else (build output, images, dot-directories) is hidden,
+  at the workspace root as well as further down. Directories are read only when first
+  expanded, so adding a workspace containing `target/` or `node_modules/` does not stall the
+  UI. Double-click a file to open it. The crosshair button in the panel header — or
+  **View → Reveal Current File** — expands the tree down to the document you are editing and
+  scrolls to it, which is the point of it when a workspace holds hundreds of files.
+  **View → Hide Explorer** collapses the panel.
+
+- **Two-level tabs:** workspace tabs on top, and under each one only the files belonging to
+  that workspace. Many open files stay legible because they are grouped by origin instead of
+  forming one long strip. Each document keeps its own editor, so undo history and caret
+  position survive tab switches; a single shared editor/preview area is moved into whichever
+  file tab is selected, so there is still only one WebView no matter how many files are open.
+  At most **10 workspace tabs** and **20 file tabs per workspace** can be open at once; past
+  that, opening is refused with a status-bar message rather than silently closing something
+  you still had open.
+
+- **Three Editing Modes:**
+  - Raw Mode: Plain text editor for Markdown
+  - Split Preview: Side-by-side editor and live preview
+  - Full Preview: Distraction-free rendered view
+
 - **Dark / light theme:** toggled from the toolbar or **View → Dark Mode**. One switch
   themes the JavaFX chrome and the preview document together. The preview carries both
   palettes and flips a `data-theme` attribute, so switching costs no reload and keeps your
@@ -83,11 +111,6 @@ rather than the module path.
   area, excluding the taskbar) and is centred there, with a 900x600 floor that is itself
   clamped so it can never exceed a smaller screen. It scales from a 1024x600 netbook up to
   4K. Window position and size are not remembered between runs.
-
-- **Three Editing Modes:**
-  - Raw Mode: Plain text editor for Markdown
-  - Split Preview: Side-by-side editor and live preview
-  - Full Preview: Distraction-free rendered view
 
 - **File Operations:**
   - Open/Save `.md`, `.markdown`, `.txt` files
@@ -125,10 +148,15 @@ MDViewer/
 │   │   │   ├── com/mdviewer/
 │   │   │   │   ├── MainApp.java              # JavaFX Application
 │   │   │   │   ├── Launcher.java             # Entry point for the shaded jar
-│   │   │   │   ├── MainController.java       # UI + preview orchestration
-│   │   │   │   └── service/
-│   │   │   │       ├── MarkdownService.java  # Markdown -> HTML, diagrams, image paths
-│   │   │   │       └── DiagramService.java   # PlantUML -> SVG, off-thread + cached
+│   │   │   │   ├── MainController.java       # UI + workspace/preview orchestration
+│   │   │   │   ├── service/
+│   │   │   │   │   ├── MarkdownService.java  # Markdown -> HTML, diagrams, image paths
+│   │   │   │   │   └── DiagramService.java   # PlantUML -> SVG, off-thread + cached
+│   │   │   │   └── ui/
+│   │   │   │       ├── FileTreePanel.java    # Explorer + reveal-in-tree target
+│   │   │   │       ├── PathTreeItem.java     # Lazily loaded file-tree node
+│   │   │   │       ├── WorkspaceView.java    # A workspace and its file tabs
+│   │   │   │       └── DocumentView.java     # One open document + its editor
 │   │   │   └── module-info.java              # Java module configuration
 │   │   └── resources/
 │   │       ├── fxml/main.fxml                # UI layout

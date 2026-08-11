@@ -76,3 +76,115 @@
 .split-pane > .split-pane-divider {
     -fx-background-color: -mdv-border;
 }
+
+/* ------------------------------------------------------ workspace explorer */
+
+.file-panel {
+    -fx-background-color: -mdv-surface-alt;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 1 0 0;
+}
+
+.file-panel-header {
+    -fx-padding: 4 4 4 10;
+    -fx-min-height: 30;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 0 1 0;
+}
+
+.file-panel-title {
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+.reveal-button {
+    -fx-background-color: transparent;
+    -fx-padding: 3 6 3 6;
+    -fx-cursor: hand;
+}
+
+.reveal-button:hover {
+    -fx-background-color: -mdv-border;
+    -fx-background-radius: 3;
+}
+
+/* Shapes rather than an icon font, so the crosshair follows the theme colour. */
+.reveal-icon-ring,
+.reveal-icon-tick {
+    -fx-fill: transparent;
+    -fx-stroke: -mdv-text-muted;
+    -fx-stroke-width: 1.4;
+}
+
+.reveal-icon-dot {
+    -fx-fill: -mdv-accent;
+    -fx-stroke: transparent;
+}
+
+.reveal-button:hover .reveal-icon-ring,
+.reveal-button:hover .reveal-icon-tick {
+    -fx-stroke: -mdv-accent;
+}
+
+.file-tree {
+    -fx-background-color: -mdv-surface-alt;
+    -fx-border-width: 0;
+}
+
+.file-tree .tree-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: -mdv-text;
+    -fx-font-size: 12px;
+    -fx-padding: 2 4 2 4;
+}
+
+.file-tree .tree-cell:selected {
+    -fx-background-color: -fx-accent;
+    -fx-text-fill: white;
+}
+
+.file-tree .workspace-root-cell {
+    -fx-font-weight: bold;
+}
+
+/* ------------------------------------------------ workspace / document tabs */
+
+.workspace-tabs > .tab-header-area > .headers-region > .tab {
+    -fx-padding: 4 12 4 12;
+}
+
+.workspace-tabs > .tab-header-area > .tab-header-background {
+    -fx-background-color: -mdv-surface-alt;
+}
+
+/* The inner strip sits directly under its workspace tab; keeping it visually
+   lighter makes the grouping obvious at a glance. */
+.document-tabs > .tab-header-area {
+    -fx-padding: 0;
+}
+
+.document-tabs > .tab-header-area > .tab-header-background {
+    -fx-background-color: -mdv-surface;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 0 1 0;
+}
+
+.document-tabs > .tab-header-area > .headers-region > .tab {
+    -fx-padding: 2 10 2 10;
+}
+
+.document-tabs .tab-label {
+    -fx-font-size: 12px;
+}
+
+.markdown-editor {
+    -fx-font-family: "Consolas", "Courier New", monospace;
+    -fx-font-size: 14px;
+    -fx-padding: 10;
+    -fx-text-fill: -mdv-text;
+}
+
+.markdown-editor .content {
+    -fx-background-color: -mdv-surface;
+}
