@@ -1,5 +1,7 @@
 # MDViewer
 
+![MDViewer Preview](screenshots/app-preview.png)
+
 Professional Markdown desktop application built with JavaFX.
 
 ## Prerequisites
@@ -261,8 +263,9 @@ MDViewer/
 - ✅ **Phase 1:** Foundation & Shell (Project setup, Main Window, Basic Open/Save)
 - ✅ **Phase 2:** The Markdown Engine (Parser implementation, CSS Theme)
 - ✅ **Phase 3:** Mode Logic & Workspace (Raw Editor, Split View sync, Full Preview toggle)
-- ⏳ **Phase 4:** Toolbar Bridge & GUI Editor (Toolbar integration, JS bridge logic)
-- ⏳ **Phase 5:** OS Deployment & Polishing (Registry/Context menu setup, UX polish)
+- ✅ **Phase 4:** Toolbar Bridge & GUI Editor (Toolbar integration, JS bridge logic, formatting actions)
+- ✅ **Phase 5:** OS Deployment & Polishing (Workspace management, file operations, find/replace, dark mode, diagram rendering)
+- ⏳ **Native Packaging:** Bundle JRE for true double-click execution without requiring Java installation
 
 ## License
 
