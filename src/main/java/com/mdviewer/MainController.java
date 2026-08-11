@@ -1,14 +1,18 @@
 package com.mdviewer;
 
+import javafx.animation.PauseTransition;
+import javafx.application.HostServices;
+import javafx.application.Platform;
+import javafx.concurrent.Worker;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.StackPane;
-import javafx.scene.layout.VBox;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
+import javafx.util.Duration;
 import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.commonmark.node.Node;
 import org.commonmark.parser.Parser;
@@ -38,6 +42,7 @@ public class MainController {
     private Label modeLabel;
 
     private Stage primaryStage;
+    private HostServices hostServices;
     private File currentFile;
     private EditorMode currentMode = EditorMode.SPLIT;
     private boolean isModified = false;
@@ -45,6 +50,15 @@ public class MainController {
     private TextArea textEditor;
     private WebView webView;
     private SplitPane splitPane;
+
+    /** Debounce so typing does not re-render the preview on every keystroke. */
+    private PauseTransition previewDebounce;
+
+    /** True once the preview shell page (CSS + injection hook) has finished loading. */
+    private boolean previewReady = false;
+
+    /** Last rendered body HTML, re-applied whenever the shell page is (re)loaded. */
+    private String currentPreviewHtml = "";
 
     private final Parser markdownParser = Parser.builder()
             .extensions(Arrays.asList(TablesExtension.create()))
@@ -66,12 +80,12 @@ public class MainController {
         textEditor.setWrapText(false);
 
         webView = new WebView();
-        webView.setMinWidth(100);
-        webView.setPrefWidth(600);
+        webView.setMinWidth(0);
 
         splitPane = new SplitPane();
-        splitPane.getItems().addAll(textEditor, webView);
-        splitPane.setDividerPositions(0.5);
+
+        previewDebounce = new PauseTransition(Duration.millis(200));
+        previewDebounce.setOnFinished(e -> updatePreview());
 
         textEditor.textProperty().addListener((obs, oldText, newText) -> {
             updateWordCount();
@@ -79,24 +93,204 @@ public class MainController {
                 isModified = true;
                 updateTitle();
             }
-            if (currentMode != EditorMode.RAW) {
-                updatePreview();
-            }
+            schedulePreviewUpdate();
         });
+
+        initPreviewEngine();
 
         centerPane.getChildren().add(splitPane);
         updateWordCount();
         updateStatus();
         updateLayout();
-
-        javafx.application.Platform.runLater(() -> {
-            updatePreview();
-        });
     }
 
     public void setPrimaryStage(Stage stage) {
         this.primaryStage = stage;
     }
+
+    public void setHostServices(HostServices hostServices) {
+        this.hostServices = hostServices;
+    }
+
+    // ---------------------------------------------------------------- preview
+
+    /**
+     * Loads the preview "shell" (CSS + a JS hook) exactly once. Document content is
+     * afterwards pushed into the live DOM instead of reloading the whole page, which
+     * keeps the preview's scroll position stable while typing.
+     */
+    private void initPreviewEngine() {
+        WebEngine engine = webView.getEngine();
+
+        engine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
+            if (newState == Worker.State.SUCCEEDED) {
+                previewReady = true;
+                applyPreviewHtml(currentPreviewHtml);
+            } else if (newState == Worker.State.FAILED || newState == Worker.State.CANCELLED) {
+                previewReady = false;
+            }
+        });
+
+        // Clicking a link inside the preview must not navigate the WebView away from the
+        // rendered document - hand the URL to the OS browser and stay put.
+        engine.locationProperty().addListener((obs, oldLoc, newLoc) -> {
+            if (newLoc == null) {
+                return;
+            }
+            String loc = newLoc.toLowerCase();
+            if (loc.startsWith("http://") || loc.startsWith("https://") || loc.startsWith("mailto:")) {
+                engine.getLoadWorker().cancel();
+                if (hostServices != null) {
+                    hostServices.showDocument(newLoc);
+                }
+                Platform.runLater(this::loadPreviewShell);
+            }
+        });
+
+        loadPreviewShell();
+    }
+
+    private void loadPreviewShell() {
+        previewReady = false;
+        // NOTE: no explicit content type. WebEngine.loadContent(html, "text/html; charset=UTF-8")
+        // is rejected by WebKit (the load ends CANCELLED) and leaves the preview permanently
+        // blank; the single-argument overload defaults to a plain "text/html" load.
+        webView.getEngine().loadContent(buildPreviewShell());
+    }
+
+    private void schedulePreviewUpdate() {
+        if (currentMode == EditorMode.RAW) {
+            return;
+        }
+        previewDebounce.playFromStart();
+    }
+
+    private void updatePreview() {
+        if (currentMode == EditorMode.RAW) {
+            return;
+        }
+        String markdown = textEditor.getText();
+        Node document = markdownParser.parse(markdown == null ? "" : markdown);
+        currentPreviewHtml = htmlRenderer.render(document);
+        applyPreviewHtml(currentPreviewHtml);
+    }
+
+    private void applyPreviewHtml(String html) {
+        if (!previewReady) {
+            // Shell still loading; the load-worker listener re-applies once it succeeds.
+            return;
+        }
+        try {
+            webView.getEngine().executeScript("window.__mdSetBody(" + toJsStringLiteral(html) + ");");
+        } catch (RuntimeException e) {
+            // The hook is gone (page replaced) - rebuild the shell and retry on load.
+            loadPreviewShell();
+        }
+    }
+
+    /** Escapes a Java string into a double-quoted JavaScript string literal. */
+    private static String toJsStringLiteral(String s) {
+        StringBuilder sb = new StringBuilder(s.length() + 16);
+        sb.append('"');
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    // Control chars, plus U+2028/U+2029 which JS treats as line terminators.
+                    if (c < 0x20 || c == 0x7f || c == 0x2028 || c == 0x2029) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        sb.append('"');
+        return sb.toString();
+    }
+
+    private String buildPreviewShell() {
+        return "<!DOCTYPE html>" +
+            "<html>" +
+            "<head>" +
+                "<meta charset=\"UTF-8\">" +
+                "<style>" +
+                    "body {" +
+                        "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;" +
+                        "padding: 20px;" +
+                        "line-height: 1.6;" +
+                        "color: #24292e;" +
+                        "background: #ffffff;" +
+                        "word-wrap: break-word;" +
+                    "}" +
+                    "h1, h2, h3, h4, h5, h6 {" +
+                        "margin-top: 24px;" +
+                        "margin-bottom: 16px;" +
+                        "font-weight: 600;" +
+                        "line-height: 1.25;" +
+                    "}" +
+                    "h1 { font-size: 2em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }" +
+                    "h2 { font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }" +
+                    "h3 { font-size: 1.25em; }" +
+                    "code {" +
+                        "background-color: #f6f8fa;" +
+                        "padding: 0.2em 0.4em;" +
+                        "border-radius: 3px;" +
+                        "font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;" +
+                        "font-size: 85%;" +
+                    "}" +
+                    "pre {" +
+                        "background-color: #f6f8fa;" +
+                        "padding: 16px;" +
+                        "border-radius: 3px;" +
+                        "overflow: auto;" +
+                    "}" +
+                    "pre code {" +
+                        "background-color: transparent;" +
+                        "padding: 0;" +
+                        "font-size: 100%;" +
+                    "}" +
+                    "blockquote {" +
+                        "border-left: 4px solid #dfe2e5;" +
+                        "padding: 0 1em;" +
+                        "color: #6a737d;" +
+                        "margin-left: 0;" +
+                    "}" +
+                    "table {" +
+                        "border-collapse: collapse;" +
+                        "margin: 16px 0;" +
+                        "display: block;" +
+                        "overflow: auto;" +
+                    "}" +
+                    "th, td {" +
+                        "border: 1px solid #dfe2e5;" +
+                        "padding: 6px 13px;" +
+                    "}" +
+                    "tr:nth-child(2n) {" +
+                        "background-color: #f6f8fa;" +
+                    "}" +
+                    "hr { height: 1px; border: 0; background-color: #e1e4e8; margin: 24px 0; }" +
+                    "img { max-width: 100%; }" +
+                    "a { color: #0366d6; text-decoration: none; }" +
+                    "a:hover { text-decoration: underline; }" +
+                    "ul, ol { padding-left: 2em; }" +
+                "</style>" +
+                "<script>" +
+                    "window.__mdSetBody = function (html) {" +
+                        "document.body.innerHTML = html;" +
+                    "};" +
+                "</script>" +
+            "</head>" +
+            "<body></body>" +
+            "</html>";
+    }
+
+    // ------------------------------------------------------------------ files
 
     @FXML
     private void handleNewFile() {
@@ -104,6 +298,7 @@ public class MainController {
             textEditor.clear();
             currentFile = null;
             isModified = false;
+            MainApp.setCurrentFile(null);
             updateTitle();
             updatePreview();
             updateStatus();
@@ -131,6 +326,7 @@ public class MainController {
         try {
             String content = Files.readString(file.toPath(), StandardCharsets.UTF_8);
             textEditor.setText(content);
+            textEditor.positionCaret(0);
             currentFile = file;
             isModified = false;
             MainApp.setCurrentFile(file);
@@ -183,7 +379,7 @@ public class MainController {
     @FXML
     private void handleExit() {
         if (checkUnsavedChanges()) {
-            System.exit(0);
+            Platform.exit();
         }
     }
 
@@ -195,6 +391,8 @@ public class MainController {
         alert.setContentText("Version 1.0.0\nA professional desktop Markdown editor built with JavaFX.");
         alert.showAndWait();
     }
+
+    // ------------------------------------------------------------------ modes
 
     @FXML
     private void handleRawMode() {
@@ -214,110 +412,32 @@ public class MainController {
         updateLayout();
     }
 
+    /**
+     * Swaps the actual SplitPane children per mode. Collapsing via divider positions
+     * alone does not work: both panes keep their minimum width and stay visible.
+     */
     private void updateLayout() {
         modeLabel.setText("Mode: " + currentMode.name().replace("_", " "));
 
+        splitPane.getItems().clear();
         switch (currentMode) {
-            case RAW:
-                splitPane.setDividerPositions(1.0);
-                break;
-            case SPLIT:
+            case RAW -> splitPane.getItems().add(textEditor);
+            case SPLIT -> {
+                splitPane.getItems().addAll(textEditor, webView);
                 splitPane.setDividerPositions(0.5);
-                break;
-            case FULL_PREVIEW:
-                splitPane.setDividerPositions(0.0);
-                break;
+                Platform.runLater(() -> splitPane.setDividerPositions(0.5));
+            }
+            case FULL_PREVIEW -> splitPane.getItems().add(webView);
         }
 
-        javafx.application.Platform.runLater(() -> {
+        // Content may have changed while RAW mode suppressed preview updates.
+        if (currentMode != EditorMode.RAW) {
+            previewDebounce.stop();
             updatePreview();
-        });
+        }
     }
 
-    private void updatePreview() {
-        if (currentMode == EditorMode.RAW) {
-            return;
-        }
-        if (webView == null || webView.getEngine() == null) {
-            return;
-        }
-        String markdown = textEditor.getText();
-        if (markdown == null || markdown.isEmpty()) {
-            return;
-        }
-        Node document = markdownParser.parse(markdown);
-        String html = htmlRenderer.render(document);
-
-        String fullHtml = getFullHtmlWithCss(html);
-        webView.getEngine().loadContent(fullHtml, "text/html; charset=UTF-8");
-    }
-
-    private String getFullHtmlWithCss(String content) {
-        return "<!DOCTYPE html>" +
-            "<html>" +
-            "<head>" +
-                "<meta charset=\"UTF-8\">" +
-                "<style>" +
-                    "body {" +
-                        "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;" +
-                        "padding: 20px;" +
-                        "line-height: 1.6;" +
-                        "color: #24292e;" +
-                        "background: #ffffff;" +
-                    "}" +
-                    "h1, h2, h3, h4, h5, h6 {" +
-                        "margin-top: 24px;" +
-                        "margin-bottom: 16px;" +
-                        "font-weight: 600;" +
-                        "line-height: 1.25;" +
-                    "}" +
-                    "h1 { font-size: 2em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }" +
-                    "h2 { font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }" +
-                    "h3 { font-size: 1.25em; }" +
-                    "code {" +
-                        "background-color: #f6f8fa;" +
-                        "padding: 0.2em 0.4em;" +
-                        "border-radius: 3px;" +
-                        "font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;" +
-                    "}" +
-                    "pre {" +
-                        "background-color: #f6f8fa;" +
-                        "padding: 16px;" +
-                        "border-radius: 3px;" +
-                        "overflow: auto;" +
-                    "}" +
-                    "pre code {" +
-                        "background-color: transparent;" +
-                        "padding: 0;" +
-                    "}" +
-                    "blockquote {" +
-                        "border-left: 4px solid #dfe2e5;" +
-                        "padding: 0 1em;" +
-                        "color: #6a737d;" +
-                    "}" +
-                    "table {" +
-                        "border-collapse: collapse;" +
-                        "width: 100%;" +
-                        "margin: 16px 0;" +
-                    "}" +
-                    "th, td {" +
-                        "border: 1px solid #dfe2e5;" +
-                        "padding: 6px 13px;" +
-                    "}" +
-                    "tr:nth-child(2n) {" +
-                        "background-color: #f6f8fa;" +
-                    "}" +
-                    "img { max-width: 100%; }" +
-                    "a { color: #0366d6; text-decoration: none; }" +
-                    "a:hover { text-decoration: underline; }" +
-                    "ul, ol { padding-left: 2em; }" +
-                "</style>" +
-            "</head>" +
-            "<body>" +
-                content +
-            "</body>" +
-            "</html>";
-    }
+    // ----------------------------------------------------------------- status
 
     private void updateWordCount() {
         String text = textEditor.getText().trim();
@@ -336,11 +456,10 @@ public class MainController {
         String title = "MDViewer - ";
         if (currentFile != null) {
             title += currentFile.getName();
-            if (isModified) title += " *";
         } else {
             title += "Untitled";
-            if (isModified) title += " *";
         }
+        if (isModified) title += " *";
         primaryStage.setTitle(title);
     }
 
@@ -362,6 +481,8 @@ public class MainController {
                 handleSaveFile();
                 return !isModified;
             } else if (result.isPresent() && result.get() == cancelButton) {
+                return false;
+            } else if (result.isEmpty()) {
                 return false;
             }
         }

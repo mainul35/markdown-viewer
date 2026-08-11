@@ -20,6 +20,7 @@ public class MainApp extends Application {
 
         MainController controller = loader.getController();
         controller.setPrimaryStage(primaryStage);
+        controller.setHostServices(getHostServices());
 
         Scene scene = new Scene(root, 1200, 800);
         scene.getStylesheets().add(getClass().getResource("/css/styles.css").toExternalForm());
