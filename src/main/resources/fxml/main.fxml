@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <?import javafx.scene.control.*?>
+<?import javafx.scene.input.KeyCodeCombination?>
 <?import javafx.scene.layout.*?>
 
 <BorderPane fx:id="rootPane" xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
@@ -19,6 +20,14 @@
                     <MenuItem text="Close Workspace" onAction="#handleCloseWorkspace"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="Exit" onAction="#handleExit"/>
+                </Menu>
+                <Menu text="Edit">
+                    <MenuItem text="Find..." onAction="#handleFind">
+                        <accelerator><KeyCodeCombination alt="UP" code="F" control="DOWN" meta="UP" shift="UP" shortcut="UP"/></accelerator>
+                    </MenuItem>
+                    <MenuItem text="Find and Replace..." onAction="#handleFindReplace">
+                        <accelerator><KeyCodeCombination alt="UP" code="H" control="DOWN" meta="UP" shift="UP" shortcut="UP"/></accelerator>
+                    </MenuItem>
                 </Menu>
                 <Menu text="View">
                     <MenuItem text="Raw Editor" onAction="#handleRawMode"/>

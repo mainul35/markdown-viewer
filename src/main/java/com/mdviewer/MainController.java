@@ -7,7 +7,9 @@ import javafx.concurrent.Worker;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
 import javafx.stage.DirectoryChooser;
@@ -18,6 +20,7 @@ import com.mdviewer.service.DiagramService;
 import com.mdviewer.service.MarkdownService;
 import com.mdviewer.ui.DocumentView;
 import com.mdviewer.ui.FileTreePanel;
+import com.mdviewer.ui.FindBar;
 import com.mdviewer.ui.MarkdownFiles;
 import com.mdviewer.ui.WorkspaceView;
 
@@ -69,6 +72,8 @@ public class MainController {
     private EditorMode currentMode = EditorMode.SPLIT;
 
     private FileTreePanel fileTreePanel;
+    private FindBar findBar;
+    private VBox editorPane;
     private WebView webView;
     private SplitPane editorSplit;
 
@@ -136,6 +141,14 @@ public class MainController {
 
         editorSplit = new SplitPane();
         editorSplit.getStyleClass().add("editor-split");
+
+        findBar = new FindBar();
+        findBar.installEscapeHandler();
+
+        // The editor and the find bar share a column so the bar sits directly above the
+        // text it searches, and the editor keeps all remaining height.
+        editorPane = new VBox();
+        editorPane.getStyleClass().add("editor-pane");
 
         fileTreePanel = new FileTreePanel();
         fileTreePanel.setOnFileActivated(path -> openFile(path.toFile()));
@@ -691,10 +704,11 @@ public class MainController {
             return;
         }
 
+        mountEditorPane(document);
         switch (currentMode) {
-            case RAW -> editorSplit.getItems().add(document.getEditor());
+            case RAW -> editorSplit.getItems().add(editorPane);
             case SPLIT -> {
-                editorSplit.getItems().addAll(document.getEditor(), webView);
+                editorSplit.getItems().addAll(editorPane, webView);
                 editorSplit.setDividerPositions(0.5);
                 Platform.runLater(() -> editorSplit.setDividerPositions(0.5));
             }
@@ -706,6 +720,38 @@ public class MainController {
             previewDebounce.stop();
             updatePreview();
         }
+    }
+
+    /** Rebuilds the editor column for the active document and re-points the find bar. */
+    private void mountEditorPane(DocumentView document) {
+        editorPane.getChildren().setAll(findBar, document.getEditor());
+        VBox.setVgrow(document.getEditor(), Priority.ALWAYS);
+        findBar.setTarget(document.getEditor());
+    }
+
+    // -------------------------------------------------------------------- find
+
+    @FXML
+    private void handleFind() {
+        openFindBar(false);
+    }
+
+    @FXML
+    private void handleFindReplace() {
+        openFindBar(true);
+    }
+
+    /** Find needs a visible editor, so Full Preview drops back to Split first. */
+    private void openFindBar(boolean withReplace) {
+        if (activeDocument() == null) {
+            setTransientStatus("Open a document before searching.");
+            return;
+        }
+        if (currentMode == EditorMode.FULL_PREVIEW) {
+            currentMode = EditorMode.SPLIT;
+            updateLayout();
+        }
+        findBar.show(withReplace);
     }
 
     // ---------------------------------------------------------------- preview
