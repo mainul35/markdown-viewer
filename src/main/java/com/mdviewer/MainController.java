@@ -1688,27 +1688,37 @@ public class MainController {
               -webkit-font-smoothing:antialiased; word-wrap:break-word;
             }
 
-            /* Prose holds a comfortable measure; plates and tables break out of it.
-               The measure is in rem, not ch: ch is relative to each element's own font, so
+            /* The reading column, and how far plates may break out of it.
+               --measure is in rem, not ch: ch is relative to each element's own font, so
                headings would silently get a far wider column than the paragraphs under
-               them and the two would stop sharing a left edge. */
-            body > * { max-width:40rem; margin-left:auto; margin-right:auto; }
-            /* Plates break out of the measure to the right only, keeping the prose
-               column's left edge. Centring the breakout instead put every code block
-               and table further left than the heading above it, which reads as a
-               misalignment rather than as emphasis - the left edge is the spine the
-               eye returns to on every line.
+               them and the two would stop sharing a left edge.
 
-               The prose column starts at (100% - 40rem) / 2. A plate that starts
-               there and ends at the right content edge is therefore
-               (100% + 40rem) / 2 wide, which margin-left:auto positions exactly.
-               Below 40rem there is no breakout left to take, and min() collapses
-               it to the full width. */
+               --plate is what a code block, table or diagram spans: the measure plus a
+               fixed breakout to the right. Fixed rather than proportional, because a
+               breakout that grows with the window turns a code block on a 4K monitor
+               into a line too long to read back.
+
+               --gutter centres the two of them as one block. The widest thing on the
+               page is a plate, so centring the plate centres the page; the prose then
+               starts at that same left edge and simply stops short of the right. max()
+               clamps the gutter to zero once the window is too narrow to have any
+               breakout to give. */
+            :root {
+              --measure:40rem; --breakout:12rem;
+              --plate:min(100%, calc(var(--measure) + var(--breakout)));
+              --gutter:max(0px, calc((100% - var(--measure) - var(--breakout)) / 2));
+            }
+            /* Horizontal placement lives here and nowhere else - the element rules below
+               set vertical margins only. Two rules agreeing on a left edge is one rule
+               too many. */
+            body > * {
+              width:min(100%, var(--measure));
+              margin-left:var(--gutter); margin-right:auto;
+            }
             body > .mdv-code, body > table, body > .mdv-diagram,
             body > pre.mermaid, body > .mdv-diagram-error, body > hr {
-              max-width:none;
-              width:min(100%, calc((100% + 40rem) / 2));
-              margin-left:auto; margin-right:0;
+              width:var(--plate); max-width:none;
+              margin-left:var(--gutter); margin-right:auto;
               /* border-box, or the plates' own padding and accent border would be
                  added outside the computed width and drag the left edge back off
                  the prose column by exactly as much. */
@@ -1717,7 +1727,7 @@ public class MainController {
 
             h1,h2,h3,h4,h5,h6 {
               font-family:var(--display); font-weight:600; line-height:1.22;
-              letter-spacing:-.01em; margin:2.1em auto .65em; color:var(--ink);
+              letter-spacing:-.01em; margin-top:2.1em; margin-bottom:.65em; color:var(--ink);
             }
             h1 { font-size:2.3rem; letter-spacing:-.022em; margin-top:.2em; }
             h1::after {
@@ -1729,13 +1739,13 @@ public class MainController {
             h4 { font-size:1.05rem; color:var(--ink-soft); }
             h5,h6 { font-size:.95rem; color:var(--ink-soft); }
 
-            p { margin:0 auto 1.15em; }
-            ul,ol { padding-left:1.5em; margin:0 auto 1.15em; }
+            p { margin-top:0; margin-bottom:1.15em; }
+            ul,ol { padding-left:1.5em; margin-top:0; margin-bottom:1.15em; }
             li { margin:.3em 0; }
             li::marker { color:var(--accent); }
 
             strong { font-weight:650; }
-            hr { height:1px; border:0; background:var(--rule); margin:2.6em auto; }
+            hr { height:1px; border:0; background:var(--rule); margin-top:2.6em; margin-bottom:2.6em; }
 
             a {
               color:var(--accent-ink); text-decoration:none;
@@ -1755,7 +1765,7 @@ public class MainController {
             /* The signature: a fenced block is a labelled plate, captioned with its own
                language tag, hung off an accent rule. */
             .mdv-code {
-              margin:1.7em auto; background:var(--code-bg);
+              margin-top:1.7em; margin-bottom:1.7em; background:var(--code-bg);
               border:1px solid var(--rule); border-left:3px solid var(--accent);
               border-radius:7px; overflow:hidden; box-shadow:var(--plate-shadow);
             }
@@ -1772,14 +1782,14 @@ public class MainController {
             }
 
             blockquote {
-              margin:1.6em auto; padding:.1em 0 .1em 1.15em;
+              margin-top:1.6em; margin-bottom:1.6em; padding:.1em 0 .1em 1.15em;
               border-left:3px solid var(--mark); color:var(--ink-soft);
             }
             blockquote p:last-child { margin-bottom:0; }
 
             table {
               display:block; overflow-x:auto; border-collapse:collapse;
-              margin:1.8em auto; font-size:.94em;
+              margin-top:1.8em; margin-bottom:1.8em; font-size:.94em;
               border:1px solid var(--rule); border-radius:7px;
             }
             th,td { padding:9px 15px; border-bottom:1px solid var(--rule); text-align:left; }
@@ -1798,7 +1808,7 @@ public class MainController {
             /* An image clicked in the preview is the target of the position and size
                controls, so it has to be visibly the chosen one. */
             img.mdv-img-selected { outline:2px solid var(--accent); outline-offset:2px; }
-            figure { margin:1.8em auto; }
+            figure { margin-top:1.8em; margin-bottom:1.8em; }
             figure img { display:inline-block; }
             figcaption {
               margin-top:.6em; color:var(--ink-soft);
@@ -1814,7 +1824,7 @@ public class MainController {
                themes: PlantUML and mermaid bake dark strokes into the SVG, which would
                disappear on a dark panel. */
             .mdv-diagram, pre.mermaid {
-              position:relative; margin:1.8em auto; padding:34px 16px 16px;
+              position:relative; margin-top:1.8em; margin-bottom:1.8em; padding:34px 16px 16px;
               background:#FFFFFF; color:#16202B;
               border:1px solid var(--rule); border-left:3px solid var(--accent);
               border-radius:7px; overflow-x:auto; text-align:center;
@@ -1834,7 +1844,7 @@ public class MainController {
               padding:34px 16px 16px; box-shadow:none;
             }
             .mdv-diagram-error {
-              margin:1.7em auto; padding:14px 16px;
+              margin-top:1.7em; margin-bottom:1.7em; padding:14px 16px;
               color:var(--err-fg); background:var(--err-bg);
               border:1px solid var(--err-line); border-left:3px solid var(--err-fg);
               border-radius:7px; text-align:left;
