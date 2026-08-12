@@ -39,7 +39,8 @@ public final class PreviewToolbar extends HBox {
         /** Alignment applies to the selected image, or to the selected text if there is none. */
         ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT,
         IMAGE_WIDTH_75, IMAGE_WIDTH_100, IMAGE_WIDTH_125, IMAGE_WIDTH_150,
-        IMAGE_CAPTION, IMAGE_REPLACE, IMAGE_CROP, IMAGE_COPY_PATH, IMAGE_REMOVE
+        IMAGE_CAPTION, IMAGE_REPLACE, IMAGE_CROP, IMAGE_COPY_PATH, IMAGE_REMOVE,
+        PRINT
     }
 
     private Consumer<Action> onAction = a -> { };
@@ -75,6 +76,13 @@ public final class PreviewToolbar extends HBox {
                 iconButton(alignIcon(Align.LEFT), "Align left", Action.ALIGN_LEFT),
                 iconButton(alignIcon(Align.CENTER), "Centre", Action.ALIGN_CENTER),
                 iconButton(alignIcon(Align.RIGHT), "Align right", Action.ALIGN_RIGHT));
+
+        // Print sits apart from the formatting tools, on the right: it does not edit the
+        // document, and a destructive-adjacent action next to Bold invites misclicks.
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        getChildren().addAll(spacer,
+                iconButton(printIcon(), "Print or export to PDF", Action.PRINT));
     }
 
     public void setOnAction(Consumer<Action> onAction) {
@@ -195,6 +203,19 @@ public final class PreviewToolbar extends HBox {
         return icon(frame, head,
                 stroke(0, 8, 14, 8),
                 stroke(4.7, 1, 4.7, 12), stroke(9.3, 1, 9.3, 12));
+    }
+
+    /** A sheet feeding out of a printer body - the shape everyone reads as print. */
+    private static Group printIcon() {
+        Rectangle body = new Rectangle(0, 4.5, 14, 5.5);
+        body.getStyleClass().add("toolbar-icon-stroke");
+        body.setFill(javafx.scene.paint.Color.TRANSPARENT);
+        Rectangle paper = new Rectangle(3, 0.5, 8, 4);
+        paper.getStyleClass().add("toolbar-icon-stroke");
+        paper.setFill(javafx.scene.paint.Color.TRANSPARENT);
+        Rectangle out = new Rectangle(3, 8, 8, 4.5);
+        out.getStyleClass().add("toolbar-icon-fill");
+        return icon(body, paper, out);
     }
 
     private static Group codeIcon() {
