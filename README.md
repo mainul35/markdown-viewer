@@ -232,10 +232,18 @@ rather than the module path.
     remaining space moves to the next page whole.
   - **Tables do split across pages, and the header row repeats** on each one, so you
     never scroll back to find out what a column was.
-  - **The PDF is named after the document's own title** — its first heading — not its
-    file name, so `README.md` saves as `Resume Builder.pdf`. Characters a filename
-    cannot hold are stripped, and a document with no heading falls back to its file
-    name.
+  - **The suggested filename is the document's own title** — its first heading, falling
+    back to the file name — and it is shown on the status bar while the print dialog is
+    open.
+
+    It is shown there rather than pre-filled because **Windows' Print to PDF leaves its
+    filename box empty and cannot be made to do otherwise from here.** The document name
+    does reach the spooler: JavaFX passes it through to the AWT print job, which was
+    checked directly. The driver simply does not use it for the filename, and the
+    `Destination` attribute it advertises — which would let us write the file ourselves
+    and skip the dialog — is ignored through JavaFX's print path. Pre-filling it would
+    mean replacing printing with a PDF writer of our own, and that would render the
+    document through a second engine that drifts from what the preview shows.
   - Code wraps instead of running off the right edge, dark mode prints as the light
     palette, and shadows are dropped.
 
