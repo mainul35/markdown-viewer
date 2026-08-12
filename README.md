@@ -74,6 +74,16 @@ Two consequences of that packaging worth knowing:
   is exactly the situation inside a shaded jar. `Launcher` is a plain class that calls into
   `MainApp`, which sidesteps that check. Do not "simplify" the manifest to point at `MainApp`.
 
+**Close the app before packaging.** A running MDViewer holds `target/mdviewer-1.0.0.jar`
+open, and Windows will not let the build overwrite or delete it. Maven reports that as
+`Failed to clean project` or `Could not create modular JAR file`, neither of which
+mentions the real cause, so `package.bat`/`package.ps1` check for it first and say so
+plainly. Note the app runs as **javaw.exe**, so it does not appear if you go looking for
+`java` in Task Manager.
+
+`run.bat` deliberately does not `clean` — running from source has no business deleting
+the packaged jar, and doing so made the script fail whenever the app happened to be open.
+
 The startup warning `Unsupported JavaFX configuration: classes were loaded from 'unnamed
 module'` is expected and harmless — it is JavaFX noting that it is running from the classpath
 rather than the module path.
