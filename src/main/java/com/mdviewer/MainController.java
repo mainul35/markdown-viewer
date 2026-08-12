@@ -1561,13 +1561,25 @@ public class MainController {
             return;
         }
 
-        // Set again after the dialog. The dialog returns a fresh set of job settings for
-        // whichever printer was chosen, and the name does not always survive that -
-        // which is what leaves Print to PDF offering its own default filename instead of
-        // the document's title.
+        // Set again after the dialog, which returns a fresh set of job settings for
+        // whichever printer was chosen; the name does not always survive that. This names
+        // the job in the print queue.
         job.getJobSettings().setJobName(jobName);
 
-        setTransientStatus("Printing " + jobName + "...");
+        /* Windows' "Print to PDF" opens its own Save dialog with an empty filename box,
+           and there is no way to seed it from here. The document name does reach the
+           spooler - JavaFX passes JobSettings.jobName through to the AWT job, which was
+           verified directly - but the driver does not use it for the filename, and the
+           Destination attribute it advertises is ignored through JavaFX's print path.
+
+           So the name is put on the status bar instead, where it stays visible behind the
+           dialog and can be read off while typing it in. Not a fix; the best that can be
+           done without replacing printing with a PDF writer of our own. */
+        statusLabel.setText("Save the PDF as:  " + jobName);
+        if (statusRestore != null) {
+            statusRestore.stop();
+        }
+
         webView.getEngine().print(job);
         job.endJob();
         setTransientStatus("Sent " + jobName + " to " + job.getPrinter().getName() + ".");
