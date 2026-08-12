@@ -152,6 +152,25 @@ rather than the module path.
   it to start at a line boundary — with blank lines added on either side only where one
   is not already there. The first header cell is selected, so typing replaces it.
 
+- **Print and export to PDF:** the print button on the right of the preview toolbar
+  opens the system print dialog, so any installed printer works — including *Microsoft
+  Print to PDF*, which is how you get a PDF. The page prints as the preview renders it,
+  with a print stylesheet that adjusts what does not belong on paper.
+
+  - **Header and footer space** is consistent on every page. It is the print job's page
+    margin (72pt top and bottom against 54pt at the sides) rather than drawn content,
+    because JavaFX's WebKit does not implement `@page` margin boxes — so the band is
+    reliably there and reliably empty. There is no page numbering for the same reason.
+  - **Images and diagrams are never cut in half.** A figure that does not fit in the
+    remaining space moves to the next page whole.
+  - **Tables do split across pages, and the header row repeats** on each one, so you
+    never scroll back to find out what a column was. This needs the preview's
+    `display:block` table — the thing that lets a wide table scroll sideways on screen —
+    to be undone for print: a block table has no header group to repeat and no rows to
+    break between, and would be cut mid-row.
+  - Code wraps instead of running off the right edge, dark mode prints as the light
+    palette, and shadows are dropped.
+
 - **Images from the preview:** *Insert image* copies the chosen file into `assets/` beside
   the document and inserts a relative reference — copying rather than linking in place is
   what keeps the document portable. Right-click an image in the preview for its own menu:

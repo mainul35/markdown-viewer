@@ -18,6 +18,11 @@ import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
+import javafx.print.PageLayout;
+import javafx.print.PageOrientation;
+import javafx.print.Paper;
+import javafx.print.Printer;
+import javafx.print.PrinterJob;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
@@ -1265,6 +1270,10 @@ public class MainController {
             insertImage(document);
             return;
         }
+        if (action == PreviewToolbar.Action.PRINT) {
+            printPreview(document);
+            return;
+        }
         boolean imageSelected = !previewString("window.__mdImageInfo()").isEmpty();
         if (action.name().startsWith("IMAGE_")) {
             applyImageAction(document, action);
@@ -1337,6 +1346,66 @@ public class MainController {
         editor.selectRange(edit.selectionStart(), edit.selectionEnd());
         previewDebounce.stop();
         updatePreview();
+    }
+
+    // ------------------------------------------------------------------ print
+
+    /**
+     * Page margin, in points, on the left and right of a printed page (72pt = 1 inch).
+     */
+    private static final double PRINT_SIDE_MARGIN = 54;
+
+    /**
+     * Top and bottom margin. Deliberately deeper than the sides: this is the header and
+     * footer band, and it is the page margin rather than anything drawn into the document
+     * because WebKit 615 does not implement {@code @page} margin boxes. Being a margin is
+     * what makes it identical on every page, including the last.
+     */
+    private static final double PRINT_HEADER_MARGIN = 72;
+
+    /**
+     * Prints the rendered preview, or exports it to PDF through whichever virtual printer
+     * the user picks in the dialog.
+     *
+     * <p>Prints the WebView rather than the Markdown: the page already carries the design,
+     * and its {@code @media print} block adjusts what does not belong on paper. Printing
+     * the source through a second renderer would mean two implementations of the same
+     * document drifting apart.
+     */
+    private void printPreview(DocumentView document) {
+        if (currentMode == EditorMode.RAW) {
+            // The preview is not mounted in RAW mode, so there is nothing rendered to
+            // print. Drop to Split first, the same fallback Find uses.
+            handleSplitMode();
+        }
+        PrinterJob job = PrinterJob.createPrinterJob();
+        if (job == null) {
+            setTransientStatus("No printer is available. Add one, or install a PDF printer.");
+            return;
+        }
+
+        Printer printer = job.getPrinter();
+        PageLayout layout = printer.createPageLayout(
+                Paper.A4, PageOrientation.PORTRAIT,
+                PRINT_SIDE_MARGIN, PRINT_SIDE_MARGIN,
+                PRINT_HEADER_MARGIN, PRINT_HEADER_MARGIN);
+        // Set before the dialog so these are what it opens on; the user can still change
+        // paper or orientation there and their choice wins.
+        job.getJobSettings().setPageLayout(layout);
+        // Names the job in the print queue and, for a PDF printer, seeds the filename.
+        job.getJobSettings().setJobName(document.getDisplayName());
+
+        if (!job.showPrintDialog(primaryStage)) {
+            job.endJob();
+            setTransientStatus("Printing cancelled.");
+            return;
+        }
+
+        setTransientStatus("Printing " + document.getDisplayName() + "...");
+        webView.getEngine().print(job);
+        job.endJob();
+        setTransientStatus("Sent " + document.getDisplayName() + " to "
+                + job.getPrinter().getName() + ".");
     }
 
     // ----------------------------------------------------------------- images
@@ -1998,6 +2067,81 @@ public class MainController {
               border:1px solid var(--err-line); border-left:3px solid var(--err-fg);
               border-radius:7px; text-align:left;
               font-family:var(--mono); font-size:12.5px;
+            }
+
+            /* ------------------------------------------------------------ print
+
+               Paper is a different medium and several screen decisions are actively
+               wrong on it. Each rule below undoes one of them.
+
+               The header and footer bands are the printer job's page margins rather
+               than anything drawn here: WebKit 615 does not implement @page margin
+               boxes, so a running header cannot carry content, but the *space* is
+               consistent on every page because the margin is. */
+            @media print {
+              /* Always the light palette. Printing the dark theme empties a cartridge
+                 to make text that was designed to glow, and the diagram cards are
+                 light regardless - dark mode would print white-on-white text next to
+                 them. Listed with the dark selector so it wins on specificity rather
+                 than by !important. */
+              html, html[data-theme="dark"] {
+                --paper:#FFFFFF; --ink:#16202B; --ink-soft:#4A5763;
+                --rule:#C9D2DC; --line:#B4C0CD;
+                --accent:#0B6E7F; --accent-ink:#0A5A68; --accent-soft:#0B6E7F14;
+                --mark:#A23B2E;
+                --code-bg:#F4F7FA; --code-ink:#16202B; --stripe:#F2F5F8;
+                --plate-shadow:none;
+              }
+
+              /* The reading measure and its breakout gutter are screen furniture. On
+                 paper the page margin is the measure, so everything runs full width. */
+              :root { --measure:100%; --breakout:0rem; --gutter:0px; }
+              body { padding:0; font-size:10.5pt; background:#FFFFFF; }
+              body > * { width:100%; margin-left:0; }
+              body > .mdv-code, body > table, body > .mdv-diagram,
+              body > pre.mermaid, body > .mdv-diagram-error, body > hr {
+                width:100%; margin-left:0;
+              }
+
+              /* Anything that is one visual object moves to the next page whole
+                 rather than being cut in half by a page break. */
+              img, figure, .mdv-diagram, pre.mermaid, .mdv-diagram-error, .mdv-code {
+                page-break-inside:avoid; break-inside:avoid;
+              }
+
+              /* Tables are the deliberate exception: a long table SHOULD run across
+                 pages. Two screen rules have to be undone first - the preview makes
+                 tables `display:block` so they can scroll sideways, and a block table
+                 has no header group to repeat and no rows to break between, so it
+                 would be cut mid-row with the column names left on page one. */
+              table {
+                display:table; width:100%; overflow:visible;
+                page-break-inside:auto; break-inside:auto;
+              }
+              thead { display:table-header-group; }
+              tfoot { display:table-footer-group; }
+              tr, img { page-break-inside:avoid; break-inside:avoid; }
+
+              /* A heading alone at the foot of a page, and single lines stranded
+                 either side of a break. */
+              h1, h2, h3, h4, h5, h6 { page-break-after:avoid; break-after:avoid; }
+              p, li { orphans:3; widows:3; }
+
+              /* There is no scrolling on paper: a long code line must wrap or it is
+                 simply lost off the right edge. */
+              .mdv-code { overflow:visible; }
+              .mdv-code pre { overflow:visible; }
+              pre code { white-space:pre-wrap; word-wrap:break-word; }
+
+              /* Soft shadows print as grey smudges. */
+              .mdv-code, .mdv-diagram, pre.mermaid, table { box-shadow:none; }
+
+              /* A link's destination is invisible on paper, so keep it legible as
+                 text rather than as a coloured affordance that does nothing. */
+              a { color:var(--ink); text-decoration:underline; border-bottom:none; }
+
+              /* The selection outline is an editing artefact. */
+              img.mdv-img-selected { outline:none; }
             }
             """;
 
