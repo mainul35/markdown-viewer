@@ -154,10 +154,17 @@ rather than the module path.
   and says so rather than guessing. With no preview selection the buttons fall back to the
   editor's own selection, which is what makes them useful in Split mode.
 
-- **Code blocks:** the `<>` button makes a selection into code — `inline code` for a
-  word, and a fenced block when the selection crosses a line, since backticks opened
-  mid-paragraph are not a code block. Clicking it again on a fenced block unwraps it. A
-  body that already contains ``` gets a longer fence rather than a broken one.
+- **Code blocks:** two buttons. `‹›` makes a selection `inline code`, upgrading itself
+  to a fenced block when the selection crosses a line — backticks opened mid-paragraph
+  are not a code block. The boxed `‹›` beside it is **Code block**, which always fences,
+  and is also on the preview's right-click menu.
+
+  Two buttons rather than one because they resolve the target differently, and it
+  matters. Inline code has to find the selected text *in the source*, which it cannot do
+  when the paragraph contains `**bold**` or `` `code` `` — the rendered text no longer has
+  those markers. Code block resolves the enclosing block instead, so formatting inside
+  the paragraph is irrelevant to it. Pressing either on an existing fenced block unwraps
+  it, and a body that already contains ``` gets a longer fence rather than a broken one.
 
   **Syntax highlighting** runs on any fenced block with a language tag, through a bundled
   highlight.js. Right-click a code block for **Code language** to set or change it — only
