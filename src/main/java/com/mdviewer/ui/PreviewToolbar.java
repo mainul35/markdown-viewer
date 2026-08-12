@@ -16,6 +16,7 @@ import javafx.scene.shape.Rectangle;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
@@ -42,6 +43,7 @@ public final class PreviewToolbar extends HBox {
     }
 
     private Consumer<Action> onAction = a -> { };
+    private final TableSizePicker tablePicker = new TableSizePicker();
 
     public PreviewToolbar() {
         getStyleClass().add("preview-toolbar");
@@ -62,6 +64,7 @@ public final class PreviewToolbar extends HBox {
                 iconButton(listIcon(true), "Numbered list", Action.ORDERED_LIST),
                 iconButton(quoteIcon(), "Block quote", Action.QUOTE),
                 iconButton(linkIcon(), "Link", Action.LINK),
+                tableButton(),
                 divider(),
                 iconButton(imageIcon(), "Insert image", Action.IMAGE_INSERT));
 
@@ -76,6 +79,26 @@ public final class PreviewToolbar extends HBox {
 
     public void setOnAction(Consumer<Action> onAction) {
         this.onAction = onAction == null ? a -> { } : onAction;
+    }
+
+    /**
+     * Called with the chosen size once the user picks one. Separate from
+     * {@link #setOnAction} because the size is part of the request and {@link Action} has
+     * nowhere to carry it; rows include the header.
+     */
+    public void setOnInsertTable(BiConsumer<Integer, Integer> handler) {
+        tablePicker.setOnPick(handler);
+    }
+
+    private Button tableButton() {
+        Button button = new Button();
+        button.setGraphic(tableIcon());
+        button.getStyleClass().addAll("toolbar-button", "toolbar-icon-button");
+        button.setTooltip(new Tooltip("Insert table"));
+        button.setFocusTraversable(false);
+        button.setMinWidth(Region.USE_PREF_SIZE);
+        button.setOnAction(e -> tablePicker.showUnder(button));
+        return button;
     }
 
     // ----------------------------------------------------------------- pieces
@@ -160,6 +183,18 @@ public final class PreviewToolbar extends HBox {
         sun.getStyleClass().add("toolbar-icon-fill");
         return icon(frame, sun, stroke(1, 11, 5.5, 7), stroke(5.5, 7, 8, 9.2),
                 stroke(8, 9.2, 10.5, 6.5), stroke(10.5, 6.5, 13.5, 11));
+    }
+
+    /** A 3x3 grid with a filled top row, so it reads as a table rather than a window. */
+    private static Group tableIcon() {
+        Rectangle frame = new Rectangle(0, 1, 14, 11);
+        frame.getStyleClass().add("toolbar-icon-stroke");
+        frame.setFill(javafx.scene.paint.Color.TRANSPARENT);
+        Rectangle head = new Rectangle(0, 1, 14, 3.5);
+        head.getStyleClass().add("toolbar-icon-fill");
+        return icon(frame, head,
+                stroke(0, 8, 14, 8),
+                stroke(4.7, 1, 4.7, 12), stroke(9.3, 1, 9.3, 12));
     }
 
     private static Group codeIcon() {

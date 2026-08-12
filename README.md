@@ -142,6 +142,16 @@ rather than the module path.
   and says so rather than guessing. With no preview selection the buttons fall back to the
   editor's own selection, which is what makes them useful in Split mode.
 
+- **Table designer:** the table button on the preview toolbar opens a size picker.
+  Drag across the grid for the usual small table, or type exact numbers for one bigger
+  than the grid offers — up to 100 x 30. Sizes count the header row, so 3 x 4 is a
+  header plus two body rows.
+
+  The table is written as aligned GFM, placed after the caret's line rather than at the
+  caret — a table spliced into the middle of a paragraph is not a table, since GFM needs
+  it to start at a line boundary — with blank lines added on either side only where one
+  is not already there. The first header cell is selected, so typing replaces it.
+
 - **Images from the preview:** *Insert image* copies the chosen file into `assets/` beside
   the document and inserts a relative reference — copying rather than linking in place is
   what keeps the document portable. Right-click an image in the preview for its own menu:
