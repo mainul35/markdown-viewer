@@ -11,6 +11,8 @@ import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -215,6 +217,8 @@ public class MainController {
         if (autoRefreshMenuItem.isSelected()) {
             workspaceSync.play();
         }
+
+        installReplaceShortcut();
 
         previewDebounce = new PauseTransition(Duration.millis(200));
         previewDebounce.setOnFinished(e -> updatePreview());
@@ -1104,6 +1108,49 @@ public class MainController {
     @FXML
     private void handleFindReplace() {
         openFindBar(true);
+    }
+
+    /**
+     * True while waiting to swallow the backspace character that Ctrl+H also produces.
+     *
+     * <p>Deliberately one-shot rather than a standing rule: Ctrl+Backspace - delete the
+     * previous word - is a keystroke people actually use in the editor, and a filter that
+     * simply dropped every control-modified backspace would take that away too.
+     */
+    private boolean swallowNextBackspaceChar = false;
+
+    /**
+     * Makes Ctrl+H open Find and Replace in the editor as well as the preview.
+     *
+     * <p>The menu accelerator alone does not get there. Ctrl+H is ASCII 0x08 - the
+     * backspace character - so the keystroke reaches a focused text area twice: once as a
+     * key press the control's own behaviour claims, and again as a typed backspace. The
+     * accelerator never fired and the character was deleted instead, which is exactly what
+     * "it works like backspace" means.
+     *
+     * <p>A filter on the root sees both before any control does. Consuming the press is
+     * not enough on its own: unlike a browser, JavaFX still delivers the typed character
+     * afterwards, so that has to be swallowed too or the deletion happens anyway.
+     */
+    private void installReplaceShortcut() {
+        rootPane.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == KeyCode.H && event.isShortcutDown() && !event.isAltDown()) {
+                swallowNextBackspaceChar = true;
+                handleFindReplace();
+                event.consume();
+            }
+        });
+        rootPane.addEventFilter(KeyEvent.KEY_TYPED, event -> {
+            if (!swallowNextBackspaceChar) {
+                return;
+            }
+            // Cleared whatever arrives, so a Ctrl+H that produced no character cannot
+            // leave this armed for some later, unrelated backspace.
+            swallowNextBackspaceChar = false;
+            if ("\b".equals(event.getCharacter())) {
+                event.consume();
+            }
+        });
     }
 
     /** Find needs a visible editor, so Full Preview drops back to Split first. */
