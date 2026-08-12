@@ -1053,6 +1053,48 @@ public class MainController {
 
     // -------------------------------------------------------------------- find
 
+    /**
+     * Undo, routed to the active document's editor whatever currently has focus.
+     *
+     * <p>The editor already has undo; what it does not have is the keystroke. Every
+     * formatting action from the preview goes through {@code editor.replaceText}, so it is
+     * on the editor's undo stack - but with the preview focused the key press went to the
+     * WebView, which has nothing to undo, and the edit looked permanent.
+     */
+    @FXML
+    private void handleUndo() {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            return;
+        }
+        TextArea editor = document.getEditor();
+        if (!editor.isUndoable()) {
+            setTransientStatus("Nothing to undo.");
+            return;
+        }
+        editor.undo();
+        // In Full Preview there is no editor on screen to show the caret, so the preview
+        // has to catch up immediately rather than on the usual typing debounce.
+        previewDebounce.stop();
+        updatePreview();
+    }
+
+    @FXML
+    private void handleRedo() {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            return;
+        }
+        TextArea editor = document.getEditor();
+        if (!editor.isRedoable()) {
+            setTransientStatus("Nothing to redo.");
+            return;
+        }
+        editor.redo();
+        previewDebounce.stop();
+        updatePreview();
+    }
+
     @FXML
     private void handleFind() {
         openFindBar(false);

@@ -125,6 +125,12 @@ rather than the module path.
   that, opening is refused with a status-bar message rather than silently closing something
   you still had open.
 
+- **Undo and redo:** **Ctrl+Z** and **Shift+Ctrl+Z**, under the Edit menu. They are menu
+  items rather than left to the editor's own key handling because the editor is not
+  always what has focus — a formatting action taken in the preview edits the document
+  through the editor, so it is on the same undo stack, but the keystroke pressed with the
+  preview focused went to the WebView, which has nothing to undo.
+
 - **Find and replace** in the raw editor: **Ctrl+F** to find, **Ctrl+H** to find and
   replace, both under the Edit menu. Enter and Shift+Enter step through matches, `Aa`
   toggles case sensitivity, Esc closes. Matching is plain text rather than regex, because

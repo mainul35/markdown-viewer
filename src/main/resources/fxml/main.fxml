@@ -38,6 +38,20 @@
                     <MenuItem text="Exit" onAction="#handleExit"/>
                 </Menu>
                 <Menu text="Edit">
+                    <!--
+                        Undo and Redo are menu items rather than left to the editor's own
+                        key handling, because the editor is not always what has focus: a
+                        formatting action taken in the preview edits the document, and
+                        Ctrl+Z pressed with the preview focused went to the WebView, which
+                        has nothing to undo.
+                    -->
+                    <MenuItem text="Undo" onAction="#handleUndo">
+                        <accelerator><KeyCodeCombination alt="UP" code="Z" control="UP" meta="UP" shift="UP" shortcut="DOWN"/></accelerator>
+                    </MenuItem>
+                    <MenuItem text="Redo" onAction="#handleRedo">
+                        <accelerator><KeyCodeCombination alt="UP" code="Z" control="UP" meta="UP" shift="DOWN" shortcut="DOWN"/></accelerator>
+                    </MenuItem>
+                    <SeparatorMenuItem/>
                     <MenuItem text="Find..." onAction="#handleFind">
                         <accelerator><KeyCodeCombination alt="UP" code="F" control="UP" meta="UP" shift="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>
