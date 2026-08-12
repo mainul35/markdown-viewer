@@ -55,6 +55,20 @@
             <artifactId>plantuml-mit</artifactId>
             <version>1.2026.6</version>
         </dependency>
+        <!--
+            Syntax highlighting for fenced code blocks. Taken as a webjar so the script
+            travels inside the shaded jar like the mermaid bundle does: this is an offline
+            app, and a highlighter fetched from a CDN would simply never load.
+
+            Only the script is used. highlight.js ships themes as CSS, but the preview has
+            its own palette and a borrowed theme would clash with the plates it sits in,
+            so the token colours are defined alongside the rest of the preview CSS.
+        -->
+        <dependency>
+            <groupId>org.webjars</groupId>
+            <artifactId>highlightjs</artifactId>
+            <version>11.11.1</version>
+        </dependency>
     </dependencies>
 
     <build>

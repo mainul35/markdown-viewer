@@ -468,7 +468,24 @@ public final class MarkdownService {
                 return;
             }
 
-            renderPlainCode(tag, literal);
+            renderPlainCode(tag, literal, spanOf(fence));
+        }
+
+        /** The node's {@code start:end} offsets in the source, or null if it has no span. */
+        private int[] spanOf(Node node) {
+            List<SourceSpan> spans = node.getSourceSpans();
+            if (spans.isEmpty()) {
+                return null;
+            }
+            SourceSpan first = spans.get(0);
+            SourceSpan last = spans.get(spans.size() - 1);
+            int start = offsetOf(lineStarts, first.getLineIndex(), first.getColumnIndex());
+            int end = offsetOf(lineStarts, last.getLineIndex(),
+                    last.getColumnIndex() + last.getLength());
+            if (start < 0 || end < start || end > source.length()) {
+                return null;
+            }
+            return new int[] {start, end};
         }
 
         /**
@@ -476,13 +493,22 @@ public final class MarkdownService {
          * into the markup as a caption. The information is already in the document, it just
          * never reached the reader.
          */
-        private void renderPlainCode(String tag, String literal) {
+        private void renderPlainCode(String tag, String literal, int[] span) {
             Map<String, String> attrs = new LinkedHashMap<>();
             if (!tag.isEmpty()) {
                 attrs.put("class", "language-" + tag);
             }
+            // The plate carries the fence's own offsets and current language so a
+            // right-click on it can rewrite the info string without re-parsing anything.
+            Map<String, String> plate = new LinkedHashMap<>();
+            plate.put("class", "mdv-code");
+            plate.put("data-mdv-lang", tag);
+            if (span != null) {
+                plate.put("data-md-start", String.valueOf(span[0]));
+                plate.put("data-md-end", String.valueOf(span[1]));
+            }
             html.line();
-            html.tag("div", Map.of("class", "mdv-code"));
+            html.tag("div", plate);
             if (!tag.isEmpty()) {
                 html.tag("span", Map.of("class", "mdv-code-lang"));
                 html.text(tag);

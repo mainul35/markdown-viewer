@@ -154,6 +154,18 @@ rather than the module path.
   and says so rather than guessing. With no preview selection the buttons fall back to the
   editor's own selection, which is what makes them useful in Split mode.
 
+- **Code blocks:** the `<>` button makes a selection into code — `inline code` for a
+  word, and a fenced block when the selection crosses a line, since backticks opened
+  mid-paragraph are not a code block. Clicking it again on a fenced block unwraps it. A
+  body that already contains ``` gets a longer fence rather than a broken one.
+
+  **Syntax highlighting** runs on any fenced block with a language tag, through a bundled
+  highlight.js. Right-click a code block for **Code language** to set or change it — only
+  the opening fence line is rewritten, so choosing a language can never disturb the code.
+  A block with no language stays plain rather than being guessed at. Token colours are the
+  preview's own rather than a borrowed highlight.js theme, which would bring its own
+  background and fight the plate it sits in.
+
 - **Table designer:** the table button on the preview toolbar opens a size picker.
   Drag across the grid for the usual small table, or type exact numbers for one bigger
   than the grid offers — up to 100 x 30. Sizes count the header row, so 3 x 4 is a
@@ -320,6 +332,7 @@ MDViewer/
 | JavaFX | 21 | GPLv2 + Classpath Exception | UI toolkit and WebView |
 | commonmark-java | 0.21.0 | BSD-2-Clause | Markdown parsing (+ GFM tables) |
 | PlantUML | 1.2026.6 (`plantuml-mit`) | MIT | The MIT-licensed build is used deliberately, to match this project's licence |
+| highlight.js | 11.11.1 (`org.webjars:highlightjs`) | BSD-3-Clause | Syntax highlighting for fenced code. Only the script is used — the themes are replaced by the preview's own token colours |
 | mermaid | 10.9.3 | MIT | **Do not upgrade to 11.x** — it uses JavaScript syntax that JavaFX's WebKit 615.1 cannot parse, and mermaid silently stops loading |
 
 ## Development Roadmap

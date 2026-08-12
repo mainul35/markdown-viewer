@@ -311,6 +311,130 @@ public final class SourceEdits {
         return null;
     }
 
+    // ------------------------------------------------------------ code blocks
+
+    /** An opening or closing fence, capturing its indent, its run of markers and its info. */
+    private static final Pattern FENCE_LINE =
+            Pattern.compile("^(\\s*)(`{3,}|~{3,})[ \\t]*(\\S*)[ \\t]*$");
+
+    /**
+     * Wraps the lines covering {@code [start, end)} in a fenced code block, or unwraps the
+     * block they are already inside.
+     *
+     * <p>Whole lines, always. A fence is a block construct: opening one mid-line produces
+     * backticks in the middle of a paragraph rather than a code block, which is what the
+     * inline form is for. The toolbar chooses between the two by whether the selection
+     * crosses a line boundary.
+     *
+     * @param language info string for the opening fence, or "" for none
+     */
+    public static Edit toggleFencedCode(String source, int start, int end, String language) {
+        int from = lineStart(source, start);
+        int to = lineEnd(source, Math.max(start, end));
+
+        int[] enclosing = enclosingFence(source, from);
+        if (enclosing != null) {
+            // Already fenced: drop the two fence lines and give back the body.
+            int openStart = enclosing[0];
+            int openEnd = enclosing[1];
+            int closeStart = enclosing[2];
+            int closeEnd = enclosing[3];
+            String body = source.substring(openEnd, closeStart);
+            if (body.startsWith("\n")) {
+                body = body.substring(1);
+            }
+            if (body.endsWith("\n")) {
+                body = body.substring(0, body.length() - 1);
+            }
+            return new Edit(openStart, closeEnd, body, openStart, openStart + body.length());
+        }
+
+        String body = source.substring(from, to);
+        // A fence has to be able to hold the body: a block containing ``` needs four.
+        String marker = "`".repeat(Math.max(3, longestBacktickRun(body) + 1));
+        String info = language == null ? "" : language.trim();
+        String replacement = marker + info + "\n" + body + "\n" + marker;
+        int bodyStart = from + marker.length() + info.length() + 1;
+        return new Edit(from, to, replacement, bodyStart, bodyStart + body.length());
+    }
+
+    /**
+     * Replaces the info string of the fence at {@code [start, end)}.
+     *
+     * <p>Only the opening fence line is touched, so the block's content and its closing
+     * fence are byte-identical afterwards - this must never be able to corrupt code.
+     *
+     * @param language new info string, or "" to remove it
+     */
+    public static Edit setFenceLanguage(String source, int start, int end, String language) {
+        int from = Math.max(0, Math.min(start, source.length()));
+        int lineTo = lineEnd(source, from);
+        Matcher fence = FENCE_LINE.matcher(source.substring(from, lineTo));
+        if (!fence.matches()) {
+            return null; // Not a fenced block; an indented one has no info string to set.
+        }
+        String info = language == null ? "" : language.trim();
+        String replacement = fence.group(1) + fence.group(2) + info;
+        int caret = from + replacement.length();
+        return new Edit(from, lineTo, replacement, caret, caret);
+    }
+
+    /**
+     * The fence pair enclosing the line at {@code offset}, as
+     * {@code {openStart, openEnd, closeStart, closeEnd}}, or null if it is not inside one.
+     */
+    private static int[] enclosingFence(String source, int offset) {
+        int at = 0;
+        while (at <= source.length()) {
+            int lineTo = lineEnd(source, at);
+            Matcher open = FENCE_LINE.matcher(source.substring(at, lineTo));
+            if (open.matches()) {
+                String marker = open.group(2);
+                int bodyFrom = lineTo;
+                int scan = lineTo + 1;
+                while (scan <= source.length()) {
+                    int closeTo = lineEnd(source, scan);
+                    Matcher close = FENCE_LINE.matcher(source.substring(scan, closeTo));
+                    // A closing fence uses the same character and is at least as long,
+                    // and carries no info string.
+                    if (close.matches() && close.group(3).isEmpty()
+                            && close.group(2).charAt(0) == marker.charAt(0)
+                            && close.group(2).length() >= marker.length()) {
+                        if (offset >= at && offset <= closeTo) {
+                            return new int[] {at, bodyFrom, scan, closeTo};
+                        }
+                        at = closeTo + 1;
+                        break;
+                    }
+                    if (closeTo >= source.length()) {
+                        return null; // Unterminated fence; leave it alone.
+                    }
+                    scan = closeTo + 1;
+                }
+                continue;
+            }
+            if (lineTo >= source.length()) {
+                return null;
+            }
+            at = lineTo + 1;
+        }
+        return null;
+    }
+
+    private static int longestBacktickRun(String text) {
+        int longest = 0;
+        int run = 0;
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == '`') {
+                run++;
+                longest = Math.max(longest, run);
+            } else {
+                run = 0;
+            }
+        }
+        return longest;
+    }
+
     // ----------------------------------------------------------------- tables
 
     /** Widest a generated column is padded to; "Header 10" is nine characters. */
