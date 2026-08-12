@@ -176,6 +176,7 @@ public class MainController {
 
         previewToolbar = new PreviewToolbar();
         previewToolbar.setOnAction(this::applyFormat);
+        previewToolbar.setOnInsertTable(this::insertTable);
 
         // The preview column: formatting toolbar above the rendered document.
         previewPane = new VBox(previewToolbar, webView);
@@ -1370,6 +1371,26 @@ public class MainController {
         previewDebounce.stop();
         updatePreview();
         setTransientStatus("Copied to assets/" + target.getFileName());
+    }
+
+    /**
+     * Inserts an empty table of the chosen size and selects its first header cell.
+     *
+     * <p>Placed after the caret's line rather than at the caret - see
+     * {@link SourceEdits#insertTable} for why - and applied through the same edit path as
+     * every other formatting action, so it undoes in one step.
+     */
+    private void insertTable(int rows, int columns) {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            setTransientStatus("Open a document before inserting a table.");
+            return;
+        }
+        applyEdit(document, SourceEdits.insertTable(
+                document.getEditor().getText(),
+                document.getEditor().getCaretPosition(), rows, columns));
+        document.getEditor().requestFocus();
+        setTransientStatus("Inserted a " + rows + " x " + columns + " table.");
     }
 
     /** Chooser plus copy-into-assets, shared by Insert image and Replace image. */

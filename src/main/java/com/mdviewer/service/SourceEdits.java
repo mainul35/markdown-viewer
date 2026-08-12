@@ -311,6 +311,84 @@ public final class SourceEdits {
         return null;
     }
 
+    // ----------------------------------------------------------------- tables
+
+    /** Widest a generated column is padded to; "Header 10" is nine characters. */
+    private static final int MIN_COLUMN_WIDTH = 3;
+
+    /**
+     * Inserts a GFM table of {@code rows} x {@code columns} as its own block.
+     *
+     * <p>{@code rows} counts the header, so 3 x 4 is a header plus two body rows. That is
+     * what the grid picker shows and what every other editor's picker means by it.
+     *
+     * <p>The table is always placed after the caret's line rather than at the caret. A
+     * table spliced into the middle of a paragraph is not a table - GFM needs it to start
+     * at a line boundary - so inserting where the caret happens to sit would silently
+     * produce a paragraph full of pipes.
+     *
+     * <p>Blank lines are added on either side only where one is not already there. Without
+     * the trailing one the following paragraph is read as another table row.
+     *
+     * @return an edit whose selection covers the first header cell, so typing replaces it
+     */
+    public static Edit insertTable(String source, int caret, int rows, int columns) {
+        int rowCount = Math.max(2, rows);
+        int columnCount = Math.max(1, columns);
+
+        int from = lineStart(source, caret);
+        int to = lineEnd(source, caret);
+        // On a blank line, use it; otherwise start after the line the caret is on.
+        int at = source.substring(from, to).isBlank() ? from : to;
+
+        String before = source.substring(0, at);
+        String after = source.substring(at);
+
+        String prefix;
+        if (before.isEmpty() || before.endsWith("\n\n")) {
+            prefix = "";
+        } else if (before.endsWith("\n")) {
+            prefix = "\n";
+        } else {
+            prefix = "\n\n";
+        }
+        // The table itself ends with a newline, so one more is all a blank line needs.
+        String suffix = after.isEmpty() || after.startsWith("\n") ? "" : "\n";
+
+        String[] headers = new String[columnCount];
+        int[] widths = new int[columnCount];
+        for (int c = 0; c < columnCount; c++) {
+            headers[c] = "Header " + (c + 1);
+            widths[c] = Math.max(headers[c].length(), MIN_COLUMN_WIDTH);
+        }
+
+        StringBuilder table = new StringBuilder();
+        for (int c = 0; c < columnCount; c++) {
+            table.append("| ").append(pad(headers[c], widths[c])).append(' ');
+        }
+        table.append("|\n");
+        for (int c = 0; c < columnCount; c++) {
+            table.append("| ").append("-".repeat(widths[c])).append(' ');
+        }
+        table.append("|\n");
+        for (int r = 1; r < rowCount; r++) {
+            for (int c = 0; c < columnCount; c++) {
+                table.append("| ").append(" ".repeat(widths[c])).append(' ');
+            }
+            table.append("|\n");
+        }
+
+        // Past the leading "| " of the first cell; selecting the placeholder means the
+        // first thing typed replaces it rather than appending to it.
+        int selectionStart = at + prefix.length() + 2;
+        return new Edit(at, at, prefix + table + suffix,
+                selectionStart, selectionStart + headers[0].length());
+    }
+
+    private static String pad(String text, int width) {
+        return text.length() >= width ? text : text + " ".repeat(width - text.length());
+    }
+
     // ------------------------------------------------------------------ lines
 
     public static int lineStart(String source, int offset) {
