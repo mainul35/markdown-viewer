@@ -1391,9 +1391,9 @@ public class MainController {
                 PRINT_HEADER_MARGIN, PRINT_HEADER_MARGIN);
         // Set before the dialog so these are what it opens on; the user can still change
         // paper or orientation there and their choice wins.
+        String jobName = printJobName(document);
         job.getJobSettings().setPageLayout(layout);
-        // Names the job in the print queue and, for a PDF printer, seeds the filename.
-        job.getJobSettings().setJobName(document.getDisplayName());
+        job.getJobSettings().setJobName(jobName);
 
         if (!job.showPrintDialog(primaryStage)) {
             job.endJob();
@@ -1401,11 +1401,63 @@ public class MainController {
             return;
         }
 
-        setTransientStatus("Printing " + document.getDisplayName() + "...");
+        // Set again after the dialog. The dialog returns a fresh set of job settings for
+        // whichever printer was chosen, and the name does not always survive that -
+        // which is what leaves Print to PDF offering its own default filename instead of
+        // the document's title.
+        job.getJobSettings().setJobName(jobName);
+
+        setTransientStatus("Printing " + jobName + "...");
         webView.getEngine().print(job);
         job.endJob();
-        setTransientStatus("Sent " + document.getDisplayName() + " to "
-                + job.getPrinter().getName() + ".");
+        setTransientStatus("Sent " + jobName + " to " + job.getPrinter().getName() + ".");
+    }
+
+    /**
+     * What the print queue calls this job, and what Print to PDF offers as the filename.
+     *
+     * <p>The document's own first heading rather than its file name: a file called
+     * {@code README.md} produces a PDF that ought to be called "Resume Builder", which is
+     * what the page actually says. Falls back to the file name when a document has no
+     * heading at all.
+     */
+    private String printJobName(DocumentView document) {
+        String title = markdownService.documentTitle(document.getEditor().getText());
+        String candidate = safeFileName(title);
+        if (!candidate.isEmpty()) {
+            return candidate;
+        }
+        String fallback = safeFileName(stripExtension(document.getDisplayName()));
+        return fallback.isEmpty() ? "Document" : fallback;
+    }
+
+    /** Windows forbids these outright in a file name. */
+    private static final java.util.regex.Pattern ILLEGAL_IN_FILENAME =
+            java.util.regex.Pattern.compile("[\\\\/:*?\"<>|\\x00-\\x1F]");
+
+    /**
+     * Makes a heading safe to hand to a save dialog as a filename.
+     *
+     * <p>A heading is prose and may hold anything. Passing {@code Build & Run: what/why}
+     * straight through gives Print to PDF a name the filesystem will reject, and the
+     * dialog's recovery from that is to silently substitute its own - which looks exactly
+     * like the job name having been ignored.
+     */
+    private static String safeFileName(String text) {
+        if (text == null) {
+            return "";
+        }
+        String cleaned = ILLEGAL_IN_FILENAME.matcher(text).replaceAll(" ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        // Windows also refuses names ending in a dot or a space.
+        while (cleaned.endsWith(".") || cleaned.endsWith(" ")) {
+            cleaned = cleaned.substring(0, cleaned.length() - 1).trim();
+        }
+        if (cleaned.length() > 120) {
+            cleaned = cleaned.substring(0, 120).trim();
+        }
+        return cleaned;
     }
 
     // ----------------------------------------------------------------- images
@@ -2005,11 +2057,20 @@ public class MainController {
             }
             blockquote p:last-child { margin-bottom:0; }
 
+            /* display:table, not block. As a block the <table> box filled its plate but
+               the rows inside it did not: the cells generate an anonymous table box that
+               shrink-wraps its content, so the grid stopped wherever the text happened to
+               end and left the rest of the bordered plate empty on the right. A real
+               table box stretches its columns to the width it is given. */
             table {
-              display:block; overflow-x:auto; border-collapse:collapse;
+              display:table; table-layout:auto; width:100%; border-collapse:collapse;
               margin-top:1.8em; margin-bottom:1.8em; font-size:.94em;
               border:1px solid var(--rule); border-radius:7px;
             }
+            /* Sideways scrolling went with display:block. Wrapping is the better trade
+               for a document anyway - a column you have to scroll to read is a column you
+               will not read - but an unbroken URL still has to be allowed to break. */
+            th, td { overflow-wrap:break-word; word-break:break-word; }
             th,td { padding:9px 15px; border-bottom:1px solid var(--rule); text-align:left; }
             thead th {
               background:var(--stripe); color:var(--ink-soft);
@@ -2110,10 +2171,11 @@ public class MainController {
               }
 
               /* Tables are the deliberate exception: a long table SHOULD run across
-                 pages. Two screen rules have to be undone first - the preview makes
-                 tables `display:block` so they can scroll sideways, and a block table
-                 has no header group to repeat and no rows to break between, so it
-                 would be cut mid-row with the column names left on page one. */
+                 pages, and its header has to follow. display:table is restated rather
+                 than inherited so this keeps working whatever the screen rule is - an
+                 earlier version made tables display:block for sideways scrolling, and a
+                 block table has no header group to repeat and no rows to break between,
+                 so it was cut mid-row with the column names left on page one. */
               table {
                 display:table; width:100%; overflow:visible;
                 page-break-inside:auto; break-inside:auto;

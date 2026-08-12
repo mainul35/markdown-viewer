@@ -4,6 +4,7 @@ import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.commonmark.node.AbstractVisitor;
 import org.commonmark.node.Code;
 import org.commonmark.node.FencedCodeBlock;
+import org.commonmark.node.Heading;
 import org.commonmark.node.HtmlBlock;
 import org.commonmark.node.Image;
 import org.commonmark.node.Link;
@@ -104,6 +105,51 @@ public final class MarkdownService {
             .extensions(Arrays.asList(TablesExtension.create()))
             .includeSourceSpans(IncludeSourceSpans.BLOCKS_AND_INLINES)
             .build();
+
+    /**
+     * The document's own title: the text of its first heading, or {@code ""} if it has none.
+     *
+     * <p>Parsed rather than pattern-matched, with the same parser that renders the preview.
+     * A regex over the lines would happily return a shell comment - {@code # Frontend - two
+     * separate apps} inside a fenced bash block is not a heading, and documents here open
+     * with exactly that kind of block. The parser already knows the difference, along with
+     * setext underlines and indented code.
+     *
+     * <p>Inline markup is flattened: {@code # The **fast** path} gives "The fast path", and
+     * a link contributes its text rather than its URL.
+     */
+    public String documentTitle(String markdown) {
+        if (markdown == null || markdown.isBlank()) {
+            return "";
+        }
+        Node document = parser.parse(markdown);
+        Heading[] first = {null};
+        document.accept(new AbstractVisitor() {
+            @Override
+            public void visit(Heading heading) {
+                if (first[0] == null) {
+                    first[0] = heading;
+                }
+                // Deliberately not descending: nothing inside a heading is a heading.
+            }
+        });
+        if (first[0] == null) {
+            return "";
+        }
+        StringBuilder text = new StringBuilder();
+        first[0].accept(new AbstractVisitor() {
+            @Override
+            public void visit(Text node) {
+                text.append(node.getLiteral());
+            }
+
+            @Override
+            public void visit(Code node) {
+                text.append(node.getLiteral());
+            }
+        });
+        return text.toString().trim();
+    }
 
     /**
      * @param markdown document source

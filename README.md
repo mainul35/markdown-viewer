@@ -136,6 +136,8 @@ rather than the module path.
   long architecture documents read for an hour at a time. Cool vellum rather than warm
   cream, a blueprint-teal accent, Sitka for headings against Segoe UI body text, and a
   prose column held to a readable measure while code, tables and diagrams break out of it.
+  Tables fill the width they are given and wrap their text rather than scrolling sideways
+  — a column you have to scroll to read is a column you will not read.
   Fenced code blocks are presented as labelled plates captioned with their own language
   tag; diagrams share the same plate family. All fonts are system faces — this is an
   offline app, so a webfont would simply fail to load.
@@ -174,10 +176,11 @@ rather than the module path.
   - **Images and diagrams are never cut in half.** A figure that does not fit in the
     remaining space moves to the next page whole.
   - **Tables do split across pages, and the header row repeats** on each one, so you
-    never scroll back to find out what a column was. This needs the preview's
-    `display:block` table — the thing that lets a wide table scroll sideways on screen —
-    to be undone for print: a block table has no header group to repeat and no rows to
-    break between, and would be cut mid-row.
+    never scroll back to find out what a column was.
+  - **The PDF is named after the document's own title** — its first heading — not its
+    file name, so `README.md` saves as `Resume Builder.pdf`. Characters a filename
+    cannot hold are stripped, and a document with no heading falls back to its file
+    name.
   - Code wraps instead of running off the right edge, dark mode prints as the light
     palette, and shadows are dropped.
 
