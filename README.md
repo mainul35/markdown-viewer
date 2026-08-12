@@ -116,6 +116,10 @@ rather than the module path.
   your expanded folders stay expanded and your selection stays selected. Only directories
   already read are re-read, so refreshing never forces the lazy tree to load anything.
 
+- **Undo/Redo:** **Ctrl+Z** and **Shift+Ctrl+Z** (Edit menu). The editor, preview formatting,
+  table edits, and image operations all share one undo stack, so you can undo a formatting
+  change, then a text edit, then an image resize in sequence.
+
 - **Two-level tabs:** workspace tabs on top, and under each one only the files belonging to
   that workspace. Many open files stay legible because they are grouped by origin instead of
   forming one long strip. Each document keeps its own editor, so undo history and caret
@@ -125,127 +129,41 @@ rather than the module path.
   that, opening is refused with a status-bar message rather than silently closing something
   you still had open.
 
-- **Undo and redo:** **Ctrl+Z** and **Shift+Ctrl+Z**, under the Edit menu. They are menu
-  items rather than left to the editor's own key handling because the editor is not
-  always what has focus — a formatting action taken in the preview edits the document
-  through the editor, so it is on the same undo stack, but the keystroke pressed with the
-  preview focused went to the WebView, which has nothing to undo.
+- **Find and replace:** **Ctrl+F** to find, **Ctrl+H** to find and replace (Edit menu).
+  Enter and Shift+Enter step through matches, `Aa` toggles case sensitivity, Esc closes.
+  Matching is plain text rather than regex, because Markdown is full of characters that are
+  regex metacharacters. Replace All is one edit, so it undoes in a single step. Invoking
+  find from Full Preview drops back to Split so there is an editor to search.
 
-- **Find and replace** in the raw editor: **Ctrl+F** to find, **Ctrl+H** to find and
-  replace, both under the Edit menu. Enter and Shift+Enter step through matches, `Aa`
-  toggles case sensitivity, Esc closes. Matching is plain text rather than regex, because
-  Markdown is full of characters that are regex metacharacters and typing a literal `*` or
-  `[` should find that character. Replace All is one edit, so it undoes in a single step.
-  Invoking find from Full Preview drops back to Split so there is an editor to search.
+- **Design:** A "drafting plate" aesthetic for long architecture documents. Cool vellum
+  background, blueprint-teal accents, Sitka for headings against Segoe UI body text. Tables
+  wrap text instead of scrolling sideways. Fenced code blocks are labelled plates; diagrams
+  share the same style. All fonts are system faces — no webfonts, so it works offline.
 
-- **Design:** a "drafting plate" direction, chosen for the job this tool actually does —
-  long architecture documents read for an hour at a time. Cool vellum rather than warm
-  cream, a blueprint-teal accent, Sitka for headings against Segoe UI body text, and a
-  prose column held to a readable measure while code, tables and diagrams break out of it.
-  Tables fill the width they are given and wrap their text rather than scrolling sideways
-  — a column you have to scroll to read is a column you will not read.
-  Fenced code blocks are presented as labelled plates captioned with their own language
-  tag; diagrams share the same plate family. All fonts are system faces — this is an
-  offline app, so a webfont would simply fail to load.
+- **Formatting toolbar:** Bold, italic, strikethrough, inline code, headings, lists, quotes,
+  links, and images — all from the preview. Same actions on the preview's right-click menu.
+  Select text in the preview, click a button, and it edits the source. The toolbar falls back
+  to the editor's selection when the preview has none, so it works in Split mode too.
 
-- **Formatting from the preview:** a toolbar above the rendered document applies bold,
-  italic, strikethrough, inline code, headings, lists, quotes, links and images without
-  needing to remember the Markdown for them. The same actions are on the preview's
-  right-click menu, which replaces WebKit's Copy-only one.
+- **Code blocks:** Inline code (backticks) auto-upgrades to fenced blocks for multi-line
+  selections. Syntax highlighting via bundled highlight.js. Right-click a code block to set
+  its language — only the fence line changes, never the code.
 
-  Selecting text in the *preview* and pressing a button edits the *source*. Every rendered
-  element carries the offsets of the Markdown it came from, and a selection reports which
-  occurrence of that text it is within its element, so the second "hello" in a paragraph is
-  the one that gets styled. A selection spanning existing formatting cannot be matched back
-  and says so rather than guessing. With no preview selection the buttons fall back to the
-  editor's own selection, which is what makes them useful in Split mode.
+- **In-place editing:** Double-click a paragraph, heading, list, or quote to edit its
+  Markdown source in a popup editor. Ctrl+Enter commits, Escape cancels. Tables edit
+  cell-by-cell; diagrams are skipped.
 
-- **Code blocks:** two buttons. `‹›` makes a selection `inline code`, upgrading itself
-  to a fenced block when the selection crosses a line — backticks opened mid-paragraph
-  are not a code block. The boxed `‹›` beside it is **Code block**, which always fences,
-  and is also on the preview's right-click menu.
+- **Table editor:** Double-click any cell to edit. The cell shows its Markdown source (so
+  `` `code` `` stays `` `code` ``). Committing re-aligns all pipes automatically. Paste
+  handles `|` and newlines correctly.
 
-  Two buttons rather than one because they resolve the target differently, and it
-  matters. Inline code has to find the selected text *in the source*, which it cannot do
-  when the paragraph contains `**bold**` or `` `code` `` — the rendered text no longer has
-  those markers. Code block resolves the enclosing block instead, so formatting inside
-  the paragraph is irrelevant to it. Pressing either on an existing fenced block unwraps
-  it, and a body that already contains ``` gets a longer fence rather than a broken one.
+- **Table inserter:** Toolbar button opens a grid picker or exact size input (up to 100×30).
+  Inserts aligned GFM tables with the first header cell selected.
 
-  **Syntax highlighting** runs on any fenced block with a language tag, through a bundled
-  highlight.js. Right-click a code block for **Code language** to set or change it — only
-  the opening fence line is rewritten, so choosing a language can never disturb the code.
-  A block with no language stays plain rather than being guessed at. Token colours are the
-  preview's own rather than a borrowed highlight.js theme, which would bring its own
-  background and fight the plate it sits in.
-
-- **Editing from the preview:** double-click almost anything — a paragraph, a heading,
-  a list item, a block quote, a fenced code block — to edit it in place. Click away or
-  press **Ctrl+Enter** to commit, **Escape** to cancel. Enter alone inserts a line break,
-  because a Markdown block is allowed to span lines.
-
-  What opens is a plain text editor holding that block's **Markdown**, so a paragraph
-  shows its `**asterisks**` and a list item shows its `-` marker. That is the only way to
-  change them from here — and it means deleting a list marker really does de-list the
-  item, which Ctrl+Z undoes like any other edit. Tables are the exception: they are
-  edited cell by cell, and diagrams are skipped entirely.
-
-  A block is only written back if the document still holds exactly what the editor was
-  handed. The offsets come from a render, a render can be a moment behind the editor, and
-  writing to a range that has moved would overwrite whatever slid into it.
-
-- **Editing a table from the preview:** double-click any cell to edit it in place.
-  Enter or Tab commits, Escape cancels, and clicking away commits.
-
-  What appears for editing is the cell's **Markdown**, not the rendered text. A cell
-  showing styled code is `` `like this` `` in the source, and offering the rendered form
-  back would drop the backticks the moment it was saved — so an editing cell switches to
-  the mono face to show it is the source you are looking at.
-
-  Committing rewrites only that table, and **re-aligns its pipes** on the way out, which
-  is the other half of the problem: a hand-written table is usually ragged, and a ragged
-  table is very hard to read in the raw editor. A pasted `|` is escaped and a pasted
-  newline becomes a space, because either would otherwise end the table it was pasted
-  into. Column alignment (`:---`, `:---:`, `---:`) is preserved. Double-click rather than
-  single, since a table is read far more often than it is edited.
-
-- **Table designer:** the table button on the preview toolbar opens a size picker.
-  Drag across the grid for the usual small table, or type exact numbers for one bigger
-  than the grid offers — up to 100 x 30. Sizes count the header row, so 3 x 4 is a
-  header plus two body rows.
-
-  The table is written as aligned GFM, placed after the caret's line rather than at the
-  caret — a table spliced into the middle of a paragraph is not a table, since GFM needs
-  it to start at a line boundary — with blank lines added on either side only where one
-  is not already there. The first header cell is selected, so typing replaces it.
-
-- **Print and export to PDF:** the print button on the right of the preview toolbar
-  opens the system print dialog, so any installed printer works — including *Microsoft
-  Print to PDF*, which is how you get a PDF. The page prints as the preview renders it,
-  with a print stylesheet that adjusts what does not belong on paper.
-
-  - **Header and footer space** is consistent on every page. It is the print job's page
-    margin (72pt top and bottom against 54pt at the sides) rather than drawn content,
-    because JavaFX's WebKit does not implement `@page` margin boxes — so the band is
-    reliably there and reliably empty. There is no page numbering for the same reason.
-  - **Images and diagrams are never cut in half.** A figure that does not fit in the
-    remaining space moves to the next page whole.
-  - **Tables do split across pages, and the header row repeats** on each one, so you
-    never scroll back to find out what a column was.
-  - **The suggested filename is the document's own title** — its first heading, falling
-    back to the file name — and it is shown on the status bar while the print dialog is
-    open.
-
-    It is shown there rather than pre-filled because **Windows' Print to PDF leaves its
-    filename box empty and cannot be made to do otherwise from here.** The document name
-    does reach the spooler: JavaFX passes it through to the AWT print job, which was
-    checked directly. The driver simply does not use it for the filename, and the
-    `Destination` attribute it advertises — which would let us write the file ourselves
-    and skip the dialog — is ignored through JavaFX's print path. Pre-filling it would
-    mean replacing printing with a PDF writer of our own, and that would render the
-    document through a second engine that drifts from what the preview shows.
-  - Code wraps instead of running off the right edge, dark mode prints as the light
-    palette, and shadows are dropped.
+- **Print & PDF export:** Print button opens the system dialog. Use "Microsoft Print to PDF"
+  for PDF output. Tables split across pages with repeating headers. Images and diagrams never
+  break mid-figure. Code wraps, dark mode prints light, filename defaults to the document's
+  first heading.
 
 - **Images from the preview:** *Insert image* copies the chosen file into `assets/` beside
   the document and inserts a relative reference — copying rather than linking in place is
@@ -262,118 +180,79 @@ rather than the module path.
   workspace root offers creation only — renaming or binning it would leave the workspace
   pointing at nothing; use **File → Close Workspace** instead.
 
-- **Three Editing Modes:**
-  - Raw Mode: Plain text editor for Markdown
-  - Split Preview: Side-by-side editor and live preview
-  - Full Preview: Distraction-free rendered view
+- **Three editing modes:** Raw (editor only), Split (side-by-side), Full Preview (rendered
+  view only). Switch via toolbar buttons or View menu.
 
-- **Dark / light theme:** toggled from the toolbar or **View → Dark Mode**. One switch
-  themes the JavaFX chrome and the preview document together. The preview carries both
-  palettes and flips a `data-theme` attribute, so switching costs no reload and keeps your
-  scroll position. Diagram cards deliberately stay light in dark mode — PlantUML and mermaid
-  bake dark strokes and text into their SVG, which would be invisible on a dark card.
-  The theme is not persisted between runs; the app always starts in light mode.
+- **Dark/Light theme:** Toolbar toggle or View menu. Both JavaFX chrome and preview document
+  switch together. Preview keeps both palettes loaded, so theme changes are instant with no
+  scroll jump. Diagrams stay light in dark mode (PlantUML/Mermaid bake dark strokes into SVG).
+  Theme resets on restart (always starts light).
 
-- **Toolbar:** file actions live only in the File menu, since duplicate buttons added no
-  quick access the menu did not already provide. The mode buttons stay (mode switching is
-  frequent) and sit on the right, next to the theme switch.
+- **Responsive window:** Opens at 85% of screen's work area (excludes taskbar), centered.
+  Minimum 900×600, scales to 4K. Position/size not persisted between runs.
 
-- **Responsive window:** the window opens at 85% of the screen's *visual* bounds (the work
-  area, excluding the taskbar) and is centred there, with a 900x600 floor that is itself
-  clamped so it can never exceed a smaller screen. It scales from a 1024x600 netbook up to
-  4K. Window position and size are not remembered between runs.
+- **File operations:** Open/save `.md`, `.markdown`, `.txt` files. UTF-8 encoding. Unsaved
+  changes detected and prompted on close.
 
-- **File Operations:**
-  - Open/Save `.md`, `.markdown`, `.txt` files
-  - UTF-8 encoding support
-  - Unsaved changes detection
+- **Live preview:** Real-time rendering with 200ms debounce. GitHub-style CSS. Scroll
+  position preserved per-document — switch tabs or follow links, come back to where you were.
+  Web links open in system browser.
 
-- **Live Preview:**
-  - Real-time Markdown rendering, debounced so typing stays responsive
-  - GitHub-style CSS theme
-  - Support for tables, code blocks, blockquotes
-  - Preview scroll position is preserved while editing, and each document remembers its
-    own position — switching tabs or following a link and coming back resumes where you
-    were rather than jumping to the top
-  - Web links open in the system browser instead of hijacking the preview pane
-
-- **Following links between documents:** a relative link to another Markdown file
-  (`[rules](.claude/rules/code-style.md)`) opens that file as a new tab in the right
-  workspace and reveals it in the explorer, expanding the folders on the way. This works
-  for Markdown links and raw HTML `<a href>` alike. A file reached this way is surfaced in
-  the tree even if the markdown-only filter would normally hide its folder — a document you
-  deliberately opened is not the noise the filter exists to remove. Links to non-Markdown
-  files are reported in the status bar rather than opened; the app never launches arbitrary
-  local files.
+- **Follow links between documents:** Relative links to Markdown files open in a new tab and
+  reveal in the explorer. Works for both Markdown links and raw HTML `<a href>`. Links to
+  non-Markdown files shown in status bar (app does not launch arbitrary local files).
 
 - **Diagrams:**
-  - ` ```mermaid ` fences render through the bundled mermaid build. The supported
-    diagram types are:
-
-    | Type | Opening keyword |
-    |---|---|
-    | Flowchart | `flowchart TD` |
-    | Sequence | `sequenceDiagram` |
-    | Class | `classDiagram` |
-    | State | `stateDiagram-v2` |
-    | Entity relationship | `erDiagram` |
-    | Gantt | `gantt` |
-    | Mindmap | `mindmap` |
-    | Git graph | `gitGraph` |
-
-    **Beta diagram types are not supported** — `block-beta`, `sankey-beta`,
-    `xychart-beta` and anything else mermaid marks as beta. The bundled mermaid is
-    pinned to 10.9.3 (see the table below for why it cannot be upgraded), and the
-    beta grammars are the part of mermaid that moves between releases
-  - ` ```plantuml ` (also `puml`, `uml`) fences render to inline SVG, on a background
-    thread so large diagrams never freeze the UI
-  - a bare `@startuml` … `@enduml` block renders without a fence too — those are
-    PlantUML's own delimiters, so a fence adds nothing. The block has to be
-    unbroken: a blank line inside one, or `*` bullet syntax such as `@startmindmap`,
-    is read as Markdown and still needs a fence
-  - an unfenced Mermaid diagram renders when its opening keyword is unambiguous —
-    the eight types above, plus `quadrantChart` and `requirementDiagram`. `pie`,
-    `journey` and `timeline` are excluded on purpose, because a paragraph of prose
-    could genuinely start with them; those need a fence. `flowchart` and `graph`
-    have to carry a direction (`flowchart TD`) for the same reason
-  - C4-PlantUML diagrams work offline: `!include` URLs pointing at the C4-PlantUML GitHub
-    repo are rewritten to the C4 standard library bundled inside the PlantUML jar
-  - No Graphviz install needed — PlantUML's pure-Java `smetana` layout engine is used
-  - Rendered diagrams are cached by source, so editing prose does not re-render them
+  - **Mermaid:** Fenced ` ```mermaid ` blocks render via bundled mermaid 10.9.3.
+    Supported: flowchart, sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram,
+    gantt, mindmap, gitGraph, quadrantChart, requirementDiagram.
+    **Not supported:** Beta types (block-beta, sankey-beta, xychart-beta, pie, journey,
+    timeline). Mermaid 11.x incompatible with JavaFX WebKit.
+  - **PlantUML:** Fenced ` ```plantuml ` (or `puml`, `uml`) renders to inline SVG on a
+    background thread. Bare `@startuml`...`@enduml` blocks render without fences.
+    C4-PlantUML `!include` URLs rewritten to bundled C4 library (works offline).
+    Uses pure-Java smetana engine — no Graphviz needed.
+  - Diagrams cached by source — editing surrounding prose does not re-render.
 
 - **Images:**
-  - Relative image paths resolve against the directory of the file being viewed, for both
-    Markdown `![](...)` images and raw HTML `<img>` tags
-  - Absolute `http(s):`, `data:` and `file:` URLs are left untouched
+  - Relative paths resolve against the document's directory (Markdown and HTML `<img>`).
+  - Absolute `http(s):`, `data:`, `file:` URLs left untouched.
+  - Insert image copies file to `assets/` beside the document (keeps docs portable).
+  - Right-click images: resize (75/100/125/150%), position (left/center/right), crop,
+    caption, replace, copy path, remove. Styled images written as `<img>` in aligned
+    paragraphs or `<figure>` with captions — renders on GitHub too.
 
 ## Project Structure
 
 ```
 MDViewer/
-├── src/
-│   ├── main/
-│   │   ├── java/
-│   │   │   ├── com/mdviewer/
-│   │   │   │   ├── MainApp.java              # JavaFX Application
-│   │   │   │   ├── Launcher.java             # Entry point for the shaded jar
-│   │   │   │   ├── MainController.java       # UI + workspace/preview orchestration
-│   │   │   │   ├── service/
-│   │   │   │   │   ├── MarkdownService.java  # Markdown -> HTML, diagrams, image paths
-│   │   │   │   │   └── DiagramService.java   # PlantUML -> SVG, off-thread + cached
-│   │   │   │   └── ui/
-│   │   │   │       ├── FileTreePanel.java    # Explorer + reveal-in-tree target
-│   │   │   │       ├── PathTreeItem.java     # Lazily loaded file-tree node
-│   │   │   │       ├── WorkspaceView.java    # A workspace and its file tabs
-│   │   │   │       └── DocumentView.java     # One open document + its editor
-│   │   │   └── module-info.java              # Java module configuration
-│   │   └── resources/
-│   │       ├── fxml/main.fxml                # UI layout
-│   │       ├── css/styles.css                # Application styles
-│   │       └── js/mermaid.min.js             # Bundled mermaid renderer
-├── pom.xml                                   # Maven build configuration
-├── package.bat / package.ps1                 # Build the standalone jar
-├── run.bat / run.ps1                         # Run from source
-└── project_plan.md                           # Development roadmap
+├── src/main/
+│   ├── java/com/mdviewer/
+│   │   ├── MainApp.java           # JavaFX Application entry point
+│   │   ├── Launcher.java          # Entry point for shaded JAR (avoids JavaFX startup issues)
+│   │   ├── MainController.java    # UI orchestration, workspace & preview management
+│   │   ├── service/
+│   │   │   ├── MarkdownService.java   # Markdown → HTML, diagram extraction, image paths
+│   │   │   ├── DiagramService.java    # PlantUML → SVG (background thread, cached)
+│   │   │   ├── SourceEdits.java       # Markdown source transformations (formatting, tables)
+│   │   │   ├── ImageRef.java          # Image path handling & markup generation
+│   │   │   └── Trash.java             # Cross-platform recycle bin support
+│   │   └── ui/
+│   │       ├── FileTreePanel.java   # Workspace explorer (markdown-only tree)
+│   │       ├── PathTreeItem.java    # Lazy-loading tree node
+│   │       ├── WorkspaceView.java   # Workspace tab + document tabs management
+│   │       ├── DocumentView.java    # Single document (editor + metadata)
+│   │       ├── PreviewToolbar.java  # Formatting toolbar actions
+│   │       ├── FindBar.java         # Find & replace bar
+│   │       └── CropDialog.java      # Image crop dialog
+│   └── resources/
+│       ├── fxml/main.fxml         # Main UI layout
+│       ├── css/styles.css         # Application + preview styles (light/dark themes)
+│       └── js/mermaid.min.js      # Bundled mermaid renderer
+├── pom.xml                        # Maven build configuration
+├── package.bat / package.ps1      # Build standalone shaded JAR
+├── run.bat / run.ps1              # Run from source
+└── screenshots/                   # Application screenshots for documentation
 ```
 
 ## Third-party components
