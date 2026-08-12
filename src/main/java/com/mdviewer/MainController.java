@@ -1133,19 +1133,111 @@ public class MainController {
                 formatItem("Copy image path", PreviewToolbar.Action.IMAGE_COPY_PATH),
                 formatItem("Remove image", PreviewToolbar.Action.IMAGE_REMOVE));
 
+        // Right-clicking a code plate is asking about that block's language.
+        Menu languages = new Menu("Code language");
+        for (String[] entry : CODE_LANGUAGES) {
+            MenuItem item = new MenuItem(entry[0]);
+            item.setOnAction(e -> setCodeLanguage(entry[1]));
+            languages.getItems().add(item);
+        }
+        MenuItem otherLanguage = new MenuItem("Other...");
+        otherLanguage.setOnAction(e -> promptCodeLanguage());
+        MenuItem noLanguage = new MenuItem("None (plain text)");
+        noLanguage.setOnAction(e -> setCodeLanguage(""));
+        languages.getItems().addAll(new SeparatorMenuItem(), otherLanguage, noLanguage);
+
+        ContextMenu codeMenu = new ContextMenu(copyItem("Copy"), new SeparatorMenuItem(),
+                languages);
+
         webView.setOnContextMenuRequested(event -> {
             textMenu.hide();
             imageMenu.hide();
-            // The page records the image under the pointer on mousedown, which fires
+            codeMenu.hide();
+            // The page records what was under the pointer on mousedown, which fires
             // before this, so the choice of menu is already known.
             boolean onImage = !previewString("window.__mdImageInfo()").isEmpty();
-            (onImage ? imageMenu : textMenu).show(webView, event.getScreenX(), event.getScreenY());
+            boolean onCode = !previewString("window.__mdCodeInfo()").isEmpty();
+            ContextMenu menu = onImage ? imageMenu : onCode ? codeMenu : textMenu;
+            menu.show(webView, event.getScreenX(), event.getScreenY());
             event.consume();
         });
         webView.setOnMousePressed(event -> {
             textMenu.hide();
             imageMenu.hide();
+            codeMenu.hide();
         });
+    }
+
+    private MenuItem copyItem(String label) {
+        MenuItem item = new MenuItem(label);
+        item.setOnAction(e -> copyPreviewSelection());
+        return item;
+    }
+
+    /**
+     * Offered on a code block's menu: display name to highlight.js identifier.
+     *
+     * <p>A short list of what these documents actually contain rather than everything the
+     * highlighter knows - a forty-item menu is a worse way to find "Java" than a ten-item
+     * one, and "Other..." covers the rest.
+     */
+    private static final String[][] CODE_LANGUAGES = {
+            {"Bash / Shell", "bash"},
+            {"Java", "java"},
+            {"JavaScript", "javascript"},
+            {"TypeScript", "typescript"},
+            {"Python", "python"},
+            {"JSON", "json"},
+            {"YAML", "yaml"},
+            {"XML / HTML", "xml"},
+            {"CSS", "css"},
+            {"SQL", "sql"},
+            {"Groovy", "groovy"},
+            {"Dockerfile", "dockerfile"},
+    };
+
+    private void promptCodeLanguage() {
+        String current = previewString("window.__mdCodeInfo()");
+        String[] parts = current.split(",", 3);
+        TextInputDialog dialog = new TextInputDialog(parts.length > 2 ? parts[2] : "");
+        dialog.initOwner(primaryStage);
+        dialog.setTitle("Code language");
+        dialog.setHeaderText("Language for this code block");
+        dialog.setContentText("highlight.js name:");
+        dialog.showAndWait().ifPresent(this::setCodeLanguage);
+    }
+
+    /**
+     * Rewrites the info string of the code block that was right-clicked.
+     *
+     * <p>Only the opening fence line is replaced, so the code inside cannot be disturbed
+     * by choosing a language for it.
+     */
+    private void setCodeLanguage(String language) {
+        DocumentView document = activeDocument();
+        String info = previewString("window.__mdCodeInfo()");
+        if (document == null || info.isEmpty()) {
+            return;
+        }
+        String[] parts = info.split(",", 3);
+        int start;
+        int end;
+        try {
+            start = Integer.parseInt(parts[0]);
+            end = Integer.parseInt(parts[1]);
+        } catch (NumberFormatException e) {
+            return;
+        }
+        SourceEdits.Edit edit = SourceEdits.setFenceLanguage(
+                document.getEditor().getText(), start, end, language);
+        if (edit == null) {
+            setTransientStatus("This block is indented code, which has no language tag.");
+            return;
+        }
+        applyEdit(document, edit);
+        setTransientStatus(language.isEmpty()
+                ? "Code block set to plain text."
+                : "Code block set to " + language + ".");
     }
 
     private void copyPreviewSelection() {
@@ -1310,6 +1402,18 @@ public class MainController {
             return;
         }
         String source = document.getEditor().getText();
+
+        /* Code is two operations behind one button. A word becomes `inline code`; a
+           selection that crosses a line boundary becomes a fenced block, because that is
+           what the user is pointing at - backticks opened mid-paragraph are not a code
+           block, they are backticks. The line boundary is the signal: nothing you would
+           want as inline code spans lines. */
+        if (action == PreviewToolbar.Action.CODE
+                && source.substring(range.start(), range.end()).contains("\n")) {
+            applyEdit(document, SourceEdits.toggleFencedCode(
+                    source, range.start(), range.end(), ""));
+            return;
+        }
 
         SourceEdits.Edit edit = switch (action) {
             case BOLD -> SourceEdits.toggleInline(source, range.start(), range.end(), "**");
@@ -1678,6 +1782,7 @@ public class MainController {
         engine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
             if (newState == Worker.State.SUCCEEDED) {
                 injectMermaid();
+                injectHighlighter();
                 previewReady = true;
                 applyPreviewTheme();
                 applyPreviewHtml(currentPreviewHtml);
@@ -1874,6 +1979,39 @@ public class MainController {
      * executeScript rather than a &lt;script&gt; tag because the minified source contains
      * "&lt;/script&gt;" inside string literals, which would terminate the tag early.
      */
+    /**
+     * Path to the bundled highlight.js inside the webjar. The version is part of the path,
+     * so it has to be kept in step with the dependency in pom.xml - a mismatch is a silent
+     * miss, since a missing highlighter is a supported state rather than an error.
+     */
+    private static final String HLJS_RESOURCE =
+            "/META-INF/resources/webjars/highlightjs/11.11.1/highlight.min.js";
+
+    /**
+     * Loads the bundled highlight.js into the preview page.
+     *
+     * <p>Injected the same way as mermaid, and for the same reason: this is an offline app,
+     * so a highlighter loaded from a CDN would simply never arrive. Failure is not fatal -
+     * code blocks keep the unhighlighted look they have always had.
+     */
+    private void injectHighlighter() {
+        try (InputStream in = getClass().getResourceAsStream(HLJS_RESOURCE)) {
+            if (in == null) {
+                System.err.println("MDViewer: highlight.js not on the classpath at "
+                        + HLJS_RESOURCE + " - code blocks will not be highlighted.");
+                return;
+            }
+            webView.getEngine().executeScript(
+                    new String(in.readAllBytes(), StandardCharsets.UTF_8));
+            // Nothing is auto-detected: a block with no language keeps the plain look
+            // rather than being guessed at, which is what the fence not saying so means.
+            webView.getEngine().executeScript(
+                    "hljs.configure({ignoreUnescapedHTML:true, languages:[]});");
+        } catch (IOException | RuntimeException e) {
+            System.err.println("MDViewer: highlight.js unavailable - " + e);
+        }
+    }
+
     private void injectMermaid() {
         try (InputStream in = getClass().getResourceAsStream("/js/mermaid.min.js")) {
             if (in == null) {
@@ -2050,6 +2188,58 @@ public class MainController {
               font-family:var(--mono); font-size:13.5px; line-height:1.62;
               color:var(--code-ink); background:none; padding:0;
             }
+
+            /* highlight.js token colours, written here rather than taking one of its
+               themes: every hljs theme brings its own background and its own idea of a
+               code block, and would fight the plate this sits in. Hues are the preview's
+               own - the accent for keywords, the mark red for literals - so a highlighted
+               block still reads as part of this document. */
+            .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-section, .hljs-doctag {
+              color:var(--accent-ink); font-weight:600;
+            }
+            .hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute, .hljs-meta .hljs-string {
+              color:var(--mark);
+            }
+            .hljs-number, .hljs-symbol, .hljs-bullet, .hljs-link, .hljs-selector-attr {
+              color:#7A4FB5;
+            }
+            .hljs-comment, .hljs-quote, .hljs-deletion {
+              color:var(--ink-soft); font-style:italic;
+            }
+            .hljs-title, .hljs-name, .hljs-title.function_, .hljs-title.class_ {
+              color:#1F6FB2; font-weight:600;
+            }
+            .hljs-type, .hljs-built_in, .hljs-class .hljs-title, .hljs-params {
+              color:#0F7A6B;
+            }
+            .hljs-attr, .hljs-variable, .hljs-template-variable, .hljs-selector-id,
+            .hljs-selector-class {
+              color:#8A5A1E;
+            }
+            .hljs-meta, .hljs-tag { color:var(--ink-soft); }
+            .hljs-emphasis { font-style:italic; }
+            .hljs-strong { font-weight:700; }
+
+            /* The light hues above are chosen against a near-white plate and go muddy on
+               a dark one, so the dark theme gets its own set rather than a filter. */
+            html[data-theme="dark"] .hljs-number,
+            html[data-theme="dark"] .hljs-symbol,
+            html[data-theme="dark"] .hljs-bullet,
+            html[data-theme="dark"] .hljs-link,
+            html[data-theme="dark"] .hljs-selector-attr { color:#C39BF0; }
+            html[data-theme="dark"] .hljs-title,
+            html[data-theme="dark"] .hljs-name,
+            html[data-theme="dark"] .hljs-title.function_,
+            html[data-theme="dark"] .hljs-title.class_ { color:#6FB6ED; }
+            html[data-theme="dark"] .hljs-type,
+            html[data-theme="dark"] .hljs-built_in,
+            html[data-theme="dark"] .hljs-class .hljs-title,
+            html[data-theme="dark"] .hljs-params { color:#5FC9B6; }
+            html[data-theme="dark"] .hljs-attr,
+            html[data-theme="dark"] .hljs-variable,
+            html[data-theme="dark"] .hljs-template-variable,
+            html[data-theme="dark"] .hljs-selector-id,
+            html[data-theme="dark"] .hljs-selector-class { color:#D8A85C; }
 
             blockquote {
               margin-top:1.6em; margin-bottom:1.6em; padding:.1em 0 .1em 1.15em;
@@ -2238,13 +2428,32 @@ public class MainController {
                 if (p && p.catch) { p.catch(function () {}); }
               } catch (e) {}
             };
+            /* Syntax highlighting. hljs is injected separately, like mermaid, and may not
+               be there at all if the resource is missing - in which case code blocks keep
+               the plain look they had before and nothing else changes. */
+            window.__mdHighlight = function () {
+              if (!window.hljs) { return; }
+              var blocks = document.querySelectorAll('.mdv-code pre code[class*="language-"]');
+              for (var i = 0; i < blocks.length; i++) {
+                var block = blocks[i];
+                if (block.getAttribute('data-highlighted') === 'yes') { continue; }
+                try {
+                  hljs.highlightElement(block);
+                } catch (e) {
+                  /* An unknown language is not worth losing the block over. */
+                  block.setAttribute('data-highlighted', 'yes');
+                }
+              }
+            };
             window.__mdSetBody = function (html) {
               document.body.innerHTML = html;
               /* The previous DOM is gone, so any image selected in it is too. Leaving the
                  old offsets behind would send the next size or alignment action at an
                  element that no longer exists. */
               window.__mdSelectedImage = '';
+              window.__mdCodeBlock = '';
               window.__mdRunMermaid();
+              window.__mdHighlight();
             };
             window.__mdSetDiagram = function (id, svg) {
               var el = document.getElementById(id);
@@ -2336,6 +2545,27 @@ public class MainController {
               }
             });
             window.__mdImageInfo = function () { return window.__mdSelectedImage; };
+
+            /* The code plate under the pointer, recorded the same way and for the same
+               reason as the image: a right-click produces no click event, so the target
+               has to be captured on mousedown, before the context menu is asked for. */
+            window.__mdCodeBlock = '';
+            document.addEventListener('mousedown', function (event) {
+              var el = event.target;
+              while (el && el !== document.body
+                     && !(el.classList && el.classList.contains('mdv-code'))) {
+                el = el.parentElement;
+              }
+              if (el && el.classList && el.classList.contains('mdv-code')
+                  && el.getAttribute('data-md-start')) {
+                window.__mdCodeBlock = el.getAttribute('data-md-start') + ','
+                    + el.getAttribute('data-md-end') + ','
+                    + (el.getAttribute('data-mdv-lang') || '');
+              } else {
+                window.__mdCodeBlock = '';
+              }
+            });
+            window.__mdCodeInfo = function () { return window.__mdCodeBlock; };
             """;
 
         return "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>"
