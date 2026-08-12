@@ -20,6 +20,10 @@
     /* Deliberately darker than -mdv-border: a scrollbar has to be findable against the
        panel it floats over, and the border colour is tuned for hairlines on white. */
     -mdv-scroll-thumb: #aebbc9;
+    /* Amber rather than the teal accent: a search hit should not be mistakable for an
+       ordinary selection, and the two are on screen at the same time. */
+    -mdv-search-hit: #FFC24B;
+    -mdv-search-hit-text: #16202B;
 }
 
 .root.dark-theme {
@@ -32,6 +36,8 @@
     -mdv-accent: #3fb8cc;
     -mdv-accent-soft: #16323c;
     -mdv-scroll-thumb: #3d4f63;
+    -mdv-search-hit: #C98A28;
+    -mdv-search-hit-text: #10161D;
 
     /* Re-tint JavaFX's built-in control palette so menus, dialogs and the text editor
        follow the theme without needing a rule for each control. Note this block is dark-
@@ -113,6 +119,14 @@
 
 .markdown-editor:focused {
     -fx-background-color: transparent;
+}
+
+/* Only while the find bar is open. The match is shown by selecting it, so this and an
+   ordinary selection are the same property - the pale tint above is right for text being
+   read, and far too quiet for something you are hunting for. */
+.markdown-editor.searching {
+    -fx-highlight-fill: -mdv-search-hit;
+    -fx-highlight-text-fill: -mdv-search-hit-text;
 }
 
 /* ---------------------------------------------------------------- find bar */
