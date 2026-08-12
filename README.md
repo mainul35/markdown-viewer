@@ -135,6 +135,10 @@ rather than the module path.
   regex metacharacters. Replace All is one edit, so it undoes in a single step. Invoking
   find from Full Preview drops back to Split so there is an editor to search.
 
+  Ctrl+H is intercepted before the editor sees it, because ASCII 0x08 *is* Ctrl+H — left
+  alone, the keystroke reaches a focused text area as a typed backspace and deletes a
+  character instead of opening the bar.
+
 - **Design:** A "drafting plate" aesthetic for long architecture documents. Cool vellum
   background, blueprint-teal accents, Sitka for headings against Segoe UI body text. Tables
   wrap text instead of scrolling sideways. Fenced code blocks are labelled plates; diagrams
