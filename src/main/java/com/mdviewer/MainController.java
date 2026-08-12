@@ -2138,6 +2138,58 @@ public class MainController {
         public void cancelCell() {
             Platform.runLater(() -> updatePreview());
         }
+
+        /** The Markdown a rendered block came from, for editing it in place. */
+        public String blockSource(int start, int end) {
+            DocumentView document = activeDocument();
+            if (document == null) {
+                return null;
+            }
+            String source = document.getEditor().getText();
+            if (start < 0 || end > source.length() || start >= end) {
+                return null;
+            }
+            return source.substring(start, end);
+        }
+
+        /**
+         * Replaces a block's Markdown with what was edited in the preview.
+         *
+         * <p>{@code original} is what the page was handed at the start of the edit, and
+         * the range is only replaced if the document still says exactly that. The offsets
+         * come from a render, and a render can be a moment behind the editor - after a
+         * keystroke, before the preview debounce catches up. Writing to a stale range
+         * would overwrite whatever had moved into it, which on a document is not a bug
+         * you notice until much later.
+         */
+        public void commitBlock(int start, int end, String original, String value) {
+            DocumentView document = activeDocument();
+            if (document == null) {
+                return;
+            }
+            String source = document.getEditor().getText();
+            if (start < 0 || end > source.length() || start >= end
+                    || !source.substring(start, end).equals(original)) {
+                Platform.runLater(() -> {
+                    updatePreview();
+                    setTransientStatus("The document changed while that block was open; "
+                            + "the edit was not applied.");
+                });
+                return;
+            }
+            // contenteditable can leave a trailing newline behind that was never typed,
+            // and it would show up as a spurious blank line in the source.
+            String cleaned = value.replace("\r\n", "\n").replace("\r", "\n");
+            while (cleaned.endsWith("\n")) {
+                cleaned = cleaned.substring(0, cleaned.length() - 1);
+            }
+            String replacement = cleaned;
+            Platform.runLater(() -> {
+                applyEdit(document, new SourceEdits.Edit(
+                        start, end, replacement, start, start + replacement.length()));
+                setTransientStatus("Block updated.");
+            });
+        }
     }
 
     /**
@@ -2422,6 +2474,29 @@ public class MainController {
             /* A cell under edit shows raw Markdown, so it gets the mono face - the
                change of typeface is itself the signal that this is the source now and
                not the rendered form. */
+            /* A block under edit shows its raw Markdown, same signal as a cell: the
+               mono face and the accent frame say "this is the source now". */
+            .mdv-block-editing {
+              background:var(--accent-soft);
+              outline:2px solid var(--accent); outline-offset:2px;
+              border-radius:4px;
+              padding:0;
+            }
+            /* A heading's ::after draws an accent bar; under an open editor it reads as
+               part of the text being edited. */
+            h1.mdv-block-editing::after { display:none; }
+            /* The editor inherits nothing from the block it replaces - a heading's
+               display face at 2.3rem is not what raw Markdown should be typed in. */
+            textarea.mdv-block-editor {
+              display:block; width:100%; box-sizing:border-box;
+              margin:0; padding:6px 8px;
+              border:0; outline:none; resize:none; overflow:hidden;
+              background:transparent; color:var(--ink);
+              font-family:var(--mono); font-size:13.5px; line-height:1.6;
+              font-weight:400; font-style:normal; letter-spacing:0;
+              text-align:left;
+            }
+
             td.mdv-cell-editing, th.mdv-cell-editing {
               font-family:var(--mono); font-size:.92em;
               background:var(--accent-soft);
@@ -2619,6 +2694,12 @@ public class MainController {
                  element that no longer exists. */
               window.__mdSelectedImage = '';
               window.__mdCodeBlock = '';
+              /* The elements these pointed at have just been destroyed. Leaving them set
+                 leaves the "already editing" guard permanently true, and every later
+                 double-click is silently refused - which looks exactly like the feature
+                 not working at all. */
+              window.__mdEditingCell = null;
+              window.__mdEditingBlock = null;
               window.__mdRunMermaid();
               window.__mdHighlight();
             };
@@ -2805,8 +2886,117 @@ public class MainController {
               }
               if (cell && (cell.tagName === 'TD' || cell.tagName === 'TH')) {
                 mdBeginCellEdit(cell);
+                return;
               }
+              mdBeginBlockEdit(event.target);
             });
+
+            /* ---- editing any other block in place -------------------------------
+               The same idea as a table cell, and simpler: every rendered block already
+               carries the offsets of the Markdown it came from, so the edit is a
+               straight replacement of that range. No re-serialising, because unlike a
+               table there is no structure to rebuild.
+
+               What is offered is again the source. A paragraph containing **bold**
+               shows its asterisks while being edited - which is the point, since it is
+               the only way to change them from here. */
+            var MD_EDITABLE_TAGS = {
+              P: 1, H1: 1, H2: 1, H3: 1, H4: 1, H5: 1, H6: 1, LI: 1, BLOCKQUOTE: 1
+            };
+            window.__mdEditingBlock = null;
+
+            function mdEditableBlock(node) {
+              var el = node && node.nodeType === 1 ? node : (node ? node.parentElement : null);
+              while (el && el !== document.body) {
+                /* A table is edited cell by cell and a diagram is not text at all;
+                   either would be destroyed by a whole-block replacement. */
+                if (el.tagName === 'TABLE' || el.tagName === 'TD' || el.tagName === 'TH'
+                    || (el.classList && (el.classList.contains('mdv-diagram')
+                        || el.classList.contains('mermaid')))) {
+                  return null;
+                }
+                if (el.getAttribute && el.getAttribute('data-md-start')
+                    && (MD_EDITABLE_TAGS[el.tagName]
+                        || (el.classList && el.classList.contains('mdv-code')))) {
+                  return el;
+                }
+                el = el.parentElement;
+              }
+              return null;
+            }
+
+            /* A real textarea, not contenteditable.
+
+               contenteditable stores line breaks as elements, so reading the value back
+               means asking innerText what the layout looked like - and for a block whose
+               CSS does not preserve whitespace that answer has the newlines replaced by
+               spaces. A fenced code block round-tripped through that comes back as one
+               line, which Markdown then reads as a paragraph with inline code in it: the
+               block silently stops being a block. A textarea has a value, and the value
+               is exactly what was typed. */
+            function mdAutosize(area) {
+              area.style.height = 'auto';
+              area.style.height = (area.scrollHeight + 2) + 'px';
+            }
+
+            function mdBeginBlockEdit(target) {
+              if (!window.mdvBridge || window.__mdEditingCell || window.__mdEditingBlock) {
+                return;
+              }
+              var block = mdEditableBlock(target);
+              if (!block) { return; }
+              var start = parseInt(block.getAttribute('data-md-start'), 10);
+              var end = parseInt(block.getAttribute('data-md-end'), 10);
+              var markdown = window.mdvBridge.blockSource(start, end);
+              if (markdown === null || markdown === undefined) { return; }
+
+              var area = document.createElement('textarea');
+              area.className = 'mdv-block-editor';
+              area.value = markdown;
+              area.setAttribute('spellcheck', 'false');
+              block.setAttribute('data-mdv-original', markdown);
+              block.innerHTML = '';
+              block.appendChild(area);
+              block.classList.add('mdv-block-editing');
+              window.__mdEditingBlock = block;
+
+              area.addEventListener('input', function () { mdAutosize(area); });
+              area.addEventListener('blur', function () { mdEndBlockEdit(block, true); });
+              area.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  mdEndBlockEdit(block, false);
+                } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                  /* Enter alone inserts a line break, because a Markdown block is allowed
+                     to span lines and breaking one is an ordinary edit. Ctrl+Enter
+                     commits, as does clicking away. */
+                  event.preventDefault();
+                  mdEndBlockEdit(block, true);
+                }
+              });
+
+              mdAutosize(area);
+              area.focus();
+              area.select();
+            }
+
+            function mdEndBlockEdit(block, commit) {
+              if (window.__mdEditingBlock !== block) { return; }
+              window.__mdEditingBlock = null;
+              block.classList.remove('mdv-block-editing');
+              var area = block.querySelector('textarea.mdv-block-editor');
+              var value = area ? area.value : null;
+              var original = block.getAttribute('data-mdv-original');
+              block.removeAttribute('data-mdv-original');
+              var start = parseInt(block.getAttribute('data-md-start'), 10);
+              var end = parseInt(block.getAttribute('data-md-end'), 10);
+              if (!window.mdvBridge) { return; }
+              if (!commit || value === null || value === original) {
+                window.mdvBridge.cancelCell();
+                return;
+              }
+              window.mdvBridge.commitBlock(start, end, original, value);
+            }
 
             document.addEventListener('keydown', function (event) {
               var cell = window.__mdEditingCell;
