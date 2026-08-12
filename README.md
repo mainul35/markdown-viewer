@@ -179,6 +179,21 @@ rather than the module path.
   preview's own rather than a borrowed highlight.js theme, which would bring its own
   background and fight the plate it sits in.
 
+- **Editing from the preview:** double-click almost anything — a paragraph, a heading,
+  a list item, a block quote, a fenced code block — to edit it in place. Click away or
+  press **Ctrl+Enter** to commit, **Escape** to cancel. Enter alone inserts a line break,
+  because a Markdown block is allowed to span lines.
+
+  What opens is a plain text editor holding that block's **Markdown**, so a paragraph
+  shows its `**asterisks**` and a list item shows its `-` marker. That is the only way to
+  change them from here — and it means deleting a list marker really does de-list the
+  item, which Ctrl+Z undoes like any other edit. Tables are the exception: they are
+  edited cell by cell, and diagrams are skipped entirely.
+
+  A block is only written back if the document still holds exactly what the editor was
+  handed. The offsets come from a render, a render can be a moment behind the editor, and
+  writing to a range that has moved would overwrite whatever slid into it.
+
 - **Editing a table from the preview:** double-click any cell to edit it in place.
   Enter or Tab commits, Escape cancels, and clicking away commits.
 
