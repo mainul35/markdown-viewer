@@ -139,6 +139,12 @@ rather than the module path.
   alone, the keystroke reaches a focused text area as a typed backspace and deletes a
   character instead of opening the bar.
 
+  A match is highlighted in amber while the bar is open. A match is shown by selecting it,
+  so it shares `-fx-highlight-fill` with ordinary selection — and that is deliberately a
+  pale tint, since it sits under text being read for an hour at a time. The editor is
+  marked while searching so the two can be coloured separately: amber rather than the teal
+  accent, so a hit is never mistaken for something you selected yourself.
+
 - **Design:** A "drafting plate" aesthetic for long architecture documents. Cool vellum
   background, blueprint-teal accents, Sitka for headings against Segoe UI body text. Tables
   wrap text instead of scrolling sideways. Fenced code blocks are labelled plates; diagrams

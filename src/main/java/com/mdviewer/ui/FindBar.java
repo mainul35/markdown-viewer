@@ -35,6 +35,17 @@ public final class FindBar extends VBox {
     private TextArea target;
     private Runnable onClose = () -> { };
 
+    /**
+     * Marks the editor while the bar is open, so a match can be highlighted more strongly
+     * than an ordinary selection.
+     *
+     * <p>A match is shown by selecting it, so both share {@code -fx-highlight-fill}. The
+     * editor's selection is deliberately a pale tint - it sits under text being read for
+     * an hour at a time - and at that strength a search hit is almost invisible. The class
+     * lets the two be coloured differently without giving every selection the louder one.
+     */
+    private static final String SEARCHING_CLASS = "searching";
+
     public FindBar() {
         getStyleClass().add("find-bar");
         setVisible(false);
@@ -120,8 +131,21 @@ public final class FindBar extends VBox {
 
     /** Points the bar at the editor of the active document. */
     public void setTarget(TextArea target) {
+        // The old editor keeps the class otherwise, and stays loud after a tab switch.
+        markSearching(this.target, false);
         this.target = target;
+        markSearching(target, isVisible());
         updateMatchCount();
+    }
+
+    private static void markSearching(TextArea editor, boolean searching) {
+        if (editor == null) {
+            return;
+        }
+        editor.getStyleClass().remove(SEARCHING_CLASS);
+        if (searching) {
+            editor.getStyleClass().add(SEARCHING_CLASS);
+        }
     }
 
     public TextField getFindField() {
@@ -141,6 +165,7 @@ public final class FindBar extends VBox {
         replaceRow.setManaged(withReplace);
         setVisible(true);
         setManaged(true);
+        markSearching(target, true);
 
         if (target != null) {
             String selection = target.getSelectedText();
@@ -156,6 +181,7 @@ public final class FindBar extends VBox {
     public void hideBar() {
         setVisible(false);
         setManaged(false);
+        markSearching(target, false);
         if (target != null) {
             target.requestFocus();
         }
