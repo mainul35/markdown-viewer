@@ -179,6 +179,21 @@ rather than the module path.
   preview's own rather than a borrowed highlight.js theme, which would bring its own
   background and fight the plate it sits in.
 
+- **Editing a table from the preview:** double-click any cell to edit it in place.
+  Enter or Tab commits, Escape cancels, and clicking away commits.
+
+  What appears for editing is the cell's **Markdown**, not the rendered text. A cell
+  showing styled code is `` `like this` `` in the source, and offering the rendered form
+  back would drop the backticks the moment it was saved — so an editing cell switches to
+  the mono face to show it is the source you are looking at.
+
+  Committing rewrites only that table, and **re-aligns its pipes** on the way out, which
+  is the other half of the problem: a hand-written table is usually ragged, and a ragged
+  table is very hard to read in the raw editor. A pasted `|` is escaped and a pasted
+  newline becomes a space, because either would otherwise end the table it was pasted
+  into. Column alignment (`:---`, `:---:`, `---:`) is preserved. Double-click rather than
+  single, since a table is read far more often than it is edited.
+
 - **Table designer:** the table button on the preview toolbar opens a size picker.
   Drag across the grid for the usual small table, or type exact numbers for one bigger
   than the grid offers — up to 100 x 30. Sizes count the header row, so 3 x 4 is a

@@ -1,5 +1,7 @@
 package com.mdviewer.service;
 
+import org.commonmark.ext.gfm.tables.TableCell;
+import org.commonmark.ext.gfm.tables.TableHead;
 import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.commonmark.node.AbstractVisitor;
 import org.commonmark.node.Code;
@@ -217,6 +219,17 @@ public final class MarkdownService {
 
         @Override
         public void setAttributes(Node node, String tagName, Map<String, String> attributes) {
+            if (node instanceof TableCell cell) {
+                // Cells are addressed by position, not by source span: the tables
+                // extension does not record spans for them, and position is what the
+                // preview can report back anyway.
+                int column = indexAmongSiblings(cell);
+                Node row = cell.getParent();
+                if (row != null) {
+                    attributes.put("data-mdv-col", String.valueOf(column));
+                    attributes.put("data-mdv-row", String.valueOf(rowIndex(row)));
+                }
+            }
             List<SourceSpan> spans = node.getSourceSpans();
             if (spans.isEmpty()) {
                 return;
@@ -230,6 +243,24 @@ public final class MarkdownService {
             }
             attributes.put("data-md-start", String.valueOf(start));
             attributes.put("data-md-end", String.valueOf(Math.min(end, sourceLength)));
+        }
+
+        private static int indexAmongSiblings(Node node) {
+            int index = 0;
+            for (Node sibling = node.getPrevious(); sibling != null;
+                 sibling = sibling.getPrevious()) {
+                index++;
+            }
+            return index;
+        }
+
+        /** Header row is 0 and body rows follow it, which is how the table reads. */
+        private static int rowIndex(Node row) {
+            Node section = row.getParent();
+            if (section instanceof TableHead) {
+                return 0;
+            }
+            return 1 + indexAmongSiblings(row);
         }
     }
 

@@ -31,6 +31,7 @@ import com.mdviewer.service.DiagramService;
 import com.mdviewer.service.ImageRef;
 import com.mdviewer.service.MarkdownService;
 import com.mdviewer.service.SourceEdits;
+import com.mdviewer.service.TableSource;
 import com.mdviewer.service.Trash;
 import com.mdviewer.ui.DocumentView;
 import com.mdviewer.ui.FileTreePanel;
@@ -1838,6 +1839,7 @@ public class MainController {
             if (newState == Worker.State.SUCCEEDED) {
                 injectMermaid();
                 injectHighlighter();
+                installBridge();
                 previewReady = true;
                 applyPreviewTheme();
                 applyPreviewHtml(currentPreviewHtml);
@@ -2065,6 +2067,107 @@ public class MainController {
         } catch (IOException | RuntimeException e) {
             System.err.println("MDViewer: highlight.js unavailable - " + e);
         }
+    }
+
+    /**
+     * The object the preview page calls back into, held in a field on purpose.
+     *
+     * <p>A {@code JSObject.setMember} target is only weakly reachable from the page, so a
+     * bridge that exists just as an argument is collected at the next GC and every call
+     * from the page silently stops working - typically minutes later, which makes it look
+     * like an intermittent bug rather than a lifetime one.
+     */
+    private final PreviewBridge previewBridge = new PreviewBridge();
+
+    private void installBridge() {
+        try {
+            netscape.javascript.JSObject window =
+                    (netscape.javascript.JSObject) webView.getEngine().executeScript("window");
+            window.setMember("mdvBridge", previewBridge);
+        } catch (RuntimeException e) {
+            System.err.println("MDViewer: preview bridge unavailable - " + e);
+        }
+    }
+
+    /**
+     * Called from the preview page's JavaScript. Public because the WebView needs to
+     * reflect on it.
+     *
+     * <p>Every method here runs on the FX thread - JavaFX evaluates page script there -
+     * so the controller can be touched directly. Re-rendering, though, is deferred: these
+     * calls arrive from inside a DOM event handler on an element that a re-render would
+     * destroy underneath it.
+     */
+    public final class PreviewBridge {
+
+        /** The Markdown of one table cell, so the reader edits what is really there. */
+        public String cellSource(int tableStart, int row, int column) {
+            DocumentView document = activeDocument();
+            if (document == null) {
+                return null;
+            }
+            String tableText = tableTextAt(document.getEditor().getText(), tableStart);
+            return tableText == null ? null : TableSource.cell(tableText, row, column);
+        }
+
+        public void commitCell(int tableStart, int row, int column, String value) {
+            DocumentView document = activeDocument();
+            if (document == null) {
+                return;
+            }
+            String source = document.getEditor().getText();
+            String tableText = tableTextAt(source, tableStart);
+            if (tableText == null) {
+                Platform.runLater(() -> updatePreview());
+                return;
+            }
+            String rewritten = TableSource.withCell(tableText, row, column, value);
+            if (rewritten == null) {
+                Platform.runLater(() -> updatePreview());
+                return;
+            }
+            int end = tableStart + tableText.length();
+            Platform.runLater(() -> {
+                applyEdit(document, new SourceEdits.Edit(
+                        tableStart, end, rewritten, tableStart, tableStart));
+                setTransientStatus("Table cell updated.");
+            });
+        }
+
+        /** Puts a cell back to its rendered form after an edit that changed nothing. */
+        public void cancelCell() {
+            Platform.runLater(() -> updatePreview());
+        }
+    }
+
+    /**
+     * The table's text starting at {@code start}, up to the first blank line.
+     *
+     * <p>Recovered from the source rather than trusted from the page: the offset comes
+     * from the rendered document, which may be a render behind the editor if something
+     * else changed the text in between.
+     */
+    private static String tableTextAt(String source, int start) {
+        if (start < 0 || start >= source.length()) {
+            return null;
+        }
+        int end = start;
+        while (end < source.length()) {
+            int lineEnd = SourceEdits.lineEnd(source, end);
+            if (source.substring(end, lineEnd).isBlank()) {
+                break;
+            }
+            end = lineEnd;
+            if (end >= source.length()) {
+                break;
+            }
+            end++; // step over the newline
+        }
+        String text = source.substring(start, Math.min(end, source.length()));
+        while (text.endsWith("\n") || text.endsWith("\r")) {
+            text = text.substring(0, text.length() - 1);
+        }
+        return TableSource.parse(text) == null ? null : text;
     }
 
     private void injectMermaid() {
@@ -2316,6 +2419,15 @@ public class MainController {
                for a document anyway - a column you have to scroll to read is a column you
                will not read - but an unbroken URL still has to be allowed to break. */
             th, td { overflow-wrap:break-word; word-break:break-word; }
+            /* A cell under edit shows raw Markdown, so it gets the mono face - the
+               change of typeface is itself the signal that this is the source now and
+               not the rendered form. */
+            td.mdv-cell-editing, th.mdv-cell-editing {
+              font-family:var(--mono); font-size:.92em;
+              background:var(--accent-soft);
+              outline:2px solid var(--accent); outline-offset:-2px;
+              white-space:pre-wrap;
+            }
             th,td { padding:9px 15px; border-bottom:1px solid var(--rule); text-align:left; }
             thead th {
               background:var(--stripe); color:var(--ink-soft);
@@ -2621,6 +2733,103 @@ public class MainController {
               }
             });
             window.__mdCodeInfo = function () { return window.__mdCodeBlock; };
+
+            /* ---- editing a table cell in place ----------------------------------
+               Double-click, not single: a table is read far more often than it is
+               edited, and a single click would put a caret in a cell every time
+               someone went to select a value out of one.
+
+               What appears for editing is the cell's Markdown, fetched from the
+               document rather than taken from the rendered cell. A cell showing
+               styled code is `like this` in the source, and handing back what the
+               screen shows would drop the backticks the moment it was saved. */
+            window.__mdEditingCell = null;
+
+            function mdCellCoords(cell) {
+              var table = cell;
+              while (table && table.tagName !== 'TABLE') { table = table.parentElement; }
+              if (!table || !table.getAttribute('data-md-start')) { return null; }
+              var row = cell.getAttribute('data-mdv-row');
+              var col = cell.getAttribute('data-mdv-col');
+              if (row === null || col === null) { return null; }
+              return {
+                table: parseInt(table.getAttribute('data-md-start'), 10),
+                row: parseInt(row, 10),
+                col: parseInt(col, 10)
+              };
+            }
+
+            function mdBeginCellEdit(cell) {
+              if (!window.mdvBridge || window.__mdEditingCell) { return; }
+              var at = mdCellCoords(cell);
+              if (!at) { return; }
+              var markdown = window.mdvBridge.cellSource(at.table, at.row, at.col);
+              if (markdown === null || markdown === undefined) { return; }
+              cell.setAttribute('data-mdv-original', markdown);
+              cell.textContent = markdown;
+              cell.setAttribute('contenteditable', 'true');
+              cell.classList.add('mdv-cell-editing');
+              window.__mdEditingCell = cell;
+              cell.focus();
+              var range = document.createRange();
+              range.selectNodeContents(cell);
+              var sel = window.getSelection();
+              sel.removeAllRanges();
+              sel.addRange(range);
+            }
+
+            function mdEndCellEdit(cell, commit) {
+              if (window.__mdEditingCell !== cell) { return; }
+              window.__mdEditingCell = null;
+              cell.removeAttribute('contenteditable');
+              cell.classList.remove('mdv-cell-editing');
+              var value = cell.textContent;
+              var original = cell.getAttribute('data-mdv-original');
+              cell.removeAttribute('data-mdv-original');
+              var at = mdCellCoords(cell);
+              if (!at || !window.mdvBridge) { return; }
+              if (!commit || value === original) {
+                /* Nothing changed, so nothing is written - but the cell is showing raw
+                   Markdown right now and has to be put back to its rendered self. */
+                window.mdvBridge.cancelCell();
+                return;
+              }
+              window.mdvBridge.commitCell(at.table, at.row, at.col, value);
+            }
+
+            document.addEventListener('dblclick', function (event) {
+              var cell = event.target;
+              while (cell && cell !== document.body
+                     && cell.tagName !== 'TD' && cell.tagName !== 'TH') {
+                cell = cell.parentElement;
+              }
+              if (cell && (cell.tagName === 'TD' || cell.tagName === 'TH')) {
+                mdBeginCellEdit(cell);
+              }
+            });
+
+            document.addEventListener('keydown', function (event) {
+              var cell = window.__mdEditingCell;
+              if (!cell) { return; }
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                mdEndCellEdit(cell, true);
+              } else if (event.key === 'Escape') {
+                event.preventDefault();
+                mdEndCellEdit(cell, false);
+              } else if (event.key === 'Tab') {
+                /* Tab would move focus out of the page entirely; committing first is
+                   what makes filling a row in feel like a table rather than a form. */
+                event.preventDefault();
+                mdEndCellEdit(cell, true);
+              }
+            }, true);
+
+            document.addEventListener('focusout', function (event) {
+              if (window.__mdEditingCell && event.target === window.__mdEditingCell) {
+                mdEndCellEdit(event.target, true);
+              }
+            }, true);
             """;
 
         return "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>"
