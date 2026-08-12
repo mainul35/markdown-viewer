@@ -1094,6 +1094,7 @@ public class MainController {
                 formatItem("Italic", PreviewToolbar.Action.ITALIC),
                 formatItem("Strikethrough", PreviewToolbar.Action.STRIKETHROUGH),
                 formatItem("Inline code", PreviewToolbar.Action.CODE),
+                formatItem("Code block", PreviewToolbar.Action.CODE_BLOCK),
                 new SeparatorMenuItem(),
                 formatItem("Heading 1", PreviewToolbar.Action.HEADING_1),
                 formatItem("Heading 2", PreviewToolbar.Action.HEADING_2),
@@ -1300,7 +1301,8 @@ public class MainController {
                 // Fall through to the editor selection.
             }
             setTransientStatus("That selection spans formatting, so it could not be matched "
-                    + "in the source. Select it in the editor instead.");
+                    + "in the source. Use Code block for a whole paragraph, or select it "
+                    + "in the editor.");
             return null;
         }
 
@@ -1394,7 +1396,8 @@ public class MainController {
 
         // Whole-line operations resolve differently from inline ones; see resolveBlockRange.
         boolean lineOperation = switch (action) {
-            case HEADING_1, HEADING_2, HEADING_3, BULLET_LIST, ORDERED_LIST, QUOTE -> true;
+            case HEADING_1, HEADING_2, HEADING_3, BULLET_LIST, ORDERED_LIST, QUOTE,
+                 CODE_BLOCK -> true;
             default -> false;
         };
         SourceRange range = lineOperation ? resolveBlockRange() : resolveTargetRange();
@@ -1403,13 +1406,23 @@ public class MainController {
         }
         String source = document.getEditor().getText();
 
-        /* Code is two operations behind one button. A word becomes `inline code`; a
-           selection that crosses a line boundary becomes a fenced block, because that is
-           what the user is pointing at - backticks opened mid-paragraph are not a code
-           block, they are backticks. The line boundary is the signal: nothing you would
-           want as inline code spans lines. */
+        /* Inline code upgrades itself when the selection crosses a line: backticks opened
+           mid-paragraph are not a code block, they are backticks, and nothing you would
+           want as inline code spans lines.
+
+           That upgrade can only fire for a selection that was matchable back to the
+           source. A preview selection covering a paragraph containing **bold** or `code`
+           is not - resolveTargetRange gives up long before reaching here, because the
+           rendered text no longer contains the markers the source does. Which is exactly
+           why Code block is its own button: it resolves the enclosing block instead of
+           matching text, so formatting inside the paragraph is irrelevant to it. */
         if (action == PreviewToolbar.Action.CODE
                 && source.substring(range.start(), range.end()).contains("\n")) {
+            applyEdit(document, SourceEdits.toggleFencedCode(
+                    source, range.start(), range.end(), ""));
+            return;
+        }
+        if (action == PreviewToolbar.Action.CODE_BLOCK) {
             applyEdit(document, SourceEdits.toggleFencedCode(
                     source, range.start(), range.end(), ""));
             return;

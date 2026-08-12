@@ -32,7 +32,7 @@ public final class PreviewToolbar extends HBox {
 
     /** What the toolbar asks the controller to do; the controller owns the source edit. */
     public enum Action {
-        BOLD, ITALIC, STRIKETHROUGH, CODE,
+        BOLD, ITALIC, STRIKETHROUGH, CODE, CODE_BLOCK,
         HEADING_1, HEADING_2, HEADING_3,
         BULLET_LIST, ORDERED_LIST, QUOTE, LINK,
         IMAGE_INSERT,
@@ -56,6 +56,7 @@ public final class PreviewToolbar extends HBox {
                 letterButton("I", "Italic", "toolbar-italic", Action.ITALIC),
                 letterButton("S", "Strikethrough", "toolbar-strike", Action.STRIKETHROUGH),
                 iconButton(codeIcon(), "Inline code", Action.CODE),
+                iconButton(codeBlockIcon(), "Code block", Action.CODE_BLOCK),
                 divider(),
                 letterButton("H1", "Heading 1", "toolbar-heading", Action.HEADING_1),
                 letterButton("H2", "Heading 2", "toolbar-heading", Action.HEADING_2),
@@ -216,6 +217,15 @@ public final class PreviewToolbar extends HBox {
         Rectangle out = new Rectangle(3, 8, 8, 4.5);
         out.getStyleClass().add("toolbar-icon-fill");
         return icon(body, paper, out);
+    }
+
+    /** The inline icon inside a plate: the same idea, applied to a whole block. */
+    private static Group codeBlockIcon() {
+        Rectangle frame = new Rectangle(0, 1, 14, 11);
+        frame.getStyleClass().add("toolbar-icon-stroke");
+        frame.setFill(javafx.scene.paint.Color.TRANSPARENT);
+        return icon(frame, stroke(5.5, 4, 3.5, 6.5), stroke(3.5, 6.5, 5.5, 9),
+                stroke(8.5, 4, 10.5, 6.5), stroke(10.5, 6.5, 8.5, 9));
     }
 
     private static Group codeIcon() {
