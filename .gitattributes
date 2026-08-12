@@ -1,0 +1,19 @@
+# Windows batch files must check out with CRLF endings. cmd.exe mishandles LF-only
+# batch files around parenthesised blocks such as `if errorlevel 1 (`, and the symptom
+# is not a parse error - run.bat simply exits 1 having printed nothing at all.
+#
+# core.autocrlf is `input` on this machine, which normalises to LF on commit and does
+# not convert back on checkout, so without this a fresh clone gets broken scripts.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Shell scripts are the mirror image: LF, whatever the platform.
+*.sh text eol=lf
+
+*.java text
+*.md text
+*.css text
+*.js text
+*.xml text
+*.fxml text
+*.ps1 text
