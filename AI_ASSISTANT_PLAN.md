@@ -28,30 +28,38 @@ Two consequences fall straight out of that:
 
 ---
 
-## 2. Where the data goes — decide this first
+## 2. Where the data goes — decided
 
 This feature sends **the open document, and the contents of files it explores**, to a
 model endpoint. That is a materially different act from anything else in this app, which
-is otherwise entirely offline. It deserves to be designed rather than defaulted.
+is otherwise entirely offline, and the documents it is aimed at include infrastructure
+notes carrying internal addresses and SSH key paths.
 
-The documents this tool is used on include infrastructure notes carrying internal LAN
-addresses, Tailscale IPs, SSH key paths and admin credentials — the sort of content this
-project already refuses to send to an external PlantUML renderer, and the same reasoning
-applies with more force here.
+**Decided: two endpoints, both self-hosted.**
 
-**Proposed default: local endpoints only.** A remote host must be enabled explicitly, and
-the panel must say which host it is talking to, in the panel, at all times. Concretely:
+| Host | What it is | Probed |
+|---|---|---|
+| `litellm.mainul35.dev` | LiteLLM `v1.85.0` on **homelabai**, port 4000, OpenAI-compatible at `/v1/*` | `/health/liveliness` → 200; `/v1/models` → 401, needs a key |
+| `ai.mainul35.dev` | Open WebUI on **proxy-vm**, port 8880 | `/api/models` → 401, needs a bearer token |
 
-- `http://localhost:*` / `127.0.0.1` / a Tailscale address is allowed with no ceremony.
-- Anything else requires a per-endpoint opt-in recorded in the config file, and the
-  panel header shows the host name whenever it is not local.
-- A "never send" list of glob patterns per workspace, so a folder can be excluded from
-  exploration entirely.
+**homelabai also runs Ollama on 11434**, with `qwen3-coder:30b`,
+`qwen3-coder-planner`, `glm-4.7-flash`, `gemma4:31b` and others already pulled. That
+matters for §2: LiteLLM routed at a local Ollama model keeps a document on your own
+hardware end to end, which is the configuration to prefer for the private documents this
+tool is pointed at.
 
-This is the one decision I would not make unilaterally, because getting it wrong is not
-recoverable — see §8.
+So the rule is not "localhost only" but **an allowlist of hosts, defaulting to loopback
+plus those two**. Anything not on the list is refused outright rather than warned about,
+and the panel shows the host it is talking to at all times.
 
----
+One thing worth stating once: LiteLLM is a *proxy*. Whether a request stays on your
+infrastructure depends on which model it routes to — a local backend keeps it there, a
+hosted one does not. The app cannot see past the proxy, so that boundary is set in
+LiteLLM's own config, not here.
+
+**Keys are never handled by the app.** They are read from `~/.mdviewer/ai.properties` or
+an environment variable, put there by you. The app never prompts for one, never writes
+one, and never logs one.
 
 ## 3. Provider abstraction
 
@@ -74,17 +82,22 @@ JSON library for a handful of fields — the same call already made for the work
 history file. If request/response shapes grow, revisit and take a real JSON dependency
 rather than growing a parser.
 
-Config lives in `~/.mdviewer/ai.properties`:
+Config lives in `~/.mdviewer/ai.properties`, shipped with these defaults:
 
 ```properties
-provider.default          = ollama
-ollama.baseUrl            = http://localhost:11434/v1
-ollama.model              = qwen2.5-coder:14b
-ollama.apiKey             =
-openrouter.baseUrl        = https://openrouter.ai/api/v1
-openrouter.model          = ...
-openrouter.apiKey         = ${env:OPENROUTER_API_KEY}
-openrouter.allowRemote    = true
+provider.default    = litellm
+
+litellm.baseUrl     = https://litellm.mainul35.dev/v1
+litellm.model       = qwen3-coder:30b
+litellm.apiKey      = ${env:LITELLM_API_KEY}
+
+openwebui.baseUrl   = https://ai.mainul35.dev/api
+openwebui.model     = qwen3-coder:30b
+openwebui.apiKey    = ${env:OPENWEBUI_API_KEY}
+
+# Hosts this app is permitted to send document content to. Anything not listed is
+# refused before a request is built.
+allowedHosts        = localhost, 127.0.0.1, litellm.mainul35.dev, ai.mainul35.dev
 ```
 
 **Keys are read from the file or from an environment variable; the app never prompts for
@@ -157,21 +170,22 @@ is not a one-sitting feature and should not be attempted as one.
 
 ---
 
-## 8. Open questions — these change the design, not just the details
+## 8. Questions — answered
 
-1. **Local-only by default, with explicit opt-in for remote?** (§2) My recommendation is
-   yes. The alternative — any configured endpoint, no ceremony — is simpler and is what
-   most tools do, but it means one mis-set base URL sends a homelab document with SSH
-   details to a third party, and there is no taking that back.
-2. **Which endpoint first?** Ollama on `localhost:11434` is the obvious phase-1 target and
-   needs no key at all. `ai.mainul35.dev` already runs Open WebUI on this network, which
-   may already expose an OpenAI-compatible endpoint worth pointing at.
-3. **Should the assistant read files the document does not reference?** Free exploration
-   of the workspace is more capable and much harder to reason about. Recommendation: no in
-   phase 2 — follow only what the document points at, which is also what makes "check the
-   claims against their sources" a well-defined job.
-
----
+1. **Which endpoints?** `litellm.mainul35.dev` and `ai.mainul35.dev`, both self-hosted.
+   LiteLLM is the primary target: it is OpenAI-compatible at `/v1/chat/completions`, so
+   it needs no special-casing at all. Open WebUI speaks a near-identical shape under
+   `/api/`.
+2. **Trust boundary?** An allowlist rather than localhost-only, since both chosen hosts
+   are remote. Loopback plus those two by default; anything else refused (§2).
+3. **May it read files the document does not reference?** No. It follows only what the
+   document points at — which is what makes "check the claims against their sources" a
+   well-defined job rather than open-ended exploration.
+4. **What if a referenced file is outside every open workspace?** It is **not read**.
+   The panel lists it as unavailable and asks you to add its workspace or paste the
+   relevant content. Silently reading it would put the app outside the boundary the
+   workspace list defines; silently ignoring it would let the model "verify" a claim
+   against a source it never saw, which is worse than not checking at all.
 
 ## 9. Risks
 
