@@ -4,11 +4,16 @@ import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.Dialog;
+import javafx.scene.control.PasswordField;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextArea;
 import javafx.scene.input.KeyCode;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -101,9 +106,11 @@ public final class AiPanel extends VBox {
         });
         Button test = new Button("Test connection");
         test.setOnAction(e -> testConnection());
+        Button key = new Button("API key...");
+        key.setOnAction(e -> promptForKey());
         Region footerSpacer = new Region();
         HBox.setHgrow(footerSpacer, Priority.ALWAYS);
-        HBox buttons = new HBox(6, clear, test, footerSpacer, send);
+        HBox buttons = new HBox(6, clear, key, test, footerSpacer, send);
         buttons.setAlignment(Pos.CENTER_RIGHT);
 
         status.getStyleClass().add("ai-status");
@@ -139,7 +146,8 @@ public final class AiPanel extends VBox {
         }
         boolean allowed = config.isAllowed(endpoint.baseUrl());
         hostLabel.setText((allowed ? "sends to  " : "NOT ALLOWED  ")
-                + endpoint.host() + "   ·   " + endpoint.model());
+                + endpoint.host() + "   ·   " + endpoint.model()
+                + (endpoint.apiKey().isBlank() ? "   ·   no key set" : ""));
         hostLabel.getStyleClass().setAll("ai-host", allowed ? "ai-host-ok" : "ai-host-bad");
     }
 
@@ -190,6 +198,76 @@ public final class AiPanel extends VBox {
         }, "ai-chat");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * Asks for the API key for the selected provider.
+     *
+     * <p>A {@link PasswordField}, so it is not shown on screen or left in a transcript,
+     * and it is never echoed back into the status line either. By default the key is kept
+     * in memory for this session only: typing one into a window should not write it to
+     * disk as a side effect. Saving it is a separate tick-box, because that is a different
+     * decision with different consequences.
+     */
+    private void promptForKey() {
+        AiConfig.Endpoint endpoint = currentEndpoint();
+        if (endpoint == null) {
+            setStatus("Choose a provider first.");
+            return;
+        }
+        PasswordField field = new PasswordField();
+        field.setPromptText("Paste the key for " + endpoint.name());
+        field.setPrefColumnCount(34);
+        CheckBox remember = new CheckBox("Save it in " + config.getFile().getFileName()
+                + " so it survives a restart");
+
+        GridPane form = new GridPane();
+        form.setHgap(8);
+        form.setVgap(10);
+        form.setPadding(new Insets(14));
+        form.add(new Label("Key for " + endpoint.name()
+                + "  (" + endpoint.host() + ")"), 0, 0);
+        form.add(field, 0, 1);
+        form.add(remember, 0, 2);
+        Label note = new Label("Left unticked, the key is kept in memory for this session "
+                + "only and nothing is written to disk.");
+        note.setWrapText(true);
+        note.setMaxWidth(360);
+        note.getStyleClass().add("ai-status");
+        form.add(note, 0, 3);
+
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("API key");
+        dialog.initOwner(getScene() == null ? null : getScene().getWindow());
+        dialog.getDialogPane().setContent(form);
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        if (getScene() != null) {
+            dialog.getDialogPane().getStylesheets().setAll(getScene().getStylesheets());
+        }
+        Platform.runLater(field::requestFocus);
+
+        dialog.showAndWait().ifPresent(button -> {
+            if (button != ButtonType.OK) {
+                return;
+            }
+            String entered = field.getText();
+            if (entered == null || entered.isBlank()) {
+                config.setRuntimeKey(endpoint.name(), null);
+                setStatus("Key cleared for " + endpoint.name() + ".");
+                return;
+            }
+            config.setRuntimeKey(endpoint.name(), entered);
+            if (remember.isSelected()) {
+                boolean saved = config.saveKey(endpoint.name(), entered);
+                setStatus(saved
+                        ? "Key set and saved to " + config.getFile() + "."
+                        : "Key set for this session; it could not be written to "
+                                + config.getFile() + ".");
+            } else {
+                setStatus("Key set for this session.");
+            }
+            showHost();
+        });
     }
 
     /**

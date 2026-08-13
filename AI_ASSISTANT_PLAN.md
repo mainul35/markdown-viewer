@@ -57,9 +57,16 @@ infrastructure depends on which model it routes to — a local backend keeps it 
 hosted one does not. The app cannot see past the proxy, so that boundary is set in
 LiteLLM's own config, not here.
 
-**Keys are never handled by the app.** They are read from `~/.mdviewer/ai.properties` or
-an environment variable, put there by you. The app never prompts for one, never writes
-one, and never logs one.
+**Keys.** Three ways in, all of them yours to choose: the **API key...** button in the
+panel (a masked field, kept in memory for the session), an environment variable, or the
+config file. The runtime key wins over both, so a session key can override a stale saved
+one without editing anything.
+
+Entering a key writes nothing to disk. Saving it is a separate tick-box in the same
+dialog, because keeping a key for an hour and keeping it forever are different decisions.
+When saved, only that one line of the config file is rewritten — the comments, the
+allowlist and the other provider are left exactly as they were. The key is never echoed
+into the status line, the transcript, or a log.
 
 ## 3. Provider abstraction
 

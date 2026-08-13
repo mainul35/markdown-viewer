@@ -65,6 +65,14 @@ public final class AiConfig {
     }
 
     private final Properties properties = new Properties();
+    /**
+     * Keys entered in the app this session, by provider name.
+     *
+     * <p>Held in memory and consulted before the file or the environment. Typing a key
+     * into the window should not write it anywhere by itself - that is a separate,
+     * deliberate act - so by default it lives exactly as long as the app does.
+     */
+    private final java.util.Map<String, String> runtimeKeys = new java.util.HashMap<>();
     private final Path file;
 
     public AiConfig() {
@@ -104,10 +112,68 @@ public final class AiConfig {
     }
 
     public Endpoint endpoint(String name) {
+        String key = runtimeKeys.getOrDefault(name, value(name + ".apiKey"));
         return new Endpoint(name,
                 value(name + ".baseUrl"),
                 value(name + ".model"),
-                value(name + ".apiKey"));
+                key);
+    }
+
+    /** Uses {@code key} for this provider for the rest of the session. Writes nothing. */
+    public void setRuntimeKey(String provider, String key) {
+        if (provider == null || provider.isBlank()) {
+            return;
+        }
+        if (key == null || key.isBlank()) {
+            runtimeKeys.remove(provider);
+        } else {
+            runtimeKeys.put(provider, key.strip());
+        }
+    }
+
+    public boolean hasKey(String provider) {
+        return !endpoint(provider).apiKey().isBlank();
+    }
+
+    /**
+     * Writes a key into the config file, replacing that provider's line.
+     *
+     * <p>Only ever called because someone ticked the box asking for it. Rewrites the one
+     * line and leaves every other line - including the comments explaining the file -
+     * exactly as it was, so this cannot quietly reformat or drop anything.
+     *
+     * @return true if the file was updated
+     */
+    public boolean saveKey(String provider, String key) {
+        if (provider == null || provider.isBlank() || key == null || key.isBlank()) {
+            return false;
+        }
+        String property = provider + ".apiKey";
+        try {
+            List<String> lines = Files.exists(file)
+                    ? new ArrayList<>(Files.readAllLines(file, java.nio.charset.StandardCharsets.UTF_8))
+                    : new ArrayList<>();
+            boolean replaced = false;
+            for (int i = 0; i < lines.size(); i++) {
+                if (lines.get(i).strip().startsWith(property)) {
+                    lines.set(i, property + " = " + key.strip());
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                lines.add(property + " = " + key.strip());
+            }
+            Files.write(file, lines, java.nio.charset.StandardCharsets.UTF_8);
+            restrictToOwner();
+            properties.setProperty(property, key.strip());
+            return true;
+        } catch (IOException | RuntimeException e) {
+            // Deliberately does not include the exception's message in anything shown to
+            // the user, in case a path or value carrying the key ends up in it.
+            System.err.println("MDViewer: could not update the key in " + file);
+            return false;
+        }
     }
 
     /**
