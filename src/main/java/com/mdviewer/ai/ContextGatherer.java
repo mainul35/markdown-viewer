@@ -56,11 +56,13 @@ public final class ContextGatherer {
     private final int maxFiles;
 
     public ContextGatherer() {
-        this(240_000, 40_000, 80);
+        // Sized for a 32k-token window, which is what a local 30B model runs at
+        // here. See ai.properties for the arithmetic.
+        this(90_000, 40_000, 80);
     }
 
     public ContextGatherer(AiConfig config) {
-        this(config.intValue("context.totalChars", 240_000),
+        this(config.intValue("context.totalChars", 90_000),
                 config.intValue("context.perFileChars", 40_000),
                 config.intValue("context.maxFiles", 80));
     }

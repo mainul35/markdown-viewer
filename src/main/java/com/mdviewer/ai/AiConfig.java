@@ -51,12 +51,24 @@ public final class AiConfig {
             # documents this tool is used on are not all public.
             allowedHosts        = localhost, 127.0.0.1, litellm.mainul35.dev, ai.mainul35.dev
 
-            # How much of a codebase to send. The real ceiling is the model's context
-            # window, not this file: raise these past what the model accepts and a large
-            # project is refused by the endpoint instead of being truncated here.
-            # qwen3-coder:30b on Ollama defaults to about 32k tokens unless num_ctx is
-            # raised on the server, and 4 characters per token is a fair estimate.
-            context.totalChars   = 240000
+            # How much of a codebase to send.
+            #
+            # The ceiling is the model's context window, not this file. Sending more than
+            # the window holds does not get you more: the endpoint truncates or refuses,
+            # and which of the two happens is not something this app can see.
+            #
+            # Work it out from the window, at roughly 4 characters per token:
+            #
+            #   window                            32768 tokens
+            #   - the reply                       -3000
+            #   - these instructions               -500
+            #   - the open document               -3000   (about 2000 words)
+            #   = left for sources                26000 tokens  ~=  100000 characters
+            #
+            # 90000 leaves a margin for a longer document. Raise it only after raising
+            # OLLAMA_CONTEXT_LENGTH on the server, which costs GPU memory for the KV
+            # cache; lower it if replies start coming back truncated.
+            context.totalChars   = 90000
             context.perFileChars = 40000
             context.maxFiles     = 80
             """;
