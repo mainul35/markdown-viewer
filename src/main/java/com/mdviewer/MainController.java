@@ -34,6 +34,7 @@ import com.mdviewer.service.ImageRef;
 import com.mdviewer.service.MarkdownService;
 import com.mdviewer.service.SourceEdits;
 import com.mdviewer.service.TableSource;
+import com.mdviewer.service.WorkspaceHistory;
 import com.mdviewer.ai.AiConfig;
 import com.mdviewer.ai.AiPanel;
 import com.mdviewer.service.Trash;
@@ -100,6 +101,11 @@ public class MainController {
 
     @FXML
     private CheckMenuItem autoRefreshMenuItem;
+
+    @FXML
+    private Menu recentWorkspacesMenu;
+
+    private final WorkspaceHistory workspaceHistory = new WorkspaceHistory();
 
     /**
      * Re-reads the workspace tree on a timer. The explorer caches directory listings, so a
@@ -245,6 +251,12 @@ public class MainController {
             return workspace == null ? null : workspace.getRoot();
         });
 
+        /* Built when the menu opens rather than kept in step with every open and close.
+           A menu nobody is looking at does not need to be correct, and rebuilding on
+           demand means there is one place that can be wrong instead of several. */
+        recentWorkspacesMenu.setOnShowing(e -> rebuildRecentWorkspaces());
+        rebuildRecentWorkspaces();
+
         previewDebounce = new PauseTransition(Duration.millis(200));
         previewDebounce.setOnFinished(e -> updatePreview());
 
@@ -362,6 +374,11 @@ public class MainController {
         workspaces.add(workspace);
         workspaceTabs.getTabs().add(workspace.getTab());
         fileTreePanel.addWorkspaceRoot(normalized);
+        // Only a real folder is worth remembering; the scratch workspace holding unsaved
+        // documents has no root to return to.
+        if (normalized != null) {
+            workspaceHistory.record(normalized);
+        }
         return workspace;
     }
 
@@ -917,6 +934,72 @@ public class MainController {
     @FXML
     private void handleToggleExplorer() {
         showExplorer(!isExplorerVisible());
+    }
+
+    /**
+     * Rebuilds the Recent Workspaces menu from the history file.
+     *
+     * <p>Folders that are already open are shown but disabled rather than hidden: a
+     * workspace vanishing from the list the moment you open it makes the list look like it
+     * forgot, and the greyed entry is what tells you it is already there.
+     */
+    private void rebuildRecentWorkspaces() {
+        recentWorkspacesMenu.getItems().clear();
+        List<Path> recent = workspaceHistory.list();
+        if (recent.isEmpty()) {
+            MenuItem empty = new MenuItem("No recent workspaces");
+            empty.setDisable(true);
+            recentWorkspacesMenu.getItems().add(empty);
+            return;
+        }
+        for (Path root : recent) {
+            MenuItem item = new MenuItem(recentLabel(root));
+            item.setOnAction(e -> openRecentWorkspace(root));
+            boolean alreadyOpen = workspaces.stream()
+                    .anyMatch(w -> root.equals(w.getRoot()));
+            item.setDisable(alreadyOpen);
+            recentWorkspacesMenu.getItems().add(item);
+        }
+        MenuItem clear = new MenuItem("Clear Recent Workspaces");
+        clear.setOnAction(e -> {
+            workspaceHistory.clear();
+            rebuildRecentWorkspaces();
+            setTransientStatus("Recent workspaces cleared.");
+        });
+        recentWorkspacesMenu.getItems().addAll(new SeparatorMenuItem(), clear);
+    }
+
+    /**
+     * Folder name first, then where it is - "MDViewer  —  C:\\Users\\...\\codes".
+     *
+     * <p>Several checkouts of the same project are the normal case, so the name alone is
+     * ambiguous exactly when the list is most useful.
+     */
+    private static String recentLabel(Path root) {
+        Path name = root.getFileName();
+        Path parent = root.getParent();
+        if (name == null) {
+            return root.toString();
+        }
+        return parent == null ? name.toString() : name + "  \u2014  " + parent;
+    }
+
+    private void openRecentWorkspace(Path root) {
+        if (!Files.isDirectory(root)) {
+            // Gone since it was recorded: drop it rather than leaving a dead entry.
+            workspaceHistory.remove(root);
+            rebuildRecentWorkspaces();
+            setTransientStatus("That folder no longer exists - removed from recent workspaces.");
+            return;
+        }
+        WorkspaceView workspace = addWorkspace(root);
+        if (workspace == null) {
+            return; // addWorkspace already explained why, e.g. the workspace limit.
+        }
+        workspaceTabs.getSelectionModel().select(workspace.getTab());
+        fileTreePanel.addWorkspaceRoot(root);
+        onActiveDocumentChanged();
+        setTransientStatus("Opened workspace " + root.getFileName() + ".");
     }
 
     @FXML
