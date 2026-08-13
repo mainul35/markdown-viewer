@@ -240,6 +240,10 @@ public class MainController {
             DocumentView document = activeDocument();
             return document == null ? "an unsaved document" : document.getDisplayName();
         });
+        aiPanel.setWorkspaceRootSupplier(() -> {
+            WorkspaceView workspace = activeWorkspace();
+            return workspace == null ? null : workspace.getRoot();
+        });
 
         previewDebounce = new PauseTransition(Duration.millis(200));
         previewDebounce.setOnFinished(e -> updatePreview());
