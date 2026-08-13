@@ -509,3 +509,84 @@
     -fx-background-radius: 5;
     -fx-cursor: hand;
 }
+
+
+/* ------------------------------------------------------------- assistant */
+
+.ai-panel {
+    -fx-background-color: -mdv-surface-alt;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 0 0 1;
+}
+
+.ai-panel-header {
+    -fx-padding: 5 8 5 12;
+    -fx-min-height: 32;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 0 1 0;
+}
+
+.ai-panel-title {
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+/* Which machine is about to receive the document. On screen at all times, because
+   this is the only part of the app that sends anything anywhere. */
+.ai-host {
+    -fx-padding: 4 12 4 12;
+    -fx-font-size: 10.5px;
+}
+
+.ai-host-ok {
+    -fx-text-fill: -mdv-text-muted;
+}
+
+.ai-host-bad {
+    -fx-text-fill: #A23B2E;
+    -fx-font-weight: bold;
+}
+
+.ai-transcript-scroll,
+.ai-transcript-scroll .viewport {
+    -fx-background-color: -mdv-paper;
+}
+
+.ai-speaker {
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+.ai-bubble {
+    -fx-padding: 8 10 8 10;
+    -fx-background-radius: 7;
+    -fx-text-fill: -mdv-text;
+}
+
+.ai-user {
+    -fx-background-color: -mdv-accent-soft;
+}
+
+.ai-assistant {
+    -fx-background-color: -mdv-surface;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 7;
+}
+
+.ai-composer {
+    -fx-background-color: -mdv-surface-alt;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 1 0 0 0;
+}
+
+.ai-input {
+    -fx-font-size: 12.5px;
+}
+
+.ai-status {
+    -fx-font-size: 11px;
+    -fx-text-fill: -mdv-text-muted;
+}
