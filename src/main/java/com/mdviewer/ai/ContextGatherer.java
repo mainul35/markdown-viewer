@@ -42,17 +42,34 @@ public final class ContextGatherer {
         }
     }
 
+    private static final int MAX_TREE_ENTRIES = 800;
+
     /**
-     * Total characters of gathered context. Roughly 30k tokens, which leaves room for the
-     * document and the reply in a 64k window - the size the local models here run at.
+     * Budgets, from the config file so a bigger model can be given more.
+     *
+     * <p>Raising these past what the endpoint accepts does not help: the request is then
+     * refused by the model instead of being trimmed here, which is a worse failure. The
+     * panel reports what was skipped so the ceiling is visible rather than mysterious.
      */
-    private static final int TOTAL_BUDGET = 120_000;
+    private final int totalBudget;
+    private final int perFileBudget;
+    private final int maxFiles;
 
-    /** No single file may crowd out every other one. */
-    private static final int PER_FILE_BUDGET = 24_000;
+    public ContextGatherer() {
+        this(240_000, 40_000, 80);
+    }
 
-    private static final int MAX_FILES = 40;
-    private static final int MAX_TREE_ENTRIES = 400;
+    public ContextGatherer(AiConfig config) {
+        this(config.intValue("context.totalChars", 240_000),
+                config.intValue("context.perFileChars", 40_000),
+                config.intValue("context.maxFiles", 80));
+    }
+
+    public ContextGatherer(int totalBudget, int perFileBudget, int maxFiles) {
+        this.totalBudget = Math.max(1_000, totalBudget);
+        this.perFileBudget = Math.max(500, perFileBudget);
+        this.maxFiles = Math.max(1, maxFiles);
+    }
 
     /** Extensions worth sending. Anything else is named in the listing but not read. */
     private static final Set<String> TEXT_EXTENSIONS = Set.of(
@@ -90,14 +107,14 @@ public final class ContextGatherer {
                          boolean allowWeb) {
         List<Source> sources = new ArrayList<>();
         List<String> skipped = new ArrayList<>();
-        int[] budget = {TOTAL_BUDGET};
+        int[] budget = {totalBudget};
 
         for (Path path : absolutePathsIn(question)) {
-            readPath(path, sources, skipped, budget);
+            readPath(path, question, sources, skipped, budget);
         }
         if (workspaceRoot != null) {
             for (Path path : relativePathsIn(document, workspaceRoot)) {
-                readPath(path, sources, skipped, budget);
+                readPath(path, question, sources, skipped, budget);
             }
         }
         if (allowWeb) {
@@ -105,7 +122,7 @@ public final class ContextGatherer {
                 readUrl(url, sources, skipped, budget);
             }
         }
-        return new Result(sources, skipped, TOTAL_BUDGET - budget[0]);
+        return new Result(sources, skipped, totalBudget - budget[0]);
     }
 
     // ------------------------------------------------------------------ paths
@@ -166,9 +183,10 @@ public final class ContextGatherer {
         return paths;
     }
 
-    private void readPath(Path path, List<Source> sources, List<String> skipped, int[] budget) {
+    private void readPath(Path path, String question, List<Source> sources,
+                          List<String> skipped, int[] budget) {
         if (Files.isDirectory(path)) {
-            readDirectory(path, sources, skipped, budget);
+            readDirectory(path, question, sources, skipped, budget);
         } else if (Files.isRegularFile(path)) {
             readFile(path, path.toString(), sources, skipped, budget);
         }
@@ -181,8 +199,8 @@ public final class ContextGatherer {
      * project" is answerable from names alone and is the thing most often wanted. File
      * contents then fill whatever budget is left.
      */
-    private void readDirectory(Path root, List<Source> sources, List<String> skipped,
-                               int[] budget) {
+    private void readDirectory(Path root, String question, List<Source> sources,
+                               List<String> skipped, int[] budget) {
         List<Path> files = new ArrayList<>();
         StringBuilder tree = new StringBuilder();
         int[] counted = {0};
@@ -191,9 +209,15 @@ public final class ContextGatherer {
         sources.add(new Source(root + "  (listing)", tree.toString(), tree.length()));
         budget[0] -= tree.length();
 
+        // Ordered by how likely a file is to answer the question, because the budget
+        // always runs out on a real project and what it is spent on decides whether the
+        // answer is any good. Alphabetical order spends it on whatever starts with "a".
+        files.sort(java.util.Comparator.comparingInt(
+                (Path f) -> -relevance(f, root, question)));
+
         int read = 0;
         for (Path file : files) {
-            if (read >= MAX_FILES || budget[0] <= 0) {
+            if (read >= maxFiles || budget[0] <= 0) {
                 skipped.add((files.size() - read) + " more files under " + root.getFileName()
                         + " (budget reached)");
                 break;
@@ -202,6 +226,41 @@ public final class ContextGatherer {
                 read++;
             }
         }
+    }
+
+    /**
+     * How likely this file is to answer the question. Higher is read sooner.
+     *
+     * <p>Documentation first, because it says what a project is for; then anything the
+     * question actually named; then source over configuration. Crude, but the alternative
+     * is alphabetical, which is no signal at all.
+     */
+    private static int relevance(Path file, Path root, String question) {
+        String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
+        String relative = root.relativize(file).toString().toLowerCase(Locale.ROOT);
+        String asked = question == null ? "" : question.toLowerCase(Locale.ROOT);
+        int score = 0;
+        if (name.startsWith("readme")) {
+            score += 100;
+        }
+        if (name.endsWith(".md")) {
+            score += 40;
+        }
+        // A word from the question appearing in the path is the strongest signal there is.
+        for (String word : asked.split("[^a-z0-9]+")) {
+            if (word.length() >= 4 && relative.contains(word)) {
+                score += 60;
+            }
+        }
+        if (relative.contains("src") || relative.contains("main")) {
+            score += 20;
+        }
+        if (name.endsWith(".json") || name.endsWith(".lock") || name.endsWith(".xml")) {
+            score -= 20; // Manifests are long and say little about behaviour.
+        }
+        // Shallow files describe the project; deeply nested ones describe a corner of it.
+        score -= relative.split("[\\/]").length * 3;
+        return score;
     }
 
     private void walk(Path root, Path dir, StringBuilder tree, List<Path> files, int[] counted) {
@@ -253,13 +312,13 @@ public final class ContextGatherer {
         }
         try {
             long size = Files.size(file);
-            if (size > PER_FILE_BUDGET * 4L) {
+            if (size > perFileBudget * 4L) {
                 skipped.add(label + " (" + (size / 1024) + " KB, too large)");
                 return false;
             }
             String content = Files.readString(file, StandardCharsets.UTF_8);
-            if (content.length() > PER_FILE_BUDGET) {
-                content = content.substring(0, PER_FILE_BUDGET) + "\n... (truncated)";
+            if (content.length() > perFileBudget) {
+                content = content.substring(0, perFileBudget) + "\n... (truncated)";
             }
             if (content.length() > budget[0]) {
                 skipped.add(label + " (budget reached)");
@@ -313,8 +372,8 @@ public final class ContextGatherer {
                 return;
             }
             String text = stripHtml(response.body());
-            if (text.length() > PER_FILE_BUDGET) {
-                text = text.substring(0, PER_FILE_BUDGET) + "\n... (truncated)";
+            if (text.length() > perFileBudget) {
+                text = text.substring(0, perFileBudget) + "\n... (truncated)";
             }
             if (text.length() > budget[0]) {
                 skipped.add(url + " (budget reached)");

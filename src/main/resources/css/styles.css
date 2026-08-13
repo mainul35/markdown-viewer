@@ -559,25 +559,40 @@
     -fx-text-fill: -mdv-text-muted;
 }
 
+/* A read-only TextArea dressed as a bubble, so the text can be selected and copied. */
+.ai-bubble,
+.ai-bubble .content {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+}
+
 .ai-bubble {
-    -fx-padding: 8 10 8 10;
+    -fx-padding: 4 4 4 4;
     -fx-background-radius: 7;
     -fx-text-fill: -mdv-text;
 }
 
-.ai-user {
+.ai-user, .ai-user .content {
     -fx-background-color: -mdv-accent-soft;
+    -fx-background-radius: 7;
+}
+
+.ai-assistant .content {
+    -fx-background-color: -mdv-surface;
+    -fx-background-radius: 7;
 }
 
 .ai-assistant {
-    -fx-background-color: -mdv-surface;
     -fx-border-color: -mdv-border;
     -fx-border-width: 1;
     -fx-border-radius: 7;
 }
 
-.ai-sources {
+.ai-sources .content {
     -fx-background-color: -mdv-paper;
+}
+
+.ai-sources {
     -fx-border-color: -mdv-border;
     -fx-border-width: 1;
     -fx-border-radius: 7;
