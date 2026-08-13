@@ -104,6 +104,19 @@ rather than the module path.
   scrolls to it, which is the point of it when a workspace holds hundreds of files.
   **View → Hide Explorer** collapses the panel.
 
+- **Recent workspaces:** **File → Recent Workspaces** lists the folders opened before,
+  most recent first, and remembers them across runs in `~/.mdviewer/workspaces.txt`.
+  A folder already open is shown greyed rather than hidden, so the list does not look
+  like it forgot; one that has since been deleted is dropped instead of offered and then
+  failed. The label is the folder name plus its parent, because several checkouts of the
+  same project is the normal case and the name alone is ambiguous exactly when the list
+  is most useful.
+
+  The file is one path per line — no JSON library is bundled, a list of paths does not
+  justify taking one, and a line-per-path file is something you can read and edit in any
+  editor. Everything about it is best effort: a history that cannot be read or written is
+  a missing convenience, never a reason to fail an open.
+
 - **Workspace refresh:** the explorer caches directory listings, so a file written outside
   the app — by a build, a `git pull`, or another editor — would otherwise stay invisible
   until you collapsed and re-expanded its folder. **View → Refresh Workspaces** (F5) and

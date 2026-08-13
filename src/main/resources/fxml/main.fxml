@@ -30,6 +30,13 @@
                         <accelerator><KeyCodeCombination alt="UP" code="S" control="UP" meta="UP" shift="DOWN" shortcut="DOWN"/></accelerator>
                     </MenuItem>
                     <SeparatorMenuItem/>
+                    <!--
+                        Filled in at runtime from ~/.mdviewer/workspaces.txt. Rebuilt each
+                        time it is shown rather than kept in step with every open and
+                        close, which is one place to get wrong instead of several.
+                    -->
+                    <Menu fx:id="recentWorkspacesMenu" text="Recent Workspaces"/>
+                    <SeparatorMenuItem/>
                     <MenuItem text="Close Document" onAction="#handleCloseDocument">
                         <accelerator><KeyCodeCombination alt="UP" code="W" control="UP" meta="UP" shift="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>
