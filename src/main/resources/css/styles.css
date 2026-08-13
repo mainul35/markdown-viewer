@@ -576,6 +576,16 @@
     -fx-border-radius: 7;
 }
 
+.ai-sources {
+    -fx-background-color: -mdv-paper;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 7;
+    -fx-font-family: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
+    -fx-font-size: 10.5px;
+    -fx-text-fill: -mdv-text-muted;
+}
+
 .ai-composer {
     -fx-background-color: -mdv-surface-alt;
     -fx-border-color: -mdv-border;
