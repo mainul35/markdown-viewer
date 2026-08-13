@@ -34,6 +34,8 @@ import com.mdviewer.service.ImageRef;
 import com.mdviewer.service.MarkdownService;
 import com.mdviewer.service.SourceEdits;
 import com.mdviewer.service.TableSource;
+import com.mdviewer.ai.AiConfig;
+import com.mdviewer.ai.AiPanel;
 import com.mdviewer.service.Trash;
 import com.mdviewer.ui.DocumentView;
 import com.mdviewer.ui.FileTreePanel;
@@ -88,6 +90,13 @@ public class MainController {
 
     @FXML
     private MenuItem explorerMenuItem;
+
+    @FXML
+    private MenuItem assistantMenuItem;
+
+    private AiPanel aiPanel;
+    /** Remembered so hiding and re-showing the assistant keeps its width. */
+    private double assistantDivider = 0.72;
 
     @FXML
     private CheckMenuItem autoRefreshMenuItem;
@@ -219,6 +228,18 @@ public class MainController {
         }
 
         installReplaceShortcut();
+
+        /* Built here but not mounted. The assistant is the one part of this app that
+           sends anything anywhere, so it appears when it is asked for and not before. */
+        aiPanel = new AiPanel(new AiConfig());
+        aiPanel.setDocumentSupplier(() -> {
+            DocumentView document = activeDocument();
+            return document == null ? "" : document.getEditor().getText();
+        });
+        aiPanel.setDocumentNameSupplier(() -> {
+            DocumentView document = activeDocument();
+            return document == null ? "an unsaved document" : document.getDisplayName();
+        });
 
         previewDebounce = new PauseTransition(Duration.millis(200));
         previewDebounce.setOnFinished(e -> updatePreview());
@@ -856,6 +877,37 @@ public class MainController {
         if (!fileTreePanel.reveal(document.getPath())) {
             setTransientStatus("Could not locate " + document.getDisplayName() + " in the tree.");
         }
+    }
+
+    @FXML
+    private void handleToggleAssistant() {
+        showAssistant(!isAssistantVisible());
+    }
+
+    private boolean isAssistantVisible() {
+        return mainSplit.getItems().contains(aiPanel);
+    }
+
+    private void showAssistant(boolean visible) {
+        if (visible == isAssistantVisible()) {
+            return;
+        }
+        if (visible) {
+            mainSplit.getItems().add(aiPanel);
+            int divider = mainSplit.getItems().size() - 2;
+            // Twice: a divider cannot be positioned until the new item has been laid out,
+            // the same two-pass dance the split's own mode switching needs.
+            mainSplit.setDividerPosition(divider, assistantDivider);
+            Platform.runLater(() -> mainSplit.setDividerPosition(divider, assistantDivider));
+            aiPanel.getInput().requestFocus();
+        } else {
+            int divider = mainSplit.getItems().size() - 2;
+            if (divider >= 0 && divider < mainSplit.getDividerPositions().length) {
+                assistantDivider = mainSplit.getDividerPositions()[divider];
+            }
+            mainSplit.getItems().remove(aiPanel);
+        }
+        assistantMenuItem.setText(visible ? "Hide Assistant" : "Show Assistant");
     }
 
     @FXML

@@ -66,6 +66,9 @@
                     <SeparatorMenuItem/>
                     <MenuItem fx:id="explorerMenuItem" text="Hide Explorer" onAction="#handleToggleExplorer"/>
                     <MenuItem text="Reveal Current File" onAction="#handleRevealInTree"/>
+                    <MenuItem fx:id="assistantMenuItem" text="Show Assistant" onAction="#handleToggleAssistant">
+                        <accelerator><KeyCodeCombination alt="UP" code="A" control="UP" meta="UP" shift="DOWN" shortcut="DOWN"/></accelerator>
+                    </MenuItem>
                     <MenuItem text="Refresh Workspaces" onAction="#handleRefreshWorkspaces">
                         <accelerator><KeyCodeCombination alt="UP" code="F5" control="UP" meta="UP" shift="UP" shortcut="UP"/></accelerator>
                     </MenuItem>

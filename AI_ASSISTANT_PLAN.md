@@ -160,7 +160,7 @@ Nothing is written to disk by the assistant. It proposes; the existing save path
 
 | Phase | Scope | Ships something useful? |
 |---|---|---|
-| 1 | Collapsible panel, provider config, streaming chat against a local endpoint, no file writes | Yes — a chat that can see the document |
+| 1 | **Done.** Collapsible panel (`View → Show Assistant`, Shift+Ctrl+A), provider config, allowlist, streaming chat that can see the open document. No file reads, no writes. | Yes — a chat that can see the document |
 | 2 | Context gathering from links, whole-document rewrite, side-by-side diff, approve/reject | Yes — the actual feature |
 | 3 | Per-hunk approval, remote providers with explicit opt-in, exclude lists | Refinement |
 | 4 | Conversation history per document, cancel mid-stream, token accounting | Polish |
