@@ -7,11 +7,17 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Dialog;
+import javafx.scene.control.ContextMenu;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextArea;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -39,7 +45,7 @@ public final class AiPanel extends VBox {
 
     private final AiConfig config;
     private final ChatProvider provider;
-    private final ContextGatherer gatherer = new ContextGatherer();
+    private final ContextGatherer gatherer;
 
     private final ComboBox<String> providerChoice = new ComboBox<>();
     private final Label hostLabel = new Label();
@@ -54,12 +60,18 @@ public final class AiPanel extends VBox {
     private Supplier<String> documentNameSupplier = () -> "the document";
     private Supplier<Path> workspaceRootSupplier = () -> null;
 
+    /** A pasted image, base64 PNG, waiting to go with the next question. */
+    private String attachedImage;
+    private final HBox attachment = new HBox(8);
+    private final Label attachmentLabel = new Label();
+
     private final List<ChatProvider.Message> history = new ArrayList<>();
     private boolean busy = false;
 
     public AiPanel(AiConfig config) {
         this.config = config;
         this.provider = new ChatProvider(config);
+        this.gatherer = new ContextGatherer(config);
         getStyleClass().add("ai-panel");
         setMinWidth(0);
 
@@ -96,6 +108,12 @@ public final class AiPanel extends VBox {
             if (event.getCode() == KeyCode.ENTER && !event.isShiftDown()) {
                 event.consume();
                 sendCurrentInput();
+            } else if (event.getCode() == KeyCode.V && event.isShortcutDown()
+                    && Clipboard.getSystemClipboard().hasImage()) {
+                // Only when the clipboard actually holds an image: a normal text paste
+                // must keep working exactly as it did.
+                event.consume();
+                pasteImage();
             }
         });
 
@@ -119,7 +137,15 @@ public final class AiPanel extends VBox {
         status.getStyleClass().add("ai-status");
         status.setWrapText(true);
 
-        VBox composer = new VBox(6, input, buttons, status);
+        Button dropImage = new Button("Remove");
+        dropImage.setOnAction(e -> setAttachedImage(null, 0, 0));
+        attachmentLabel.getStyleClass().add("ai-status");
+        attachment.getChildren().setAll(attachmentLabel, dropImage);
+        attachment.setAlignment(Pos.CENTER_LEFT);
+        attachment.setVisible(false);
+        attachment.setManaged(false);
+
+        VBox composer = new VBox(6, attachment, input, buttons, status);
         composer.setPadding(new Insets(8));
         composer.getStyleClass().add("ai-composer");
 
@@ -133,6 +159,54 @@ public final class AiPanel extends VBox {
 
     public void setDocumentNameSupplier(Supplier<String> supplier) {
         this.documentNameSupplier = supplier == null ? () -> "the document" : supplier;
+    }
+
+    /**
+     * Takes an image off the clipboard and attaches it to the next question.
+     *
+     * <p>Encoded as PNG here rather than passed around as a JavaFX image, because what
+     * eventually goes on the wire is base64 PNG and converting once, early, means the
+     * failure - an image too large, an unreadable clipboard - happens while there is still
+     * somewhere sensible to report it.
+     */
+    private void pasteImage() {
+        Image image = Clipboard.getSystemClipboard().getImage();
+        if (image == null) {
+            setStatus("The clipboard does not hold an image.");
+            return;
+        }
+        try {
+            int width = (int) image.getWidth();
+            int height = (int) image.getHeight();
+            java.awt.image.BufferedImage buffered = new java.awt.image.BufferedImage(
+                    width, height, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            javafx.scene.image.PixelReader pixels = image.getPixelReader();
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    buffered.setRGB(x, y, pixels.getArgb(x, y));
+                }
+            }
+            java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(buffered, "png", png);
+            setAttachedImage(java.util.Base64.getEncoder().encodeToString(png.toByteArray()),
+                    width, height);
+        } catch (Exception e) {
+            setStatus("Could not read that image from the clipboard.");
+        }
+    }
+
+    private void setAttachedImage(String base64, int width, int height) {
+        this.attachedImage = base64;
+        boolean has = base64 != null;
+        attachment.setVisible(has);
+        attachment.setManaged(has);
+        if (has) {
+            AiConfig.Endpoint endpoint = currentEndpoint();
+            String model = endpoint == null ? "the model" : endpoint.model();
+            attachmentLabel.setText("Image attached: " + width + "x" + height + ", "
+                    + (base64.length() * 3 / 4 / 1024) + " KB  -  " + model
+                    + " must be a vision model to see it");
+        }
     }
 
     public void setWorkspaceRootSupplier(Supplier<Path> supplier) {
@@ -176,7 +250,7 @@ public final class AiPanel extends VBox {
         input.clear();
         addBubble("You", question, "ai-user");
 
-        Label reply = addBubble(endpoint.model(), "", "ai-assistant");
+        TextArea reply = addBubble(endpoint.model(), "", "ai-assistant");
         busy = true;
         send.setDisable(true);
         setStatus("Thinking...");
@@ -184,6 +258,8 @@ public final class AiPanel extends VBox {
         String document = documentSupplier.get();
         String documentName = documentNameSupplier.get();
         Path workspaceRoot = workspaceRootSupplier.get();
+        String image = attachedImage;
+        setAttachedImage(null, 0, 0);
 
         // Off the FX thread: reading a project and waiting on a model both block.
         Thread worker = new Thread(() -> {
@@ -197,7 +273,7 @@ public final class AiPanel extends VBox {
                 });
             }
             List<ChatProvider.Message> messages =
-                    buildMessages(question, document, documentName, context);
+                    buildMessages(question, document, documentName, context, image);
             try {
                 provider.stream(endpoint, messages, token ->
                         Platform.runLater(() -> {
@@ -327,7 +403,8 @@ public final class AiPanel extends VBox {
      */
     private List<ChatProvider.Message> buildMessages(String question, String document,
                                                      String documentName,
-                                                     ContextGatherer.Result context) {
+                                                     ContextGatherer.Result context,
+                                                     String image) {
         List<ChatProvider.Message> messages = new ArrayList<>();
         messages.add(new ChatProvider.Message("system", """
                 You are helping edit one Markdown document inside a Markdown editor.
@@ -369,7 +446,8 @@ public final class AiPanel extends VBox {
                     + "that you were not given it and ask for the path. Do not guess."));
         }
         messages.addAll(history);
-        messages.add(new ChatProvider.Message("user", question));
+        messages.add(new ChatProvider.Message("user", question,
+                image == null ? List.of() : List.of(image)));
         return messages;
     }
 
@@ -388,17 +466,76 @@ public final class AiPanel extends VBox {
         addBubble("Sources", note.toString(), "ai-sources");
     }
 
-    private Label addBubble(String who, String text, String styleClass) {
+    /**
+     * A message in the transcript.
+     *
+     * <p>A read-only {@link TextArea} rather than a Label, because a Label's text cannot be
+     * selected and an assistant you cannot copy an answer out of is most of the way to
+     * useless. It is styled to look like a bubble and grows with its content, since a
+     * TextArea otherwise picks an arbitrary height and scrolls inside itself, which reads
+     * as a bug in a transcript that is already scrolling.
+     */
+    private TextArea addBubble(String who, String text, String styleClass) {
         Label speaker = new Label(who);
         speaker.getStyleClass().add("ai-speaker");
-        Label body = new Label(text);
+
+        TextArea body = new TextArea(text);
+        body.setEditable(false);
         body.setWrapText(true);
         body.getStyleClass().addAll("ai-bubble", styleClass);
         body.setMaxWidth(Double.MAX_VALUE);
+        body.setPrefRowCount(1);
+
+        MenuItem copyMessage = new MenuItem("Copy message");
+        copyMessage.setOnAction(e -> copyToClipboard(body.getText()));
+        MenuItem copyAll = new MenuItem("Copy whole conversation");
+        copyAll.setOnAction(e -> copyToClipboard(wholeTranscript()));
+        body.setContextMenu(new ContextMenu(copyMessage, copyAll));
+
+        // Grow with the text. The height has to be measured from the laid-out text node,
+        // because a TextArea has no notion of "as tall as its content".
+        body.textProperty().addListener((o, a, b) -> Platform.runLater(() -> fitHeight(body)));
+        Platform.runLater(() -> fitHeight(body));
+
         VBox group = new VBox(2, speaker, body);
         transcript.getChildren().add(group);
         transcriptScroll.setVvalue(1.0);
         return body;
+    }
+
+    private static void fitHeight(TextArea area) {
+        javafx.scene.Node text = area.lookup(".text");
+        if (text != null) {
+            double height = text.getBoundsInLocal().getHeight();
+            if (height > 0) {
+                area.setPrefHeight(height + 22);
+                area.setMinHeight(height + 22);
+            }
+        }
+    }
+
+    private String wholeTranscript() {
+        StringBuilder all = new StringBuilder();
+        for (javafx.scene.Node node : transcript.getChildren()) {
+            if (node instanceof VBox group) {
+                for (javafx.scene.Node child : group.getChildren()) {
+                    if (child instanceof Label speaker) {
+                        all.append(speaker.getText()).append(':').append(System.lineSeparator());
+                    } else if (child instanceof TextArea body) {
+                        all.append(body.getText()).append(System.lineSeparator())
+                                .append(System.lineSeparator());
+                    }
+                }
+            }
+        }
+        return all.toString().strip();
+    }
+
+    private void copyToClipboard(String text) {
+        ClipboardContent content = new ClipboardContent();
+        content.putString(text == null ? "" : text);
+        Clipboard.getSystemClipboard().setContent(content);
+        setStatus("Copied.");
     }
 
     private void setStatus(String message) {

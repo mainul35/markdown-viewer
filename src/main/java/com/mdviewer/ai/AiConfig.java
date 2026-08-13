@@ -50,6 +50,15 @@ public final class AiConfig {
             # this list is refused before it is built. Add to it deliberately: the
             # documents this tool is used on are not all public.
             allowedHosts        = localhost, 127.0.0.1, litellm.mainul35.dev, ai.mainul35.dev
+
+            # How much of a codebase to send. The real ceiling is the model's context
+            # window, not this file: raise these past what the model accepts and a large
+            # project is refused by the endpoint instead of being truncated here.
+            # qwen3-coder:30b on Ollama defaults to about 32k tokens unless num_ctx is
+            # raised on the server, and 4 characters per token is a fair estimate.
+            context.totalChars   = 240000
+            context.perFileChars = 40000
+            context.maxFiles     = 80
             """;
 
     /** One configured endpoint. {@code apiKey} may be blank; that is not this class's business. */
@@ -271,6 +280,18 @@ public final class AiConfig {
             properties.load(new java.io.StringReader(DEFAULTS));
         } catch (IOException e) {
             // DEFAULTS is a compile-time constant; this cannot happen.
+        }
+    }
+
+    public int intValue(String key, int defaultValue) {
+        String raw = value(key);
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            return Integer.parseInt(raw.strip());
+        } catch (NumberFormatException e) {
+            return defaultValue;
         }
     }
 

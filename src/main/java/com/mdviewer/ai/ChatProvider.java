@@ -25,8 +25,19 @@ import java.util.function.Consumer;
  */
 public final class ChatProvider {
 
-    /** One turn of the conversation. {@code role} is system, user or assistant. */
-    public record Message(String role, String content) {}
+    /**
+     * One turn of the conversation.
+     *
+     * <p>{@code images} are base64 PNG data, sent as OpenAI content parts. A model that
+     * cannot see will simply ignore them or refuse - which is why the panel says which
+     * model is selected next to the attachment.
+     */
+    public record Message(String role, String content, List<String> images) {
+
+        public Message(String role, String content) {
+            this(role, content, List.of());
+        }
+    }
 
     /** Raised before anything is sent when the endpoint is not one we are allowed to use. */
     public static final class NotAllowedException extends RuntimeException {
@@ -226,8 +237,21 @@ public final class ChatProvider {
             if (i > 0) {
                 json.append(',');
             }
-            json.append("{\"role\":").append(quote(message.role()))
-                    .append(",\"content\":").append(quote(message.content())).append('}');
+            json.append("{\"role\":").append(quote(message.role())).append(",\"content\":");
+            if (message.images().isEmpty()) {
+                json.append(quote(message.content()));
+            } else {
+                // The content-parts form, which is what every vision-capable
+                // OpenAI-compatible endpoint expects.
+                json.append("[{\"type\":\"text\",\"text\":")
+                        .append(quote(message.content())).append('}');
+                for (String image : message.images()) {
+                    json.append(",{\"type\":\"image_url\",\"image_url\":{\"url\":")
+                            .append(quote("data:image/png;base64," + image)).append("}}");
+                }
+                json.append(']');
+            }
+            json.append('}');
         }
         return json.append("]}").toString();
     }
