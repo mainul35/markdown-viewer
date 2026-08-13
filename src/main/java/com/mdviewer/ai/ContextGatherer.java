@@ -212,19 +212,37 @@ public final class ContextGatherer {
         // Ordered by how likely a file is to answer the question, because the budget
         // always runs out on a real project and what it is spent on decides whether the
         // answer is any good. Alphabetical order spends it on whatever starts with "a".
+        // Keywords from the question with the pasted paths and URLs removed first. The
+        // path is why we are here, and its words - "auth", "server", the user's own
+        // account name out of the home directory - appear in every file underneath it.
+        // Left in, they gave every file the same bonus and swamped the signal that is
+        // supposed to put a README first.
+        String keywords = keywordsOf(question);
         files.sort(java.util.Comparator.comparingInt(
-                (Path f) -> -relevance(f, root, question)));
+                (Path f) -> -relevance(f, root, keywords)));
 
         int read = 0;
         for (Path file : files) {
             if (read >= maxFiles || budget[0] <= 0) {
-                skipped.add((files.size() - read) + " more files under " + root.getFileName()
-                        + " (budget reached)");
                 break;
             }
+            int before = budget[0];
             if (readFile(file, root.relativize(file).toString(), sources, skipped, budget)) {
                 read++;
+            } else if (budget[0] == before && budget[0] < perFileBudget) {
+                /* Nothing was taken and what is left could not hold a typical file.
+                   Carrying on would try every remaining file and add a "budget reached"
+                   line for each - which is how one exhausted budget produced a hundred
+                   identical messages. Stop, and say it once below. */
+                break;
             }
+        }
+        int unread = files.size() - read;
+        if (unread > 0) {
+            skipped.add(unread + " of " + files.size() + " files under "
+                    + root.getFileName() + " were not read - the "
+                    + (totalBudget / 1000) + "k character budget ran out. Raise "
+                    + "context.totalChars in ai.properties, or ask about a subfolder.");
         }
     }
 
@@ -235,10 +253,22 @@ public final class ContextGatherer {
      * question actually named; then source over configuration. Crude, but the alternative
      * is alphabetical, which is no signal at all.
      */
-    private static int relevance(Path file, Path root, String question) {
+    /**
+     * The question with pasted paths and URLs removed, leaving only the words that say
+     * what is actually wanted.
+     */
+    public static String keywordsOf(String question) {
+        if (question == null) {
+            return "";
+        }
+        return URL.matcher(PATH.matcher(question).replaceAll(" ")).replaceAll(" ")
+                .toLowerCase(Locale.ROOT);
+    }
+
+    private static int relevance(Path file, Path root, String keywords) {
         String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
         String relative = root.relativize(file).toString().toLowerCase(Locale.ROOT);
-        String asked = question == null ? "" : question.toLowerCase(Locale.ROOT);
+        String asked = keywords == null ? "" : keywords;
         int score = 0;
         if (name.startsWith("readme")) {
             score += 100;
@@ -258,8 +288,14 @@ public final class ContextGatherer {
         if (name.endsWith(".json") || name.endsWith(".lock") || name.endsWith(".xml")) {
             score -= 20; // Manifests are long and say little about behaviour.
         }
-        // Shallow files describe the project; deeply nested ones describe a corner of it.
-        score -= relative.split("[\\/]").length * 3;
+        /* Shallow files describe the project; deeply nested ones describe a corner of it.
+           Depth comes from the Path, not from splitting the string: "[\\/]" as a Java
+           literal is the regex [\/], which matches a forward slash and nothing else, so
+           on Windows every path counted as one segment and this penalty was a flat -3 for
+           everything. That made a deeply nested source file tie with the README, and a
+           stable sort then kept alphabetical order - which is exactly the bug this
+           ordering was added to fix. */
+        score -= root.relativize(file).getNameCount() * 3;
         return score;
     }
 
@@ -321,7 +357,9 @@ public final class ContextGatherer {
                 content = content.substring(0, perFileBudget) + "\n... (truncated)";
             }
             if (content.length() > budget[0]) {
-                skipped.add(label + " (budget reached)");
+                // Deliberately silent: the caller reports the budget once, for all the
+                // files it covers. Reporting per file is how one exhausted budget turned
+                // into a hundred identical lines.
                 return false;
             }
             budget[0] -= content.length();
