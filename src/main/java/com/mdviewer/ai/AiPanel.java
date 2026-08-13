@@ -99,9 +99,11 @@ public final class AiPanel extends VBox {
             transcript.getChildren().clear();
             setStatus("");
         });
+        Button test = new Button("Test connection");
+        test.setOnAction(e -> testConnection());
         Region footerSpacer = new Region();
         HBox.setHgrow(footerSpacer, Priority.ALWAYS);
-        HBox buttons = new HBox(6, clear, footerSpacer, send);
+        HBox buttons = new HBox(6, clear, test, footerSpacer, send);
         buttons.setAlignment(Pos.CENTER_RIGHT);
 
         status.getStyleClass().add("ai-status");
@@ -186,6 +188,28 @@ public final class AiPanel extends VBox {
                         + ": " + e.getMessage()));
             }
         }, "ai-chat");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Checks the endpoint answers and accepts the key, sending no document content.
+     *
+     * <p>Separate from asking a question on purpose. The two things that go wrong first
+     * are the host and the key, and finding that out should not require handing over a
+     * document to do it.
+     */
+    private void testConnection() {
+        AiConfig.Endpoint endpoint = currentEndpoint();
+        if (endpoint == null || endpoint.baseUrl().isBlank()) {
+            setStatus("No endpoint is configured. Edit " + config.getFile() + ".");
+            return;
+        }
+        setStatus("Contacting " + endpoint.host() + "...");
+        Thread worker = new Thread(() -> {
+            String result = provider.testConnection(endpoint);
+            Platform.runLater(() -> setStatus(result));
+        }, "ai-test");
         worker.setDaemon(true);
         worker.start();
     }

@@ -103,6 +103,59 @@ public final class ChatProvider {
     }
 
     /**
+     * Asks the endpoint for its model list, to prove the key and the host work.
+     *
+     * <p>Deliberately not a chat call: this sends **no document content at all**, so it is
+     * safe to press before you have decided whether you trust the endpoint with anything.
+     * It answers the two questions that actually go wrong - can I reach it, and does it
+     * accept my key - and nothing else.
+     *
+     * @return a short description of what happened, for the panel to show
+     */
+    public String testConnection(AiConfig.Endpoint endpoint) {
+        if (!config.isAllowed(endpoint.baseUrl())) {
+            return "Refused: " + endpoint.host() + " is not in allowedHosts in "
+                    + config.getFile() + ".";
+        }
+        try {
+            HttpRequest.Builder request = HttpRequest.newBuilder()
+                    .uri(URI.create(trimTrailingSlash(endpoint.baseUrl()) + "/models"))
+                    .timeout(Duration.ofSeconds(20))
+                    .GET();
+            if (!endpoint.apiKey().isBlank()) {
+                request.header("Authorization", "Bearer " + endpoint.apiKey());
+            }
+            HttpResponse<String> response =
+                    http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+            return switch (response.statusCode()) {
+                case 200 -> "Connected to " + endpoint.host() + ". "
+                        + countModels(response.body()) + " models available.";
+                case 401, 403 -> endpoint.host() + " rejected the key. "
+                        + (endpoint.apiKey().isBlank()
+                            ? "None is set - put one in the environment or in "
+                                    + config.getFile() + "."
+                            : "Check the key is current.");
+                case 404 -> endpoint.host() + " has no /models here. Check the base URL.";
+                default -> endpoint.host() + " returned " + response.statusCode()
+                        + ": " + summarise(response.body());
+            };
+        } catch (Exception e) {
+            return "Could not reach " + endpoint.host() + ": " + e.getMessage();
+        }
+    }
+
+    /** Counts {@code "id":} occurrences, which is one per model in the OpenAI shape. */
+    private static int countModels(String body) {
+        int count = 0;
+        int at = 0;
+        while ((at = body.indexOf("\"id\"", at)) >= 0) {
+            count++;
+            at += 4;
+        }
+        return count;
+    }
+
+    /**
      * The text carried by one SSE line, or null if the line carries none.
      *
      * <p>Package-private so the shape can be asserted against captured lines without a
