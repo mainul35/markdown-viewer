@@ -138,23 +138,54 @@ public final class ContextGatherer {
         Matcher m = PATH.matcher(text);
         while (m.find()) {
             String candidate = m.group(1);
-            // Trailing punctuation from prose - "look at C:\x\y." - is not part of the path.
-            while (!candidate.isEmpty() && ".,;:".indexOf(candidate.charAt(candidate.length() - 1)) >= 0) {
-                candidate = candidate.substring(0, candidate.length() - 1);
-            }
             if (candidate.isEmpty() || !seen.add(candidate)) {
                 continue;
             }
-            try {
-                Path path = Path.of(candidate);
-                if (Files.exists(path)) {
-                    paths.add(path.toAbsolutePath().normalize());
-                }
-            } catch (RuntimeException e) {
-                // Not a usable path on this platform; nothing to read.
+            Path path = resolveTrimmingPunctuation(candidate);
+            if (path != null) {
+                paths.add(path);
             }
         }
         return paths;
+    }
+
+    /**
+     * The path {@code candidate} names, shortening it past trailing punctuation until it
+     * matches something real.
+     *
+     * <p>A path typed into a sentence collects the sentence's punctuation. Written as
+     * "(source code here: C:\\...\\vsd-auth-server)" the closing bracket lands inside the
+     * match, the folder does not exist under that name, and the whole request is silently
+     * read as naming nothing - which looks from the outside exactly like an assistant
+     * that cannot see the filesystem. Trying the longest form first means a directory
+     * genuinely ending in a bracket still wins.
+     */
+    private static Path resolveTrimmingPunctuation(String candidate) {
+        String text = candidate;
+        while (!text.isEmpty()) {
+            try {
+                Path path = Path.of(text);
+                if (Files.exists(path)) {
+                    // toRealPath, not normalize: Windows silently ignores a trailing dot
+                    // when opening a file, so "…\vsd-auth-server." exists and would be
+                    // carried around under that name in every label. The real path is the
+                    // name the filesystem actually has.
+                    try {
+                        return path.toRealPath();
+                    } catch (IOException e) {
+                        return path.toAbsolutePath().normalize();
+                    }
+                }
+            } catch (RuntimeException e) {
+                // Not a usable path on this platform; keep trimming, it may become one.
+            }
+            char last = text.charAt(text.length() - 1);
+            if (".,;:!?)]}>\"'`".indexOf(last) < 0) {
+                return null; // Not punctuation, so the name is simply wrong.
+            }
+            text = text.substring(0, text.length() - 1);
+        }
+        return null;
     }
 
     public static List<Path> relativePathsIn(String document, Path workspaceRoot) {
@@ -223,13 +254,22 @@ public final class ContextGatherer {
         files.sort(java.util.Comparator.comparingInt(
                 (Path f) -> -relevance(f, root, keywords)));
 
+        /* No single file may take more than a share of the budget while a whole project
+           is being read. A 40k README against a 90k budget left nothing for the source
+           that was actually asked about - the reader got the project's own summary of
+           itself and none of its code, which is the opposite of checking claims against
+           sources. Reading the first slice of a long file is nearly as good and leaves
+           room for thirty others. */
+        int shareCap = Math.max(4_000, totalBudget / 6);
+
         int read = 0;
         for (Path file : files) {
             if (read >= maxFiles || budget[0] <= 0) {
                 break;
             }
             int before = budget[0];
-            if (readFile(file, root.relativize(file).toString(), sources, skipped, budget)) {
+            if (readFile(file, root.relativize(file).toString(), sources, skipped,
+                    budget, shareCap)) {
                 read++;
             } else if (budget[0] == before && budget[0] < perFileBudget) {
                 /* Nothing was taken and what is left could not hold a typical file.
@@ -278,6 +318,13 @@ public final class ContextGatherer {
         if (name.endsWith(".md")) {
             score += 40;
         }
+        /* When the question is about the implementation, code outranks prose. Asked to
+           "analyse the codebase" the reader previously got a README and three YAML files
+           and no source at all - the project's own account of itself, which is exactly
+           the thing that most needs checking against the code. */
+        if (asksAboutCode(asked) && isSource(name)) {
+            score += 110;
+        }
         // A word from the question appearing in the path is the strongest signal there is.
         for (String word : asked.split("[^a-z0-9]+")) {
             if (word.length() >= 4 && relative.contains(word)) {
@@ -299,6 +346,31 @@ public final class ContextGatherer {
            ordering was added to fix. */
         score -= root.relativize(file).getNameCount() * 3;
         return score;
+    }
+
+    /** Words that mean "look at the implementation", not "tell me what this project is". */
+    private static final Set<String> CODE_WORDS = Set.of(
+            "code", "codebase", "source", "implement", "implementation", "class", "classes",
+            "method", "function", "api", "endpoint", "endpoints", "schema", "entity",
+            "service", "config", "configuration", "logic", "supports", "support",
+            "capability", "capabilities", "mechanism", "mechanisms", "architecture");
+
+    private static boolean asksAboutCode(String keywords) {
+        for (String word : keywords.split("[^a-z0-9]+")) {
+            if (CODE_WORDS.contains(word)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isSource(String name) {
+        int dot = name.lastIndexOf('.');
+        if (dot < 0) {
+            return false;
+        }
+        return Set.of("java", "kt", "js", "ts", "tsx", "jsx", "py", "rb", "go", "rs",
+                "c", "h", "cpp", "hpp", "cs", "sql").contains(name.substring(dot + 1));
     }
 
     private void walk(Path root, Path dir, StringBuilder tree, List<Path> files, int[] counted) {
@@ -344,19 +416,29 @@ public final class ContextGatherer {
 
     private boolean readFile(Path file, String label, List<Source> sources,
                              List<String> skipped, int[] budget) {
+        return readFile(file, label, sources, skipped, budget, perFileBudget);
+    }
+
+    private boolean readFile(Path file, String label, List<Source> sources,
+                             List<String> skipped, int[] budget, int cap) {
         if (!isText(file)) {
             skipped.add(label + " (not a text file)");
             return false;
         }
         try {
             long size = Files.size(file);
-            if (size > perFileBudget * 4L) {
+            if (size > cap * 8L) {
                 skipped.add(label + " (" + (size / 1024) + " KB, too large)");
                 return false;
             }
             String content = Files.readString(file, StandardCharsets.UTF_8);
-            if (content.length() > perFileBudget) {
-                content = content.substring(0, perFileBudget) + "\n... (truncated)";
+            // cap, not perFileBudget: when a whole project is being read this is the
+            // share any one file may take, and a 22k class taking a quarter of the
+            // budget is how the other thirty files got left out.
+            if (content.length() > cap) {
+                content = content.substring(0, cap)
+                        + "\n... (truncated here; " + (content.length() / 1000)
+                        + "k characters in the full file)";
             }
             if (content.length() > budget[0]) {
                 // Deliberately silent: the caller reports the budget once, for all the
