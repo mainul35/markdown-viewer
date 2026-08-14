@@ -63,6 +63,9 @@ public final class AiPanel extends VBox {
     /** Set from the FX thread, read by the scan thread between passes. */
     private volatile boolean cancelScan = false;
 
+    /** The turn in flight, so Stop can interrupt a request rather than wait it out. */
+    private volatile Thread worker;
+
     /** Everything one request may carry, sources and document and history together. */
     private final int windowChars;
 
@@ -150,14 +153,39 @@ public final class AiPanel extends VBox {
                 "Read every file in the project, in as many passes as it takes.\n"
                 + "Slower - minutes, not seconds - but nothing is left out."));
         scanProject.getStyleClass().add("ai-status");
-        stopScan.setOnAction(e -> cancelScan = true);
+        /* Interrupt as well as set the flag. The flag is only read between passes, so with
+           a request in flight - and one may sit there for the full five-minute timeout on
+           a stalled network - Stop appeared to do nothing at all for minutes. Interrupting
+           makes the blocked send throw, which ends the pass now and lets the scan answer
+           from what it has already read. */
+        stopScan.setOnAction(e -> {
+            cancelScan = true;
+            setStatus("Stopping - answering from what has been read so far...");
+            Thread running = worker;
+            if (running != null && running.isAlive()) {
+                running.interrupt();
+            }
+        });
         stopScan.setVisible(false);
         stopScan.setManaged(false);
 
+        /* Two rows, because one could not hold six controls. At the panel widths people
+           actually use, every label was cut to an ellipsis - "C...", "API k...", "Test
+           connec...", and a Send button reading "S...". A row that has to be guessed at is
+           not a row. The scan controls sit above on their own, which also groups them with
+           what they do. */
+        Region scanSpacer = new Region();
+        HBox.setHgrow(scanSpacer, Priority.ALWAYS);
+        HBox scanRow = new HBox(6, scanProject, scanSpacer, stopScan);
+        scanRow.setAlignment(Pos.CENTER_LEFT);
+
         Region footerSpacer = new Region();
         HBox.setHgrow(footerSpacer, Priority.ALWAYS);
-        HBox buttons = new HBox(6, clear, key, test, footerSpacer, scanProject, stopScan, send);
+        HBox buttons = new HBox(6, clear, key, test, footerSpacer, send);
         buttons.setAlignment(Pos.CENTER_RIGHT);
+        // Never let Send be the control that gets clipped: it is the one that must be
+        // readable, and it is last in the row.
+        send.setMinWidth(Region.USE_PREF_SIZE);
 
         status.getStyleClass().add("ai-status");
         status.setWrapText(true);
@@ -170,7 +198,7 @@ public final class AiPanel extends VBox {
         attachment.setVisible(false);
         attachment.setManaged(false);
 
-        VBox composer = new VBox(6, attachment, input, buttons, status);
+        VBox composer = new VBox(6, attachment, input, scanRow, buttons, status);
         composer.setPadding(new Insets(8));
         composer.getStyleClass().add("ai-composer");
 
@@ -295,54 +323,86 @@ public final class AiPanel extends VBox {
 
         // Off the FX thread: reading a project and waiting on a model both block.
         Thread worker = new Thread(() -> {
-            ContextGatherer.Result context;
-            if (scanning) {
-                try {
-                    context = runScan(question, workspaceRoot, endpoint);
-                } catch (ProjectScanner.ScanFailed e) {
-                    Platform.runLater(() -> finish(e.getMessage()));
-                    return;
-                }
-                if (context == null) {
-                    Platform.runLater(() -> finish("Nothing to scan: the question names no "
-                            + "folder, and no workspace is open."));
-                    return;
-                }
-            } else {
-                context = gatherer.gather(question, document, workspaceRoot, true);
-            }
-            if (!context.isEmpty()) {
-                Platform.runLater(() -> {
-                    addSourcesNote(context);
-                    setStatus("Read " + context.sources().size() + " sources ("
-                            + (context.totalChars() / 1000) + "k characters). Thinking...");
-                });
-            }
-            Prompt prompt =
-                    buildMessages(question, document, documentName, context, image);
-            if (prompt.note() != null) {
-                Platform.runLater(() -> setStatus(prompt.note() + " Thinking..."));
-            }
+            /* Everything in here runs on a thread of its own, so anything thrown and not
+               caught dies silently with it - and the panel stays busy for ever, Send
+               disabled, with no way to retry and nothing on screen saying why. Reading a
+               project touches the filesystem at every step, so there is no shortage of
+               things that can throw. The whole body is guarded, and the guard's only job
+               is to make sure finish() runs. */
             try {
-                provider.stream(endpoint, prompt.messages(), token ->
-                        Platform.runLater(() -> {
-                            reply.setText(reply.getText() + token);
-                            transcriptScroll.setVvalue(1.0);
-                        }));
-                Platform.runLater(() -> {
-                    history.add(new ChatProvider.Message("user", question));
-                    history.add(new ChatProvider.Message("assistant", reply.getText()));
-                    finish("");
-                });
-            } catch (ChatProvider.NotAllowedException e) {
-                Platform.runLater(() -> finish(e.getMessage()));
-            } catch (Exception e) {
-                Platform.runLater(() -> finish("Could not reach " + endpoint.host()
-                        + ": " + e.getMessage()));
+                ContextGatherer.Result context;
+                if (scanning) {
+                    try {
+                        context = runScan(question, workspaceRoot, endpoint);
+                    } catch (ProjectScanner.ScanFailed e) {
+                        Platform.runLater(() -> failed(question, e.getMessage()));
+                        return;
+                    }
+                    if (context == null) {
+                        Platform.runLater(() -> failed(question,
+                                "Nothing to scan: the question names no folder, and no "
+                                + "workspace is open."));
+                        return;
+                    }
+                } else {
+                    context = gatherer.gather(question, document, workspaceRoot, true);
+                }
+                if (!context.isEmpty()) {
+                    final ContextGatherer.Result read = context;
+                    Platform.runLater(() -> {
+                        addSourcesNote(read);
+                        setStatus("Read " + read.sources().size() + " sources ("
+                                + (read.totalChars() / 1000) + "k characters). Thinking...");
+                    });
+                }
+                Prompt prompt =
+                        buildMessages(question, document, documentName, context, image);
+                if (prompt.note() != null) {
+                    Platform.runLater(() -> setStatus(prompt.note() + " Thinking..."));
+                }
+                try {
+                    provider.stream(endpoint, prompt.messages(), token ->
+                            Platform.runLater(() -> {
+                                reply.setText(reply.getText() + token);
+                                transcriptScroll.setVvalue(1.0);
+                            }));
+                    Platform.runLater(() -> {
+                        history.add(new ChatProvider.Message("user", question));
+                        history.add(new ChatProvider.Message("assistant", reply.getText()));
+                        finish("");
+                    });
+                } catch (ChatProvider.NotAllowedException e) {
+                    Platform.runLater(() -> failed(question, e.getMessage()));
+                } catch (Exception e) {
+                    Platform.runLater(() -> failed(question, "Could not reach "
+                            + endpoint.host() + ": " + e.getMessage()));
+                }
+            } catch (Throwable t) {
+                String what = t.getClass().getSimpleName()
+                        + (t.getMessage() == null ? "" : ": " + t.getMessage());
+                Platform.runLater(() -> failed(question, "The assistant stopped on an "
+                        + "unexpected error - " + what + ". Your question is back in the "
+                        + "box; nothing was sent to the model after this point."));
             }
         }, "ai-chat");
         worker.setDaemon(true);
+        this.worker = worker;
         worker.start();
+    }
+
+    /**
+     * Ends a turn that did not produce an answer, and gives the question back.
+     *
+     * <p>Losing several minutes of scanning to a network blip is bad enough without having
+     * to retype what was asked. The text goes back in the box exactly as it was sent, so
+     * retrying is one key.
+     */
+    private void failed(String question, String message) {
+        if (input.getText().isBlank()) {
+            input.setText(question);
+            input.positionCaret(question.length());
+        }
+        finish(message);
     }
 
     /**
@@ -400,6 +460,10 @@ public final class AiPanel extends VBox {
                 + (result.cancelled()
                         ? " Stopped early, so later files were not read."
                         : " Nothing was skipped."));
+        if (result.stoppedBecause() != null) {
+            skipped.add(result.stoppedBecause() + " The answer below rests on the passes "
+                    + "that did finish - say so if it depended on a file not among them.");
+        }
         if (result.mapNote() != null) {
             skipped.add(result.mapNote());
         }
@@ -500,6 +564,7 @@ public final class AiPanel extends VBox {
 
     private void finish(String message) {
         busy = false;
+        worker = null;
         send.setDisable(false);
         stopScan.setVisible(false);
         stopScan.setManaged(false);
