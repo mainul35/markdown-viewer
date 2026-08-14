@@ -101,6 +101,16 @@ public final class AiConfig {
             # 48000 characters and would otherwise become a pass of their own.
             scan.maxFileChars    = 30000
 
+            # Markup is read too, but a shorter way in. Templates and stylesheets are
+            # presentation: verbose, repetitive, and rarely what a question is about. In
+            # one Spring project here the 28 Thymeleaf templates are 486000 of 1006000
+            # characters - half the scan, and half the time it takes - to answer questions
+            # about authentication. Their headings, forms and field names are all in the
+            # first few thousand characters.
+            #
+            # Set this equal to scan.maxFileChars if you want them read in full.
+            scan.markupChars     = 8000
+
             # Every pass also carries a map of the whole project - one line per file, the
             # names it declares - so a pass can say where something it is looking at is
             # defined even though it was given a different part of the project. That map
