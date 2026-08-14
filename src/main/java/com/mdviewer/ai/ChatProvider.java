@@ -10,6 +10,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Talks to an OpenAI-compatible {@code /chat/completions} endpoint, streaming.
@@ -152,6 +154,46 @@ public final class ChatProvider {
             };
         } catch (Exception e) {
             return "Could not reach " + endpoint.host() + ": " + e.getMessage();
+        }
+    }
+
+    /**
+     * The model names the endpoint offers, sorted, or empty if it cannot be asked.
+     *
+     * <p>Same call as {@link #testConnection}: a GET for the catalogue, carrying no
+     * document content, so choosing a model never sends anything anywhere. A proxy in
+     * front of several backends is the normal case here, and typing the name of a model
+     * by hand to find out it is spelt differently is a poor way to discover that.
+     */
+    public List<String> listModels(AiConfig.Endpoint endpoint) {
+        if (endpoint == null || endpoint.baseUrl().isBlank()
+                || !config.isAllowed(endpoint.baseUrl())) {
+            return List.of();
+        }
+        try {
+            HttpRequest.Builder request = HttpRequest.newBuilder()
+                    .uri(URI.create(trimTrailingSlash(endpoint.baseUrl()) + "/models"))
+                    .timeout(Duration.ofSeconds(20))
+                    .GET();
+            if (!endpoint.apiKey().isBlank()) {
+                request.header("Authorization", "Bearer " + endpoint.apiKey());
+            }
+            HttpResponse<String> response =
+                    http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                return List.of();
+            }
+            // "id" fields, which is where the OpenAI shape puts a model's name. Hand-read
+            // rather than parsed: this class carries no JSON dependency, and the answer is
+            // a flat list of strings.
+            java.util.TreeSet<String> names = new java.util.TreeSet<>();
+            Matcher ids = Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"").matcher(response.body());
+            while (ids.find()) {
+                names.add(ids.group(1));
+            }
+            return List.copyOf(names);
+        } catch (Exception e) {
+            return List.of(); // The panel keeps whatever is configured and says nothing.
         }
     }
 
