@@ -14,13 +14,17 @@ import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
+import javafx.geometry.Pos;
+import javafx.scene.control.Button;
+import javafx.scene.control.CustomMenuItem;
+import javafx.scene.control.Label;
+import javafx.scene.control.Tooltip;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
-import javafx.geometry.Pos;
 import javafx.scene.Group;
 import javafx.scene.control.ToggleButton;
-import javafx.scene.control.Tooltip;
 import javafx.scene.layout.VBox;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
@@ -1022,12 +1026,9 @@ public class MainController {
             return;
         }
         for (Path root : recent) {
-            MenuItem item = new MenuItem(recentLabel(root));
-            item.setOnAction(e -> openRecentWorkspace(root));
             boolean alreadyOpen = workspaces.stream()
                     .anyMatch(w -> root.equals(w.getRoot()));
-            item.setDisable(alreadyOpen);
-            recentWorkspacesMenu.getItems().add(item);
+            recentWorkspacesMenu.getItems().add(recentWorkspaceItem(root, alreadyOpen));
         }
         MenuItem clear = new MenuItem("Clear Recent Workspaces");
         clear.setOnAction(e -> {
@@ -1036,6 +1037,64 @@ public class MainController {
             setTransientStatus("Recent workspaces cleared.");
         });
         recentWorkspacesMenu.getItems().addAll(new SeparatorMenuItem(), clear);
+    }
+
+    /**
+     * One row of the recent list: the workspace, and a cross to forget it.
+     *
+     * <p>A {@link CustomMenuItem} rather than a MenuItem, because a MenuItem is one label
+     * and one action and this row needs two of each. Clearing the whole list was the only
+     * way to drop a single entry before, which is a poor trade when one scratch folder is
+     * sitting among the projects you actually use.
+     *
+     * <p>{@code hideOnClick} is off: the cross removes the entry and the menu stays open,
+     * so several can be dropped in one go. Opening a workspace does close it, which is why
+     * that path hides the menu itself.
+     */
+    private CustomMenuItem recentWorkspaceItem(Path root, boolean alreadyOpen) {
+        Label label = new Label(recentLabel(root));
+        label.setMaxWidth(Double.MAX_VALUE);
+        label.setDisable(alreadyOpen);
+        HBox.setHgrow(label, Priority.ALWAYS);
+
+        Button forget = new Button("\u2715");
+        forget.getStyleClass().add("recent-forget");
+        forget.setFocusTraversable(false);
+        forget.setTooltip(new Tooltip("Forget " + root));
+        forget.setOnAction(e -> {
+            // Consumed so the row's own action does not also run and open the workspace
+            // that has just been forgotten.
+            e.consume();
+            workspaceHistory.remove(root);
+            rebuildRecentWorkspaces();
+            setTransientStatus("Removed " + root.getFileName() + " from recent workspaces.");
+        });
+
+        /* A spacer rather than a width bound to the popup. The popup sizes itself to its
+           widest row, so binding a row to the popup's width is circular and JavaFX
+           resolves it by oscillating. A growing spacer needs no width at all: it takes
+           whatever is left once the menu has decided how wide it is. */
+        Region gap = new Region();
+        HBox.setHgrow(gap, Priority.ALWAYS);
+        HBox row = new HBox(10, label, gap, forget);
+        row.setAlignment(Pos.CENTER_LEFT);
+        row.setMaxWidth(Double.MAX_VALUE);
+
+        CustomMenuItem item = new CustomMenuItem(row);
+        item.setHideOnClick(false);
+        item.setOnAction(e -> {
+            if (alreadyOpen) {
+                return;
+            }
+            // Opening does close the menu, unlike forgetting. Guarded because the popup
+            // does not exist until the menu has been shown at least once, and the list is
+            // built once at startup before that has happened.
+            if (recentWorkspacesMenu.getParentPopup() != null) {
+                recentWorkspacesMenu.getParentPopup().hide();
+            }
+            openRecentWorkspace(root);
+        });
+        return item;
     }
 
     /**
