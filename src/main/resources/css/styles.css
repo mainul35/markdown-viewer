@@ -682,6 +682,18 @@
    through the menu's own container, and if that ever stops matching the control is
    not subtle - it is invisible, and the feature looks broken with nothing on screen
    to say why. Faint and always present fails visibly instead. */
+/* Stated here rather than inherited. A Label inside a CustomMenuItem picks up
+   modena's ".menu-item .label", which is written for native menu rows; leaning on
+   it leaves this text one selector away from being invisible against the popup,
+   with nothing on screen to explain the blank row. */
+.recent-row-label {
+    -fx-text-fill: -mdv-text;
+}
+
+.recent-row-label:disabled {
+    -fx-opacity: 0.45;
+}
+
 .recent-forget {
     -fx-background-color: transparent;
     -fx-text-fill: -mdv-text-muted;
