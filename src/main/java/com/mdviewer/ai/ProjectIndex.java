@@ -80,12 +80,15 @@ public final class ProjectIndex {
                                 : "(file names only; the map of declarations did not fit)\n" + map);
             }
             if (detail == 0) {
-                // Even names alone overflow. Say what was cut rather than cutting quietly.
-                int keep = Math.max(0, maxChars - 200);
+                /* Even names alone overflow. The marker goes first, like the other two
+                   levels: it is what the caller tests to know the map gave something up,
+                   and putting it only at the end made the worst case the one case that
+                   reported itself as healthy. */
+                int keep = Math.max(0, maxChars - 300);
                 int cut = map.lastIndexOf('\n', keep);
-                return map.substring(0, Math.max(0, cut))
-                        + "\n... (map truncated here; the project has " + files.size()
-                        + " files and the rest are not listed)\n";
+                return "(some files only; " + files.size() + " files do not fit even as "
+                        + "names, and the rest are not listed)\n"
+                        + map.substring(0, Math.max(0, cut)) + "\n";
             }
         }
         return "";

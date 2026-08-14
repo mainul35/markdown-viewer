@@ -33,8 +33,13 @@ public final class ProjectScanner {
     public record Progress(int pass, int passes, int filesInPass, String stage) {}
 
     /** Findings from the whole project, small enough to answer from. */
+    /**
+     * @param mapNote what the project map managed to carry, or null when it carried
+     *                everything. A map reduced to bare filenames still looks like a map
+     *                from inside a prompt, so the one place it can be noticed is here.
+     */
     public record ScanResult(List<String> findings, int filesRead, int charsRead,
-                             int passes, boolean cancelled) {
+                             int passes, boolean cancelled, String mapNote) {
 
         public boolean isEmpty() {
             return findings.isEmpty();
@@ -51,6 +56,7 @@ public final class ProjectScanner {
     private final ChatProvider provider;
     private final int passChars;
     private final int maxFileChars;
+    private final int mapChars;
 
     /**
      * @param passChars    how much file text one request may carry, which is the same
@@ -60,15 +66,23 @@ public final class ProjectScanner {
      *                     generated HTML template cannot become a pass by itself
      */
     public ProjectScanner(ChatProvider provider, int passChars, int maxFileChars) {
+        this(provider, passChars, maxFileChars, 0);
+    }
+
+    /** @param mapChars the map's share of each pass, or 0 for a sixth of it */
+    public ProjectScanner(ChatProvider provider, int passChars, int maxFileChars,
+                          int mapChars) {
         this.provider = provider;
         this.passChars = Math.max(4_000, passChars);
         this.maxFileChars = Math.max(2_000, maxFileChars);
+        this.mapChars = Math.max(0, mapChars);
     }
 
     public ProjectScanner(ChatProvider provider, AiConfig config) {
         this(provider,
                 config.intValue("context.totalChars", 90_000),
-                config.intValue("scan.maxFileChars", 30_000));
+                config.intValue("scan.maxFileChars", 30_000),
+                config.intValue("scan.mapChars", 0));
     }
 
     /**
@@ -80,15 +94,20 @@ public final class ProjectScanner {
      * will actually carry of it, not for its size on disk.
      */
     public int estimatePasses(Path root) {
+        List<Path> files = ContextGatherer.allReadableFiles(root);
         long total = 0;
-        for (Path file : ContextGatherer.allReadableFiles(root)) {
+        for (Path file : files) {
             try {
                 total += Math.min(Files.size(file), maxFileChars) + HEADER_CHARS;
             } catch (IOException | RuntimeException e) {
                 // Unreadable now is unreadable during the scan too; it costs nothing.
             }
         }
-        return (int) Math.max(1, Math.ceil(total / (double) passChars));
+        // Against what files actually get, not the whole budget - the map takes its share
+        // of every pass, so an estimate against passChars would run short.
+        String map = ProjectIndex.of(root, files, mapChars > 0 ? mapChars : passChars / 6);
+        int forFiles = Math.max(4_000, passChars - map.length() - PROMPT_OVERHEAD);
+        return (int) Math.max(1, Math.ceil(total / (double) forFiles));
     }
 
     /** Roughly what "=== path ===" and the blank lines around a file cost. */
@@ -114,13 +133,19 @@ public final class ProjectScanner {
            batch - and it buys every pass the names of the whole project. An eighth was
            not enough: the auth server's map is 13707 characters and quietly degraded to
            bare filenames, which is the same thing as having no map. */
-        String map = ProjectIndex.of(root, files, passChars / 6);
+        String map = ProjectIndex.of(root, files, mapChars > 0 ? mapChars : passChars / 6);
 
-        List<Batch> batches = batch(root, files);
+        /* Files get what is left after the map and the instructions, not the whole budget.
+           passChars is what one request may carry; charging the map on top of it made
+           every request a sixth bigger than configured, and a request over the window is
+           not trimmed by the server - it is truncated from the front, which removes the
+           instructions and the map and leaves the model file text with no question. */
+        int forFiles = Math.max(4_000, passChars - map.length() - PROMPT_OVERHEAD);
+        List<Batch> batches = batch(root, files, forFiles);
         for (Batch batch : batches) {
             if (cancelled.getAsBoolean()) {
                 return new ScanResult(fold(findings, question, endpoint, onProgress, cancelled),
-                        filesRead, charsRead, pass, true);
+                        filesRead, charsRead, pass, true, mapNote(map, files.size()));
             }
             pass++;
             onProgress.accept(new Progress(pass, batches.size(), batch.files, "reading"));
@@ -162,7 +187,28 @@ public final class ProjectScanner {
                 pass++;
             }
         }
-        return new ScanResult(folded, filesRead, charsRead, pass, false);
+        return new ScanResult(folded, filesRead, charsRead, pass, false,
+                mapNote(map, files.size()));
+    }
+
+    /**
+     * Whether the map had to give something up, in words a reader can act on.
+     *
+     * <p>This is the limit a growing project meets first. The map costs about a hundred
+     * characters a file and rides in every pass, so its share is what decides how many
+     * files a scan can keep track of - roughly 150 at the default budget. Passes simply
+     * get more numerous as a project grows; the map gets thinner, and a thin map is how
+     * cross-file findings quietly stop appearing.
+     */
+    private static String mapNote(String map, int files) {
+        if (!map.startsWith("(")) {
+            return null;
+        }
+        String what = map.substring(0, Math.max(0, map.indexOf(')') + 1));
+        return "The project map " + what + " - " + files + " files no longer fit a map "
+                + "of declarations. Cross-file findings get weaker from here: raise "
+                + "context.totalChars or scan.mapChars in ai.properties, or scan a "
+                + "subfolder instead.";
     }
 
     /**
@@ -250,7 +296,10 @@ public final class ProjectScanner {
 
     private record Batch(String label, String text, int files) {}
 
-    private List<Batch> batch(Path root, List<Path> files) {
+    /** Roughly what the pass instructions cost, before the map and the files. */
+    private static final int PROMPT_OVERHEAD = 2_000;
+
+    private List<Batch> batch(Path root, List<Path> files, int budget) {
         List<Batch> batches = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         int count = 0;
@@ -273,7 +322,7 @@ public final class ProjectScanner {
             /* Start a new pass when this file would overflow the current one, rather than
                splitting the file across two. A class cut in half tells the reader less than
                either half would suggest. */
-            if (current.length() > 0 && current.length() + block.length() > passChars) {
+            if (current.length() > 0 && current.length() + block.length() > budget) {
                 batches.add(new Batch(label(first, last), current.toString(), count));
                 current.setLength(0);
                 count = 0;

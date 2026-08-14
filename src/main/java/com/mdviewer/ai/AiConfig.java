@@ -86,6 +86,20 @@ public final class AiConfig {
             # One file may not fill a pass by itself. Generated HTML templates here run to
             # 48000 characters and would otherwise become a pass of their own.
             scan.maxFileChars    = 30000
+
+            # Every pass also carries a map of the whole project - one line per file, the
+            # names it declares - so a pass can say where something it is looking at is
+            # defined even though it was given a different part of the project. That map
+            # is what connects one pass to another; without it a scan is a set of unrelated
+            # readings.
+            #
+            # It costs about 100 characters per file and rides in every pass, so it is the
+            # first thing a growing project outgrows: at a sixth of a 90000-character pass
+            # that is roughly 150 files. Past that it drops detail, then drops to bare
+            # filenames, and the panel says so under Sources when it does.
+            #
+            # 0 means a sixth of context.totalChars. Set a number to give it more.
+            scan.mapChars        = 0
             """;
 
     /** One configured endpoint. {@code apiKey} may be blank; that is not this class's business. */
