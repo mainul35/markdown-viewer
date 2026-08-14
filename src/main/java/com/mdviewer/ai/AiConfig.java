@@ -71,6 +71,21 @@ public final class AiConfig {
             context.totalChars   = 90000
             context.perFileChars = 40000
             context.maxFiles     = 80
+
+            # "Scan whole project" reads every file instead, in as many requests as it
+            # takes, and answers from the findings. It exists because a real project does
+            # not fit in a window at any budget: vsd-auth-server is about a million
+            # characters, some 250000 tokens against a window of 32768.
+            #
+            # Each pass carries context.totalChars of file text, so the count follows from
+            # the size of the project: a million characters at 90000 is twelve passes, and
+            # twelve round trips to a local 30B model is minutes rather than seconds.
+            # Raising context.totalChars makes a scan shorter as well as an ordinary
+            # question richer.
+            #
+            # One file may not fill a pass by itself. Generated HTML templates here run to
+            # 48000 characters and would otherwise become a pass of their own.
+            scan.maxFileChars    = 30000
             """;
 
     /** One configured endpoint. {@code apiKey} may be blank; that is not this class's business. */
