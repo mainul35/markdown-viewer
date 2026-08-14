@@ -577,6 +577,41 @@ public final class ContextGatherer {
         }
     }
 
+    /**
+     * What kind of evidence a source is, for the heading above it.
+     *
+     * <p>Asked about an auth server, a reply reported a fifteen-minute token lifetime and
+     * a subscription plan field as things the server did. Both came from a plan document
+     * in a different project, which said what was intended; the server's own code said an
+     * hour, and had no plan field at all. Nothing in the prompt distinguished the two,
+     * because nothing in the sources did: every one arrived as "=== path ===".
+     *
+     * <p>Prose describes intent, code and schema describe behaviour, and a listing is only
+     * names. Saying which is which is what lets the answer be held to it.
+     */
+    public static String kindOf(String label) {
+        String name = label == null ? "" : label.toLowerCase(Locale.ROOT).strip();
+        if (name.endsWith("(listing)")) {
+            return "LISTING - file names only. These files were NOT read";
+        }
+        if (name.startsWith("http://") || name.startsWith("https://")) {
+            return "WEB PAGE - someone's published claims, not this project's code";
+        }
+        if (name.endsWith(".md") || name.endsWith(".markdown") || name.endsWith(".txt")
+                || name.endsWith(".adoc") || name.endsWith(".rst")) {
+            return "DOCUMENT - prose. Says what someone INTENDED or believed, "
+                    + "which may differ from what the code does";
+        }
+        if (name.endsWith(".sql")) {
+            return "SCHEMA - what the database actually defines";
+        }
+        if (name.endsWith(".yml") || name.endsWith(".yaml") || name.endsWith(".properties")
+                || name.endsWith(".toml") || name.endsWith(".ini") || name.endsWith(".conf")) {
+            return "CONFIGURATION - actual settings, though a deployment may override them";
+        }
+        return "CODE - what the system actually does";
+    }
+
     private static boolean isText(Path file) {
         String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
         int dot = name.lastIndexOf('.');
