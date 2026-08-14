@@ -393,6 +393,9 @@ public final class AiPanel extends VBox {
                 + (result.cancelled()
                         ? " Stopped early, so later files were not read."
                         : " Nothing was skipped."));
+        if (result.mapNote() != null) {
+            skipped.add(result.mapNote());
+        }
         return new ContextGatherer.Result(sources, skipped, chars);
     }
 
