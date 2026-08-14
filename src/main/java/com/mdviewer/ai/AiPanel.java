@@ -26,9 +26,18 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
+import com.mdviewer.MainController;
+import com.mdviewer.service.MarkdownService;
+import javafx.concurrent.Worker;
+import javafx.scene.web.WebEngine;
+import javafx.scene.web.WebView;
+import netscape.javascript.JSObject;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.function.Supplier;
 
@@ -52,8 +61,34 @@ public final class AiPanel extends VBox {
 
     private final ComboBox<String> providerChoice = new ComboBox<>();
     private final Label hostLabel = new Label();
-    private final VBox transcript = new VBox(10);
-    private final ScrollPane transcriptScroll = new ScrollPane(transcript);
+    /**
+     * The transcript, rendered the way the preview renders the document.
+     *
+     * <p>One WebView for the whole conversation rather than one per message: a WebView is
+     * a browser engine, and twenty of them in a scroll pane is twenty browser engines. The
+     * turns are kept as the Markdown they arrived as and re-rendered into it.
+     */
+    private final WebView transcriptView = new WebView();
+    private boolean transcriptReady = false;
+
+    /** One message, kept as Markdown so it can be re-rendered and copied as written. */
+    private record Turn(String who, String text, String kind) {}
+
+    /**
+     * A conversation, and the document it belongs to.
+     *
+     * <p>One assistant panel, but not one conversation: asking about a design note and
+     * then opening a specification used to carry the first document's questions into the
+     * second, and the model was still being told about a file the reader had moved on
+     * from. Each document keeps its own thread and gets it back on return.
+     */
+    private static final class Conversation {
+        private final List<Turn> turns = new ArrayList<>();
+        private final List<ChatProvider.Message> history = new ArrayList<>();
+    }
+
+    private final Map<String, Conversation> conversations = new LinkedHashMap<>();
+    private String activeKey = "";
     private final TextArea input = new TextArea();
     private final Button send = new Button("Send");
     private final CheckBox scanProject = new CheckBox("Scan whole project");
@@ -65,6 +100,12 @@ public final class AiPanel extends VBox {
 
     /** The turn in flight, so Stop can interrupt a request rather than wait it out. */
     private volatile Thread worker;
+
+    /** Index of the reply still arriving, or -1. It is shown as text until it is complete. */
+    private int streamingTurn = -1;
+
+    /** The preview's renderer, so an answer is formatted the way the document is. */
+    private final MarkdownService markdown = new MarkdownService();
 
     /** Everything one request may carry, sources and document and history together. */
     private final int windowChars;
@@ -79,7 +120,11 @@ public final class AiPanel extends VBox {
     private final HBox attachment = new HBox(8);
     private final Label attachmentLabel = new Label();
 
-    private final List<ChatProvider.Message> history = new ArrayList<>();
+    /* Not final: these point at the active document's conversation and are swapped when
+       the reader changes document. Everything else in the panel keeps working on "the
+       current conversation" without knowing there is more than one. */
+    private List<ChatProvider.Message> history = new ArrayList<>();
+    private List<Turn> turns = new ArrayList<>();
     private boolean busy = false;
 
     public AiPanel(AiConfig config) {
@@ -108,11 +153,10 @@ public final class AiPanel extends VBox {
         hostLabel.getStyleClass().add("ai-host");
         hostLabel.setMaxWidth(Double.MAX_VALUE);
 
-        transcript.getStyleClass().add("ai-transcript");
-        transcript.setPadding(new Insets(10));
-        transcriptScroll.setFitToWidth(true);
-        transcriptScroll.getStyleClass().add("ai-transcript-scroll");
-        VBox.setVgrow(transcriptScroll, Priority.ALWAYS);
+        transcriptView.getStyleClass().add("ai-transcript");
+        transcriptView.setContextMenuEnabled(false);
+        VBox.setVgrow(transcriptView, Priority.ALWAYS);
+        initTranscript();
 
         input.setPromptText("Ask about this document...");
         input.setWrapText(true);
@@ -137,8 +181,12 @@ public final class AiPanel extends VBox {
         send.setDefaultButton(false);
         Button clear = new Button("Clear");
         clear.setOnAction(e -> {
+            // This document's conversation only: the others are not on screen, and
+            // clearing what you cannot see is not something a Clear button should do.
             history.clear();
-            transcript.getChildren().clear();
+            turns.clear();
+            streamingTurn = -1;
+            renderTranscript();
             setStatus("");
         });
         Button test = new Button("Test connection");
@@ -202,7 +250,7 @@ public final class AiPanel extends VBox {
         composer.setPadding(new Insets(8));
         composer.getStyleClass().add("ai-composer");
 
-        getChildren().addAll(header, hostLabel, transcriptScroll, composer);
+        getChildren().addAll(header, hostLabel, transcriptView, composer);
         showHost();
     }
 
@@ -301,9 +349,11 @@ public final class AiPanel extends VBox {
             return;
         }
         input.clear();
-        addBubble("You", question, "ai-user");
+        addTurn("You", question, "user");
 
-        TextArea reply = addBubble(endpoint.model(), "", "ai-assistant");
+        int replyTurn = addTurn(endpoint.model(), "", "assistant");
+        streamingTurn = replyTurn;
+        StringBuilder answer = new StringBuilder();
         busy = true;
         send.setDisable(true);
         setStatus("Thinking...");
@@ -361,14 +411,33 @@ public final class AiPanel extends VBox {
                     Platform.runLater(() -> setStatus(prompt.note() + " Thinking..."));
                 }
                 try {
-                    provider.stream(endpoint, prompt.messages(), token ->
-                            Platform.runLater(() -> {
-                                reply.setText(reply.getText() + token);
-                                transcriptScroll.setVvalue(1.0);
-                            }));
+                    provider.stream(endpoint, prompt.messages(), token -> {
+                        synchronized (answer) {
+                            answer.append(token);
+                        }
+                        Platform.runLater(() -> {
+                            String so_far;
+                            synchronized (answer) {
+                                so_far = answer.toString();
+                            }
+                            if (replyTurn < turns.size()) {
+                                turns.set(replyTurn, new Turn(endpoint.model(), so_far,
+                                        "assistant"));
+                            }
+                            // Text, not a re-render: half an answer is not valid Markdown,
+                            // and rendering per token would be both wrong and slow.
+                            call("__aiStream", so_far);
+                        });
+                    });
                     Platform.runLater(() -> {
+                        String whole = answer.toString();
                         history.add(new ChatProvider.Message("user", question));
-                        history.add(new ChatProvider.Message("assistant", reply.getText()));
+                        history.add(new ChatProvider.Message("assistant", whole));
+                        if (replyTurn < turns.size()) {
+                            turns.set(replyTurn, new Turn(endpoint.model(), whole, "assistant"));
+                        }
+                        streamingTurn = -1;
+                        renderTranscript(); // Now it is complete, render it as Markdown.
                         finish("");
                     });
                 } catch (ChatProvider.NotAllowedException e) {
@@ -793,72 +862,203 @@ public final class AiPanel extends VBox {
             note.append(System.lineSeparator()).append("Skipped: ")
                     .append(String.join("; ", context.skipped()));
         }
-        addBubble("Sources", note.toString(), "ai-sources");
+        addTurn("Sources", note.toString(), "sources");
+    }
+
+    // ------------------------------------------------------------- the transcript
+
+    /**
+     * Loads the shell once and renders into it afterwards.
+     *
+     * <p>Loading a page per turn would lose the scroll position and flash white between
+     * messages, so the page is loaded once and the conversation is pushed into its body.
+     */
+    private void initTranscript() {
+        WebEngine engine = transcriptView.getEngine();
+        engine.getLoadWorker().stateProperty().addListener((obs, was, now) -> {
+            if (now == Worker.State.SUCCEEDED) {
+                transcriptReady = true;
+                JSObject window = (JSObject) engine.executeScript("window");
+                window.setMember("aiBridge", new Bridge());
+                renderTranscript();
+            } else if (now == Worker.State.FAILED || now == Worker.State.CANCELLED) {
+                transcriptReady = false;
+            }
+        });
+        engine.loadContent(transcriptShell());
     }
 
     /**
-     * A message in the transcript.
+     * Copying, called from the page.
      *
-     * <p>A read-only {@link TextArea} rather than a Label, because a Label's text cannot be
-     * selected and an assistant you cannot copy an answer out of is most of the way to
-     * useless. It is styled to look like a bubble and grows with its content, since a
-     * TextArea otherwise picks an arbitrary height and scrolls inside itself, which reads
-     * as a bug in a transcript that is already scrolling.
+     * <p>Public, and public methods on it, because that is the only shape a WebView will
+     * call into. It does two harmless things and reads nothing back out of the page.
      */
-    private TextArea addBubble(String who, String text, String styleClass) {
-        Label speaker = new Label(who);
-        speaker.getStyleClass().add("ai-speaker");
+    public final class Bridge {
 
-        TextArea body = new TextArea(text);
-        body.setEditable(false);
-        body.setWrapText(true);
-        body.getStyleClass().addAll("ai-bubble", styleClass);
-        body.setMaxWidth(Double.MAX_VALUE);
-        body.setPrefRowCount(1);
-
-        MenuItem copyMessage = new MenuItem("Copy message");
-        copyMessage.setOnAction(e -> copyToClipboard(body.getText()));
-        MenuItem copyAll = new MenuItem("Copy whole conversation");
-        copyAll.setOnAction(e -> copyToClipboard(wholeTranscript()));
-        body.setContextMenu(new ContextMenu(copyMessage, copyAll));
-
-        // Grow with the text. The height has to be measured from the laid-out text node,
-        // because a TextArea has no notion of "as tall as its content".
-        body.textProperty().addListener((o, a, b) -> Platform.runLater(() -> fitHeight(body)));
-        Platform.runLater(() -> fitHeight(body));
-
-        VBox group = new VBox(2, speaker, body);
-        transcript.getChildren().add(group);
-        transcriptScroll.setVvalue(1.0);
-        return body;
-    }
-
-    private static void fitHeight(TextArea area) {
-        javafx.scene.Node text = area.lookup(".text");
-        if (text != null) {
-            double height = text.getBoundsInLocal().getHeight();
-            if (height > 0) {
-                area.setPrefHeight(height + 22);
-                area.setMinHeight(height + 22);
+        public void copy(int index) {
+            if (index >= 0 && index < turns.size()) {
+                copyToClipboard(turns.get(index).text());
             }
         }
+
+        public void copyAll() {
+            copyToClipboard(wholeTranscript());
+        }
+    }
+
+    private String transcriptShell() {
+        /* The preview's own stylesheet, so an answer about a document looks like the
+           document. Only the page frame is overridden: the preview is a printed page with
+           a wide margin, and this is a side panel a third of its width. */
+        String overrides = """
+            body { padding:14px 16px 28px; font-size:14px; line-height:1.6; }
+            .ai-turn { margin:0 0 18px; }
+            .ai-who {
+              font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+              color:var(--ink-soft); margin:0 0 4px; display:flex; gap:8px;
+              align-items:baseline;
+            }
+            .ai-copy {
+              font-size:10px; letter-spacing:.04em; text-transform:none;
+              color:var(--accent); cursor:pointer; border:0; background:none; padding:0;
+            }
+            .ai-copy:hover { text-decoration:underline; }
+            .ai-body > :first-child { margin-top:0; }
+            .ai-body > :last-child { margin-bottom:0; }
+            .ai-user .ai-body {
+              border-left:3px solid var(--accent); padding-left:10px; color:var(--ink-soft);
+            }
+            /* Sources are a listing, not prose: fixed width, and never wrapped into
+               something that looks like a sentence. */
+            .ai-sources .ai-body {
+              font-family:var(--mono); font-size:11.5px; white-space:pre-wrap;
+              color:var(--ink-soft); background:var(--code-bg); border-radius:6px;
+              padding:8px 10px; max-height:220px; overflow:auto;
+            }
+            .ai-streaming { white-space:pre-wrap; }
+            .ai-empty { color:var(--ink-soft); font-style:italic; }
+            """;
+        String js = """
+            window.__aiSet = function (html) {
+              document.getElementById('t').innerHTML = html;
+              window.scrollTo(0, document.body.scrollHeight);
+            };
+            /* Streaming writes text, not HTML: a half-arrived answer is not valid Markdown
+               and rendering every token would be both wrong and slow. It is rendered once,
+               when the answer is complete. */
+            window.__aiStream = function (text) {
+              var last = document.getElementById('streaming');
+              if (last) {
+                last.textContent = text;
+                window.scrollTo(0, document.body.scrollHeight);
+              }
+            };
+            window.__aiTheme = function (theme) {
+              document.documentElement.setAttribute('data-theme', theme);
+            };
+            """;
+        return "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>"
+                + MainController.previewCss() + overrides + "</style><script>" + js
+                + "</script></head><body><div id=\"t\"></div></body></html>";
+    }
+
+    /** Re-renders every turn. Cheap enough: a conversation is tens of messages, not tens of thousands. */
+    private void renderTranscript() {
+        if (!transcriptReady) {
+            return;
+        }
+        StringBuilder html = new StringBuilder();
+        if (turns.isEmpty()) {
+            html.append("<p class=\"ai-empty\">Ask about ")
+                    .append(escape(documentNameSupplier.get())).append(".</p>");
+        }
+        for (int i = 0; i < turns.size(); i++) {
+            Turn turn = turns.get(i);
+            html.append("<div class=\"ai-turn ai-").append(turn.kind()).append("\">")
+                    .append("<div class=\"ai-who\">").append(escape(turn.who()))
+                    .append("<button class=\"ai-copy\" onclick=\"aiBridge.copy(").append(i)
+                    .append(")\">copy</button></div><div class=\"ai-body\"")
+                    .append(i == streamingTurn ? " id=\"streaming\" class=\"ai-streaming\"" : "")
+                    .append('>')
+                    .append(bodyHtml(turn, i == streamingTurn))
+                    .append("</div></div>");
+        }
+        call("__aiSet", html.toString());
+    }
+
+    private String bodyHtml(Turn turn, boolean streaming) {
+        if (streaming || turn.kind().equals("sources")) {
+            return escape(turn.text());
+        }
+        try {
+            Path base = workspaceRootSupplier.get();
+            return markdown.render(turn.text(), base == null ? Path.of(".") : base).html();
+        } catch (RuntimeException e) {
+            // A model can emit anything, and a broken answer must still be readable.
+            return escape(turn.text());
+        }
+    }
+
+    private void call(String function, String argument) {
+        if (!transcriptReady) {
+            return;
+        }
+        try {
+            JSObject window = (JSObject) transcriptView.getEngine().executeScript("window");
+            window.call(function, argument);
+        } catch (RuntimeException e) {
+            // The page was torn down mid-update; the next full render puts it right.
+        }
+    }
+
+    private static String escape(String text) {
+        return text == null ? "" : text.replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;");
+    }
+
+    /** Adds a message and returns its index, so a streaming reply can find it again. */
+    private int addTurn(String who, String text, String kind) {
+        turns.add(new Turn(who, text, kind));
+        renderTranscript();
+        return turns.size() - 1;
     }
 
     private String wholeTranscript() {
         StringBuilder all = new StringBuilder();
-        for (javafx.scene.Node node : transcript.getChildren()) {
-            if (node instanceof VBox group) {
-                for (javafx.scene.Node child : group.getChildren()) {
-                    if (child instanceof Label speaker) {
-                        all.append(speaker.getText()).append(':').append(System.lineSeparator());
-                    } else if (child instanceof TextArea body) {
-                        all.append(body.getText()).append(System.lineSeparator())
-                                .append(System.lineSeparator());
-                    }
-                }
-            }
+        for (Turn turn : turns) {
+            all.append(turn.who()).append(':').append(System.lineSeparator())
+                    .append(turn.text()).append(System.lineSeparator())
+                    .append(System.lineSeparator());
         }
         return all.toString().strip();
+    }
+
+    /**
+     * Switches to the conversation belonging to {@code key}, creating it if new.
+     *
+     * <p>Called when the reader changes document. A turn in flight is left to finish
+     * against the conversation it started in - it is still that document's answer.
+     */
+    public void setActiveDocument(String key, String title) {
+        String id = key == null || key.isBlank() ? "" : key;
+        if (id.equals(activeKey)) {
+            return;
+        }
+        Conversation next = conversations.computeIfAbsent(id, k -> new Conversation());
+        activeKey = id;
+        turns = next.turns;
+        history = next.history;
+        renderTranscript();
+        if (!busy) {
+            setStatus(turns.isEmpty() ? "" : "Showing the conversation about "
+                    + (title == null || title.isBlank() ? "this document" : title) + ".");
+        }
+    }
+
+    /** Repaints the transcript for the editor's theme, so the panel matches the preview. */
+    public void setDarkMode(boolean dark) {
+        call("__aiTheme", dark ? "dark" : "light");
     }
 
     private void copyToClipboard(String text) {
