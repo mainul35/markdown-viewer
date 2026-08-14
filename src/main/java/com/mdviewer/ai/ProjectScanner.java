@@ -280,6 +280,15 @@ public final class ProjectScanner {
                 + "If the findings claim something these files do not support, say so. "
                 + "Still do not answer the question in full; the answer comes next, from "
                 + "all of this.\n\n"
+                /* The only place a contradiction between two passes can be caught: this is
+                   the one request that holds several of the implicated files at once. */
+                + "Two things especially worth catching here:\n\n"
+                + "- A finding that says something exists, where the files below are where "
+                + "it would live and it is not in them. Say that plainly - it means the "
+                + "thing has to be built, not configured.\n"
+                + "- A finding taken from a DOCUMENT stated as though the code did it. "
+                + "Give the value the code actually has, and the value the document wanted, "
+                + "and name both files.\n\n"
                 + "If nothing new follows from reading them together, reply with exactly: "
                 + NOTHING + "\n\n"
                 + "PROJECT MAP - every file and the names declared in it. Names only: you "
@@ -317,7 +326,8 @@ public final class ProjectScanner {
                         + "\n... (truncated; " + (body.length() / 1000)
                         + "k characters in the full file)";
             }
-            String block = "=== " + label + " ===\n" + body + "\n\n";
+            String block = "=== [" + ContextGatherer.kindOf(label) + "]  " + label
+                    + " ===\n" + body + "\n\n";
 
             /* Start a new pass when this file would overflow the current one, rather than
                splitting the file across two. A class cut in half tells the reader less than
@@ -379,6 +389,22 @@ public final class ProjectScanner {
                    be traced to a file that was actually read. */
                 + "Begin every line with the file it came from, exactly as written in the "
                 + "=== heading ===, then ' :: ', then the finding. One finding per line.\n\n"
+                /* A finding that loses the difference between "the code does this" and "a
+                   document wants this" cannot have it restored later: by the time the
+                   answer is written, the file is gone and only the note remains. So the
+                   distinction has to be made here, in the pass that can still see both. */
+                + "Each file is headed with what kind of evidence it is. Record what the "
+                + "file actually is, not what it would be convenient for it to be:\n\n"
+                + "- From CODE, SCHEMA or CONFIGURATION, write what it does: "
+                + "'TenantController.java :: POST /api/tenants creates a tenant; PLATFORM "
+                + "type requires admin, otherwise 403'.\n"
+                + "- From a DOCUMENT, mark it as intent: 'PLAN.md :: says access tokens "
+                + "are INTENDED to last 15 minutes'. Never record a document's wish as "
+                + "something the system does.\n"
+                + "- Record real values - actual paths, actual defaults, actual enum "
+                + "members - not a summary of them. A later pass cannot go back and look.\n"
+                + "- If a document here contradicts code you can see, record both and say "
+                + "which file each came from.\n\n"
                 + "Do not answer the question yet - the other parts have not been read, and "
                 + "a conclusion drawn from one part of " + passes + " is a guess.\n\n"
                 + "If the question asks whether something exists and it is not in these "
