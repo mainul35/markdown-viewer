@@ -509,3 +509,33 @@
     -fx-background-radius: 5;
     -fx-cursor: hand;
 }
+
+/* ------------------------------------------------- forgetting a recent workspace
+
+   The cross on a Recent Workspaces row. Muted rather than hidden: revealing it on
+   row hover would be tidier, but it would rest on a descendant selector reaching
+   through the menu's own container, and if that ever stops matching the control is
+   not subtle - it is invisible, and the feature looks broken with nothing on screen
+   to say why. Faint and always present fails visibly instead. */
+.recent-forget {
+    -fx-background-color: transparent;
+    -fx-text-fill: -mdv-text-muted;
+    -fx-font-size: 10px;
+    -fx-padding: 1 5 1 5;
+    -fx-background-radius: 3;
+    -fx-opacity: 0.5;
+    -fx-cursor: hand;
+}
+
+.recent-forget:hover,
+.recent-forget:focused {
+    -fx-opacity: 1;
+}
+
+/* The palette has no danger colour, and inventing one for a single control would
+   leave a red that nothing else in the app ever uses. Accent-on-soft is the same
+   emphasis every other hover here gets; the cross itself says what it does. */
+.recent-forget:hover {
+    -fx-background-color: -mdv-accent-soft;
+    -fx-text-fill: -mdv-accent;
+}
