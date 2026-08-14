@@ -17,6 +17,10 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
+import javafx.geometry.Pos;
+import javafx.scene.Group;
+import javafx.scene.control.ToggleButton;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.VBox;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
@@ -101,6 +105,9 @@ public class MainController {
 
     /** The mode to go back to when the assistant closes, or null when it is not open. */
     private EditorMode modeBeforeAssistant;
+
+    /** The edge tab that opens and closes the assistant. */
+    private final ToggleButton assistantTab = new ToggleButton("Assistant");
 
     @FXML
     private CheckMenuItem autoRefreshMenuItem;
@@ -253,6 +260,7 @@ public class MainController {
             WorkspaceView workspace = activeWorkspace();
             return workspace == null ? null : workspace.getRoot();
         });
+        installToolStripe();
 
         /* Built when the menu opens rather than kept in step with every open and close.
            A menu nobody is looking at does not need to be correct, and rebuilding on
@@ -921,6 +929,30 @@ public class MainController {
         showAssistant(!isAssistantVisible());
     }
 
+    /**
+     * The tool stripe down the right edge, the way an IDE does it.
+     *
+     * <p>The assistant was reachable only from the View menu, which is two clicks and a
+     * memory test for something opened and closed all day. A labelled tab on the edge is
+     * always visible, says whether the panel is open, and is the same click either way.
+     *
+     * <p>Rotated inside a Group on purpose: a rotated node keeps its unrotated layout
+     * bounds, so a bare rotated button would reserve a wide, short box and overlap what is
+     * beside it. A Group takes its size from what it actually draws.
+     */
+    private void installToolStripe() {
+        assistantTab.getStyleClass().add("tool-stripe-button");
+        assistantTab.setRotate(90);
+        assistantTab.setFocusTraversable(false);
+        assistantTab.setTooltip(new Tooltip("Show or hide the assistant"));
+        assistantTab.setOnAction(e -> showAssistant(assistantTab.isSelected()));
+
+        VBox stripe = new VBox(new Group(assistantTab));
+        stripe.getStyleClass().add("tool-stripe");
+        stripe.setAlignment(Pos.TOP_CENTER);
+        rootPane.setRight(stripe);
+    }
+
     private boolean isAssistantVisible() {
         return mainSplit.getItems().contains(aiPanel);
     }
@@ -963,6 +995,9 @@ public class MainController {
             modeBeforeAssistant = null;
         }
         assistantMenuItem.setText(visible ? "Hide Assistant" : "Show Assistant");
+        // The menu and the stripe are two ways to the same switch, so neither may show a
+        // state the other has just changed.
+        assistantTab.setSelected(visible);
     }
 
     @FXML

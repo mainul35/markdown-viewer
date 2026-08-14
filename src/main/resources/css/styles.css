@@ -615,3 +615,62 @@
     -fx-font-size: 11px;
     -fx-text-fill: -mdv-text-muted;
 }
+
+/* ------------------------------------------------------------------ tool stripe
+
+   The strip down the right edge, the way an IDE carries its tool windows. The
+   assistant used to be reachable only from the View menu, which is a memory test
+   for something opened and closed all day; a labelled tab is always in view and
+   says whether the panel is open.
+
+   The button is rotated in code and wrapped in a Group so it takes the space it
+   actually draws. Padding here is therefore read as if the button were still
+   horizontal - top and bottom become the narrow edges. */
+.tool-stripe {
+    -fx-background-color: -mdv-surface-alt;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 0 0 1;
+    -fx-padding: 8 0 0 0;
+    -fx-min-width: 30;
+}
+
+.tool-stripe-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 0;
+    -fx-text-fill: -mdv-text-muted;
+    -fx-font-size: 11px;
+    -fx-padding: 4 12 4 12;
+    -fx-cursor: hand;
+}
+
+.tool-stripe-button:hover {
+    -fx-background-color: -mdv-surface;
+    -fx-text-fill: -mdv-text;
+}
+
+/* Selected means the panel is open, so it reads as a pressed tab rather than a
+   button that happens to be highlighted. */
+.tool-stripe-button:selected {
+    -fx-background-color: -mdv-surface;
+    -fx-text-fill: -mdv-accent;
+    -fx-border-color: -mdv-accent transparent transparent transparent;
+    -fx-border-width: 2 0 0 0;
+}
+
+/* The bar sits under the buttons and above the status line, so it needs to read as
+   a thin rule rather than a control competing with them. */
+.ai-progress {
+    -fx-pref-height: 4;
+    -fx-min-height: 4;
+}
+
+.ai-progress > .track {
+    -fx-background-color: -mdv-surface-alt;
+    -fx-background-radius: 2;
+}
+
+.ai-progress > .bar {
+    -fx-background-color: -mdv-accent;
+    -fx-background-radius: 2;
+    -fx-padding: 0;
+}
