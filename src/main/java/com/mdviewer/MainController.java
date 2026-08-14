@@ -99,6 +99,9 @@ public class MainController {
     /** Remembered so hiding and re-showing the assistant keeps its width. */
     private double assistantDivider = 0.72;
 
+    /** The mode to go back to when the assistant closes, or null when it is not open. */
+    private EditorMode modeBeforeAssistant;
+
     @FXML
     private CheckMenuItem autoRefreshMenuItem;
 
@@ -933,6 +936,16 @@ public class MainController {
             // the same two-pass dance the split's own mode switching needs.
             mainSplit.setDividerPosition(divider, assistantDivider);
             Platform.runLater(() -> mainSplit.setDividerPosition(divider, assistantDivider));
+            /* Three columns is one too many. With the tree, the editor, the preview and
+               the assistant all sharing the width, none of them is wide enough to work in
+               - and the assistant is for reading about the document, which is what the
+               preview is for too. The editor stands down while it is open, and the mode it
+               was in comes back when it closes. */
+            modeBeforeAssistant = currentMode;
+            if (currentMode != EditorMode.FULL_PREVIEW) {
+                currentMode = EditorMode.FULL_PREVIEW;
+                updateLayout();
+            }
             aiPanel.getInput().requestFocus();
         } else {
             int divider = mainSplit.getItems().size() - 2;
@@ -940,6 +953,14 @@ public class MainController {
                 assistantDivider = mainSplit.getDividerPositions()[divider];
             }
             mainSplit.getItems().remove(aiPanel);
+            /* Only if it is still where the assistant put it. Choosing Raw or Split while
+               the assistant is open is a decision, and undoing it on close would throw
+               that away. */
+            if (modeBeforeAssistant != null && currentMode == EditorMode.FULL_PREVIEW) {
+                currentMode = modeBeforeAssistant;
+                updateLayout();
+            }
+            modeBeforeAssistant = null;
         }
         assistantMenuItem.setText(visible ? "Hide Assistant" : "Show Assistant");
     }

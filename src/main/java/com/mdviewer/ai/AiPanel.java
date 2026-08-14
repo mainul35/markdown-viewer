@@ -10,6 +10,7 @@ import javafx.scene.control.Dialog;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.PasswordField;
+import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
@@ -20,6 +21,7 @@ import javafx.scene.image.ImageView;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -60,7 +62,20 @@ public final class AiPanel extends VBox {
     private final ProjectScanner scanner;
 
     private final ComboBox<String> providerChoice = new ComboBox<>();
+    private final ComboBox<String> modelChoice = new ComboBox<>();
     private final Label hostLabel = new Label();
+
+    /** The model chosen per provider, overriding what ai.properties configured. */
+    private final Map<String, String> chosenModels = new LinkedHashMap<>();
+
+    /**
+     * Shown while a turn is running.
+     *
+     * <p>Reading a project is minutes of nothing happening on screen. A line of text saying
+     * "pass 4 of 10" is easy to miss next to a transcript; a bar that fills is not, and it
+     * is the difference between waiting and wondering whether it has hung.
+     */
+    private final ProgressBar progress = new ProgressBar();
     /**
      * The transcript, rendered the way the preview renders the document.
      *
@@ -143,10 +158,31 @@ public final class AiPanel extends VBox {
 
         providerChoice.getItems().setAll(config.providerNames());
         providerChoice.setValue(config.defaultProvider());
-        providerChoice.valueProperty().addListener((o, a, b) -> showHost());
+        providerChoice.valueProperty().addListener((o, a, b) -> {
+            showHost();
+            loadModels(false);
+        });
         providerChoice.setFocusTraversable(false);
 
-        HBox header = new HBox(8, title, headerSpacer, providerChoice);
+        /* Editable, because the catalogue is a convenience and not the authority: a proxy
+           may route a name it does not advertise, and refusing to send a model the list
+           does not contain would make the picker a restriction rather than a shortcut. */
+        modelChoice.setEditable(true);
+        modelChoice.setFocusTraversable(false);
+        modelChoice.setPromptText("model");
+        modelChoice.setMaxWidth(220);
+        modelChoice.setTooltip(new Tooltip(
+                "Which model to ask. The list is fetched from the provider;\n"
+                + "you can also type a name it does not advertise."));
+        modelChoice.valueProperty().addListener((o, a, chosen) -> {
+            String provider = providerChoice.getValue();
+            if (provider != null && chosen != null && !chosen.isBlank()) {
+                chosenModels.put(provider, chosen.strip());
+                showHost();
+            }
+        });
+
+        HBox header = new HBox(8, title, headerSpacer, modelChoice, providerChoice);
         header.getStyleClass().add("ai-panel-header");
         header.setAlignment(Pos.CENTER_LEFT);
 
@@ -162,12 +198,22 @@ public final class AiPanel extends VBox {
         input.setWrapText(true);
         input.setPrefRowCount(3);
         input.getStyleClass().add("ai-input");
-        input.setOnKeyPressed(event -> {
-            // Enter sends and Shift+Enter breaks the line, which is the convention every
-            // chat box uses; a multi-line question is still perfectly possible.
-            if (event.getCode() == KeyCode.ENTER && !event.isShiftDown()) {
-                event.consume();
-                sendCurrentInput();
+        /* A filter, not a handler. A TextArea's own key bindings live in its skin and run
+           from a handler on the same node, so which of the two saw Enter first was a
+           matter of registration order - Shift+Enter sometimes sent instead of breaking
+           the line. A filter runs on the way down, before the skin gets a look, so the
+           two keys mean one thing each and always the same thing. */
+        input.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == KeyCode.ENTER) {
+                if (event.isShiftDown()) {
+                    // Explicit, rather than left to the skin: this is the whole point of
+                    // filtering, and letting it through would put the order back in doubt.
+                    event.consume();
+                    input.insertText(input.getCaretPosition(), "\n");
+                } else {
+                    event.consume();
+                    sendCurrentInput();
+                }
             } else if (event.getCode() == KeyCode.V && event.isShortcutDown()
                     && Clipboard.getSystemClipboard().hasImage()) {
                 // Only when the clipboard actually holds an image: a normal text paste
@@ -246,12 +292,20 @@ public final class AiPanel extends VBox {
         attachment.setVisible(false);
         attachment.setManaged(false);
 
-        VBox composer = new VBox(6, attachment, input, scanRow, buttons, status);
+        progress.setMaxWidth(Double.MAX_VALUE);
+        progress.getStyleClass().add("ai-progress");
+        progress.setVisible(false);
+        progress.setManaged(false);
+
+        VBox composer = new VBox(6, attachment, input, scanRow, buttons, progress, status);
         composer.setPadding(new Insets(8));
         composer.getStyleClass().add("ai-composer");
 
         getChildren().addAll(header, hostLabel, transcriptView, composer);
         showHost();
+        // Quietly, at startup: it is a GET for the catalogue and sends nothing, but it
+        // should not announce itself before the reader has asked the panel for anything.
+        loadModels(false);
     }
 
     public void setDocumentSupplier(Supplier<String> supplier) {
@@ -335,7 +389,80 @@ public final class AiPanel extends VBox {
 
     private AiConfig.Endpoint currentEndpoint() {
         String name = providerChoice.getValue();
-        return name == null || name.isBlank() ? null : config.endpoint(name);
+        if (name == null || name.isBlank()) {
+            return null;
+        }
+        AiConfig.Endpoint endpoint = config.endpoint(name);
+        String chosen = chosenModels.get(name);
+        if (endpoint == null || chosen == null || chosen.isBlank()
+                || chosen.equals(endpoint.model())) {
+            return endpoint;
+        }
+        // The picked model wins over the configured one, for this session only. Writing it
+        // back to ai.properties would change a file the reader did not ask to edit.
+        return new AiConfig.Endpoint(endpoint.name(), endpoint.baseUrl(), chosen,
+                endpoint.apiKey());
+    }
+
+    /**
+     * Fills the model list from the provider, off the FX thread.
+     *
+     * @param announce whether to say so in the status line; silent when this is a
+     *                 side effect of switching provider rather than something asked for
+     */
+    private void loadModels(boolean announce) {
+        AiConfig.Endpoint endpoint = currentEndpoint();
+        String providerName = providerChoice.getValue();
+        if (endpoint == null || endpoint.baseUrl().isBlank()) {
+            modelChoice.getItems().clear();
+            return;
+        }
+        // Show what is configured straight away; the catalogue replaces it when it lands.
+        String current = chosenModels.getOrDefault(providerName, endpoint.model());
+        modelChoice.getItems().setAll(current);
+        modelChoice.setValue(current);
+
+        Thread lookup = new Thread(() -> {
+            List<String> models = provider.listModels(endpoint);
+            Platform.runLater(() -> {
+                if (!providerName.equals(providerChoice.getValue())) {
+                    return; // Switched again while this was in flight; its answer is stale.
+                }
+                if (models.isEmpty()) {
+                    if (announce) {
+                        setStatus("Could not list models on " + endpoint.host()
+                                + ". You can still type a name.");
+                    }
+                    return;
+                }
+                String keep = modelChoice.getValue();
+                modelChoice.getItems().setAll(models);
+                // Keep the configured model selected even when the endpoint does not list
+                // it: a proxy can route names it does not advertise.
+                if (keep != null && !keep.isBlank() && !models.contains(keep)) {
+                    modelChoice.getItems().add(0, keep);
+                }
+                modelChoice.setValue(keep);
+                if (announce) {
+                    setStatus(models.size() + " models available on " + endpoint.host() + ".");
+                }
+            });
+        }, "ai-models");
+        lookup.setDaemon(true);
+        lookup.start();
+    }
+
+    /** Turns the bar on, indeterminate until something can say how far along it is. */
+    private void showProgress(double fraction) {
+        progress.setProgress(fraction);
+        progress.setVisible(true);
+        progress.setManaged(true);
+    }
+
+    private void hideProgress() {
+        progress.setVisible(false);
+        progress.setManaged(false);
+        progress.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
     }
 
     private void sendCurrentInput() {
@@ -356,6 +483,7 @@ public final class AiPanel extends VBox {
         StringBuilder answer = new StringBuilder();
         busy = true;
         send.setDisable(true);
+        showProgress(ProgressBar.INDETERMINATE_PROGRESS);
         setStatus("Thinking...");
 
         String document = documentSupplier.get();
@@ -503,13 +631,18 @@ public final class AiPanel extends VBox {
         Platform.runLater(() -> setStatus("Scanning " + scanned.getFileName()
                 + " in about " + expected + " passes. This takes minutes, not seconds."));
         ProjectScanner.ScanResult result = scanner.scan(root, question, endpoint,
-                progress -> Platform.runLater(() -> setStatus(
-                        "Scanning " + scanned.getFileName() + ": "
-                        + progress.stage() + " pass " + progress.pass() + " of "
-                        + progress.passes()
-                        + (progress.filesInPass() > 0
-                                ? " (" + progress.filesInPass() + " files)" : "")
-                        + " - press Stop scan to answer from what has been read.")),
+                step -> Platform.runLater(() -> {
+                    // A scan knows how far along it is, so the bar can say so rather than
+                    // spinning for minutes with no sense of an end.
+                    if (step.passes() > 0) {
+                        showProgress(Math.min(1.0, step.pass() / (double) step.passes()));
+                    }
+                    setStatus("Scanning " + scanned.getFileName() + ": "
+                        + step.stage() + " pass " + step.pass() + " of " + step.passes()
+                        + (step.filesInPass() > 0
+                                ? " (" + step.filesInPass() + " files)" : "")
+                        + " - press Stop scan to answer from what has been read.");
+                }),
                 () -> cancelScan);
 
         List<ContextGatherer.Source> sources = new ArrayList<>();
@@ -625,7 +758,12 @@ public final class AiPanel extends VBox {
         setStatus("Contacting " + endpoint.host() + "...");
         Thread worker = new Thread(() -> {
             String result = provider.testConnection(endpoint);
-            Platform.runLater(() -> setStatus(result));
+            Platform.runLater(() -> {
+                setStatus(result);
+                // The same call already proved the host answers; refresh the picker from it
+                // rather than making the reader press two buttons to get a model list.
+                loadModels(false);
+            });
         }, "ai-test");
         worker.setDaemon(true);
         worker.start();
@@ -634,6 +772,7 @@ public final class AiPanel extends VBox {
     private void finish(String message) {
         busy = false;
         worker = null;
+        hideProgress();
         send.setDisable(false);
         stopScan.setVisible(false);
         stopScan.setManaged(false);
@@ -936,6 +1075,12 @@ public final class AiPanel extends VBox {
               color:var(--ink-soft); background:var(--code-bg); border-radius:6px;
               padding:8px 10px; max-height:220px; overflow:auto;
             }
+            .ai-sources summary {
+              cursor:pointer; font-size:12px; color:var(--ink-soft);
+              padding:2px 0; user-select:none;
+            }
+            .ai-sources summary:hover { color:var(--accent); }
+            .ai-sources details[open] summary { margin-bottom:6px; }
             .ai-streaming { white-space:pre-wrap; }
             .ai-empty { color:var(--ink-soft); font-style:italic; }
             """;
@@ -978,11 +1123,28 @@ public final class AiPanel extends VBox {
             html.append("<div class=\"ai-turn ai-").append(turn.kind()).append("\">")
                     .append("<div class=\"ai-who\">").append(escape(turn.who()))
                     .append("<button class=\"ai-copy\" onclick=\"aiBridge.copy(").append(i)
-                    .append(")\">copy</button></div><div class=\"ai-body\"")
-                    .append(i == streamingTurn ? " id=\"streaming\" class=\"ai-streaming\"" : "")
-                    .append('>')
-                    .append(bodyHtml(turn, i == streamingTurn))
-                    .append("</div></div>");
+                    .append(")\">copy</button></div>");
+            if (turn.kind().equals("sources")) {
+                /* Folded away. Two hundred and sixty-seven source lines above the answer
+                   push the answer off the screen, and the list is there to be checked when
+                   something looks wrong - not read every time. The first line, which says
+                   how many there were, stays visible because that part is worth seeing. */
+                int firstBreak = turn.text().indexOf('\n');
+                String summary = firstBreak < 0 ? turn.text()
+                        : turn.text().substring(0, firstBreak);
+                String rest = firstBreak < 0 ? "" : turn.text().substring(firstBreak + 1);
+                html.append("<details><summary>").append(escape(summary.strip()))
+                        .append("</summary><div class=\"ai-body\">").append(escape(rest))
+                        .append("</div></details>");
+            } else {
+                html.append("<div class=\"ai-body\"")
+                        .append(i == streamingTurn
+                                ? " id=\"streaming\" class=\"ai-streaming\"" : "")
+                        .append('>')
+                        .append(bodyHtml(turn, i == streamingTurn))
+                        .append("</div>");
+            }
+            html.append("</div>");
         }
         call("__aiSet", html.toString());
     }
