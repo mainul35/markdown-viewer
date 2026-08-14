@@ -14,6 +14,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.Clipboard;
@@ -25,6 +26,7 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -46,6 +48,7 @@ public final class AiPanel extends VBox {
     private final AiConfig config;
     private final ChatProvider provider;
     private final ContextGatherer gatherer;
+    private final ProjectScanner scanner;
 
     private final ComboBox<String> providerChoice = new ComboBox<>();
     private final Label hostLabel = new Label();
@@ -53,7 +56,12 @@ public final class AiPanel extends VBox {
     private final ScrollPane transcriptScroll = new ScrollPane(transcript);
     private final TextArea input = new TextArea();
     private final Button send = new Button("Send");
+    private final CheckBox scanProject = new CheckBox("Scan whole project");
+    private final Button stopScan = new Button("Stop scan");
     private final Label status = new Label();
+
+    /** Set from the FX thread, read by the scan thread between passes. */
+    private volatile boolean cancelScan = false;
 
     /** Supplies the document in focus, so the panel never reaches into the controller. */
     private Supplier<String> documentSupplier = () -> "";
@@ -72,6 +80,7 @@ public final class AiPanel extends VBox {
         this.config = config;
         this.provider = new ChatProvider(config);
         this.gatherer = new ContextGatherer(config);
+        this.scanner = new ProjectScanner(provider, config);
         getStyleClass().add("ai-panel");
         setMinWidth(0);
 
@@ -129,9 +138,21 @@ public final class AiPanel extends VBox {
         test.setOnAction(e -> testConnection());
         Button key = new Button("API key...");
         key.setOnAction(e -> promptForKey());
+        /* Off by default, because a scan is minutes rather than seconds - it reads the
+           project in as many requests as it takes. On, nothing is skipped; the ordinary
+           path reads what fits in one request and says what it left out. Which of those
+           you want is a question about the question, so it is a switch and not a rule. */
+        scanProject.setTooltip(new Tooltip(
+                "Read every file in the project, in as many passes as it takes.\n"
+                + "Slower - minutes, not seconds - but nothing is left out."));
+        scanProject.getStyleClass().add("ai-status");
+        stopScan.setOnAction(e -> cancelScan = true);
+        stopScan.setVisible(false);
+        stopScan.setManaged(false);
+
         Region footerSpacer = new Region();
         HBox.setHgrow(footerSpacer, Priority.ALWAYS);
-        HBox buttons = new HBox(6, clear, key, test, footerSpacer, send);
+        HBox buttons = new HBox(6, clear, key, test, footerSpacer, scanProject, stopScan, send);
         buttons.setAlignment(Pos.CENTER_RIGHT);
 
         status.getStyleClass().add("ai-status");
@@ -261,10 +282,31 @@ public final class AiPanel extends VBox {
         String image = attachedImage;
         setAttachedImage(null, 0, 0);
 
+        boolean scanning = scanProject.isSelected();
+        cancelScan = false;
+        if (scanning) {
+            stopScan.setVisible(true);
+            stopScan.setManaged(true);
+        }
+
         // Off the FX thread: reading a project and waiting on a model both block.
         Thread worker = new Thread(() -> {
-            ContextGatherer.Result context =
-                    gatherer.gather(question, document, workspaceRoot, true);
+            ContextGatherer.Result context;
+            if (scanning) {
+                try {
+                    context = runScan(question, workspaceRoot, endpoint);
+                } catch (ProjectScanner.ScanFailed e) {
+                    Platform.runLater(() -> finish(e.getMessage()));
+                    return;
+                }
+                if (context == null) {
+                    Platform.runLater(() -> finish("Nothing to scan: the question names no "
+                            + "folder, and no workspace is open."));
+                    return;
+                }
+            } else {
+                context = gatherer.gather(question, document, workspaceRoot, true);
+            }
             if (!context.isEmpty()) {
                 Platform.runLater(() -> {
                     addSourcesNote(context);
@@ -294,6 +336,64 @@ public final class AiPanel extends VBox {
         }, "ai-chat");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * Reads the whole project and returns the findings dressed as ordinary sources.
+     *
+     * <p>Findings rather than files, because a million characters cannot be handed over
+     * whole. The rest of the panel does not need to know the difference: what comes back
+     * is text with file names in it, which is what it already knows how to send.
+     *
+     * @return null when there is nothing to scan
+     */
+    private ContextGatherer.Result runScan(String question, Path workspaceRoot,
+                                           AiConfig.Endpoint endpoint)
+            throws ProjectScanner.ScanFailed {
+        // The folder named in the question wins over the workspace: naming it is the whole
+        // reason it is there. Falling back to the workspace makes the toggle work for the
+        // project you already have open, without typing its path again.
+        Path root = ContextGatherer.absolutePathsIn(question).stream()
+                .filter(Files::isDirectory)
+                .findFirst()
+                .orElse(workspaceRoot != null && Files.isDirectory(workspaceRoot)
+                        ? workspaceRoot : null);
+        if (root == null) {
+            return null;
+        }
+
+        Path scanned = root;
+        int expected = scanner.estimatePasses(root);
+        Platform.runLater(() -> setStatus("Scanning " + scanned.getFileName()
+                + " in about " + expected + " passes. This takes minutes, not seconds."));
+        ProjectScanner.ScanResult result = scanner.scan(root, question, endpoint,
+                progress -> Platform.runLater(() -> setStatus(
+                        "Scanning " + scanned.getFileName() + ": "
+                        + progress.stage() + " pass " + progress.pass() + " of "
+                        + progress.passes()
+                        + (progress.filesInPass() > 0
+                                ? " (" + progress.filesInPass() + " files)" : "")
+                        + " - press Stop scan to answer from what has been read.")),
+                () -> cancelScan);
+
+        List<ContextGatherer.Source> sources = new ArrayList<>();
+        int chars = 0;
+        for (int i = 0; i < result.findings().size(); i++) {
+            String text = result.findings().get(i);
+            String label = "scan of " + root.getFileName()
+                    + (result.findings().size() > 1
+                            ? " (" + (i + 1) + " of " + result.findings().size() + ")" : "");
+            sources.add(new ContextGatherer.Source(label, text, text.length()));
+            chars += text.length();
+        }
+        List<String> skipped = new ArrayList<>();
+        skipped.add("Scanned " + result.filesRead() + " files ("
+                + (result.charsRead() / 1000) + "k characters) in " + result.passes()
+                + " passes."
+                + (result.cancelled()
+                        ? " Stopped early, so later files were not read."
+                        : " Nothing was skipped."));
+        return new ContextGatherer.Result(sources, skipped, chars);
     }
 
     /**
@@ -391,6 +491,9 @@ public final class AiPanel extends VBox {
     private void finish(String message) {
         busy = false;
         send.setDisable(false);
+        stopScan.setVisible(false);
+        stopScan.setManaged(false);
+        cancelScan = false;
         setStatus(message);
     }
 

@@ -424,6 +424,48 @@ public final class ContextGatherer {
                 "c", "h", "cpp", "hpp", "cs", "sql").contains(name.substring(dot + 1));
     }
 
+    /**
+     * Every readable file under {@code root}, in path order.
+     *
+     * <p>No budget, no relevance ordering and no entry cap, unlike {@link #gather}: a full
+     * scan exists precisely because those had to leave things out, and a scan that quietly
+     * skipped files would be worth less than saying so. Build output and dependency trees
+     * are still excluded - those are not the project.
+     *
+     * <p>Path order rather than relevance order is deliberate. It keeps a package together
+     * in one pass, so the model sees an entity beside the repository that loads it instead
+     * of meeting them an hour apart.
+     */
+    public static List<Path> allReadableFiles(Path root) {
+        List<Path> files = new ArrayList<>();
+        collect(root, files);
+        files.sort(java.util.Comparator.comparing(
+                Path::toString, String.CASE_INSENSITIVE_ORDER));
+        return files;
+    }
+
+    private static void collect(Path dir, List<Path> files) {
+        List<Path> entries = new ArrayList<>();
+        try (var stream = Files.list(dir)) {
+            stream.forEach(entries::add);
+        } catch (IOException | RuntimeException e) {
+            return;
+        }
+        for (Path entry : entries) {
+            String name = entry.getFileName().toString();
+            if (name.startsWith(".") && !name.equals(".github")) {
+                continue;
+            }
+            if (Files.isDirectory(entry)) {
+                if (!SKIP_DIRECTORIES.contains(name.toLowerCase(Locale.ROOT))) {
+                    collect(entry, files);
+                }
+            } else if (isText(entry)) {
+                files.add(entry);
+            }
+        }
+    }
+
     private void walk(Path root, Path dir, StringBuilder tree, List<Path> files, int[] counted) {
         if (counted[0] >= MAX_TREE_ENTRIES) {
             return;
