@@ -10,8 +10,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -251,19 +253,56 @@ public final class ContextGatherer {
         // Left in, they gave every file the same bonus and swamped the signal that is
         // supposed to put a README first.
         String keywords = keywordsOf(question);
-        files.sort(java.util.Comparator.comparingInt(
-                (Path f) -> -relevance(f, root, keywords)));
+        /* Ties broken by size, largest first. Nothing in a question about workspaces and
+           plans distinguishes V5__multi_tenant_schema.sql from V10__disable_pkce.sql, so
+           the tie fell to alphabetical order and picked the 968-character one-line patch
+           over the 6297-character schema that defines tenants. Where relevance has no
+           opinion, the longer file is the one with something in it, and the share cap
+           below limits what a wrong guess costs. */
+        files.sort(java.util.Comparator
+                .comparingInt((Path f) -> -relevance(f, root, keywords))
+                .thenComparingLong(f -> -sizeOf(f)));
+
+        /* Then take one file from each folder in turn, best folder first. Relevance alone
+           lets a single package swallow everything: asked about syncing to a "cloud
+           repository", the scorer matched that word against src/main/java/.../repository
+           and read all thirteen Spring Data interfaces - 41% of the budget on files that
+           are little more than method signatures - while entity, service and db/migration
+           went unread. The answer then described tenant types and a plan field it had
+           never seen. Ordering by folder cannot rank the right file first, but it does
+           guarantee that when the budget runs out it has run out across the project
+           rather than inside one package. */
+        List<Path> ordered = new ArrayList<>(files.size());
+        Map<Path, java.util.ArrayDeque<Path>> byFolder = new LinkedHashMap<>();
+        for (Path f : files) {
+            byFolder.computeIfAbsent(f.getParent(), k -> new java.util.ArrayDeque<>()).add(f);
+        }
+        while (!byFolder.isEmpty()) {
+            var round = byFolder.entrySet().iterator();
+            while (round.hasNext()) {
+                java.util.ArrayDeque<Path> queue = round.next().getValue();
+                ordered.add(queue.poll());
+                if (queue.isEmpty()) {
+                    round.remove();
+                }
+            }
+        }
 
         /* No single file may take more than a share of the budget while a whole project
            is being read. A 40k README against a 90k budget left nothing for the source
            that was actually asked about - the reader got the project's own summary of
            itself and none of its code, which is the opposite of checking claims against
            sources. Reading the first slice of a long file is nearly as good and leaves
-           room for thirty others. */
-        int shareCap = Math.max(4_000, totalBudget / 6);
+           room for thirty others.
+
+           A sixth was still too generous once folders were read in turn: three files at
+           the cap took 45k of 90k in the first round, so every folder got exactly one
+           file and nothing got a second. A tenth is about 9k - some four pages of code,
+           more than enough to see what a class does. */
+        int shareCap = Math.max(4_000, totalBudget / 10);
 
         int read = 0;
-        for (Path file : files) {
+        for (Path file : ordered) {
             if (read >= maxFiles || budget[0] <= 0) {
                 break;
             }
@@ -307,6 +346,15 @@ public final class ContextGatherer {
                 .toLowerCase(Locale.ROOT);
     }
 
+    /** Size on disk, or zero if it cannot be read - an unreadable file sorts last. */
+    private static long sizeOf(Path file) {
+        try {
+            return Files.size(file);
+        } catch (IOException | RuntimeException e) {
+            return 0;
+        }
+    }
+
     private static int relevance(Path file, Path root, String keywords) {
         String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
         String relative = root.relativize(file).toString().toLowerCase(Locale.ROOT);
@@ -325,8 +373,11 @@ public final class ContextGatherer {
         if (asksAboutCode(asked) && isSource(name)) {
             score += 110;
         }
-        // A word from the question appearing in the path is the strongest signal there is.
-        for (String word : asked.split("[^a-z0-9]+")) {
+        /* A word from the question appearing in the path is the strongest signal there is.
+           Distinct words only: saying "cloud repository" twice used to score a folder
+           named "repository" at +120, twice what any single mention could earn, purely
+           because of a repetition that carried no extra meaning. */
+        for (String word : new LinkedHashSet<>(List.of(asked.split("[^a-z0-9]+")))) {
             if (word.length() >= 4 && relative.contains(word)) {
                 score += 60;
             }
