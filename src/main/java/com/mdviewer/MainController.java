@@ -392,6 +392,19 @@ public class MainController {
         updateWordCount();
         updateStatus();
         updateTitle();
+        /* The assistant follows the document. One panel, but a conversation each: asking
+           about a design note and then opening a specification used to carry the first
+           document's questions into the second. Keyed by path so a file keeps its thread
+           across tab closes and reopens; unsaved documents fall back to their tab name,
+           which is the only identity they have. */
+        if (aiPanel != null) {
+            DocumentView document = activeDocument();
+            String key = document == null ? ""
+                    : (document.getPath() != null ? document.getPath().toString()
+                            : "untitled:" + document.getDisplayName());
+            aiPanel.setActiveDocument(key,
+                    document == null ? null : document.getDisplayName());
+        }
         MainApp.setCurrentFile(activeDocument() != null && activeDocument().getPath() != null
                 ? activeDocument().getPath().toFile() : null);
     }
@@ -2473,8 +2486,16 @@ public class MainController {
      * render time, so a webfont would simply fail to load. Sitka is a reading face that
      * ships with Windows and gives documents a plate-like voice that a UI sans cannot.
      */
-    private String buildPreviewShell() {
-        String css = """
+    /**
+     * The preview's stylesheet, on its own so the assistant panel can borrow it.
+     *
+     * <p>An answer about a Markdown document that arrives as unformatted text is harder to
+     * read than the document it is about - headings, tables and code blocks all flattened
+     * into one grey wall. Sharing the sheet means the assistant's prose looks like the
+     * preview's, down to the theme, without a second set of rules to keep in step.
+     */
+    public static String previewCss() {
+        return """
             :root {
               --paper:#F6F8FA; --ink:#16202B; --ink-soft:#5A6875;
               --rule:#DFE5EC; --line:#C7D2DE;
@@ -2836,6 +2857,10 @@ public class MainController {
               img.mdv-img-selected { outline:none; }
             }
             """;
+    }
+
+    private String buildPreviewShell() {
+        String css = previewCss();
 
         String js = """
             window.__mdSetTheme = function (theme) {
