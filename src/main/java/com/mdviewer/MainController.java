@@ -236,6 +236,9 @@ public class MainController {
            A menu nobody is looking at does not need to be correct, and rebuilding on
            demand means there is one place that can be wrong instead of several. */
         recentWorkspacesMenu.setOnShowing(e -> rebuildRecentWorkspaces());
+        // After, not before: a label's real width is only known once the popup has been
+        // laid out with the fonts the stylesheet actually gave it.
+        recentWorkspacesMenu.setOnShown(e -> alignRecentRows());
         rebuildRecentWorkspaces();
 
         previewDebounce = new PauseTransition(Duration.millis(200));
@@ -930,6 +933,11 @@ public class MainController {
      */
     private CustomMenuItem recentWorkspaceItem(Path root, boolean alreadyOpen) {
         Label label = new Label(recentLabel(root));
+        /* Its own class, and its own colour in the stylesheet. A plain Label in here takes
+           its fill from modena's ".menu-item .label", a rule written for native menu rows;
+           relying on it means the text is one selector away from being invisible against
+           the popup, with nothing to say why. A custom row should colour its own text. */
+        label.getStyleClass().add("recent-row-label");
         label.setMaxWidth(Double.MAX_VALUE);
         label.setDisable(alreadyOpen);
         HBox.setHgrow(label, Priority.ALWAYS);
@@ -947,10 +955,12 @@ public class MainController {
             setTransientStatus("Removed " + root.getFileName() + " from recent workspaces.");
         });
 
-        /* A spacer rather than a width bound to the popup. The popup sizes itself to its
-           widest row, so binding a row to the popup's width is circular and JavaFX
-           resolves it by oscillating. A growing spacer needs no width at all: it takes
-           whatever is left once the menu has decided how wide it is. */
+        /* The spacer only helps once every row is the same width, which a menu does not
+           arrange on its own: a CustomMenuItem's content keeps its own preferred width
+           rather than being stretched to the popup, measured at 302 pixels for one row
+           and 87 for another in the same 338-pixel menu. So each cross landed wherever
+           its own path happened to end. alignRecentRows below levels the labels once the
+           menu is up and its real widths are known. */
         Region gap = new Region();
         HBox.setHgrow(gap, Priority.ALWAYS);
         HBox row = new HBox(10, label, gap, forget);
@@ -972,6 +982,47 @@ public class MainController {
             openRecentWorkspace(root);
         });
         return item;
+    }
+
+    /**
+     * Widens every recent row's label to the widest, so the crosses line up.
+     *
+     * <p>A menu does not stretch a CustomMenuItem's content to the popup width - each row
+     * keeps its own preferred width - so a growing spacer has nothing to grow into and
+     * every cross sits at the end of its own path instead of at the edge. Giving all the
+     * labels the widest label's width makes the rows equal, which is what the spacer
+     * needs.
+     *
+     * <p>Measured rather than computed: the width is read back after the popup is on
+     * screen, when the labels have the fonts the stylesheet gave them. Guessing from
+     * character counts gets the widest row wrong as soon as a path has different letters
+     * in it.
+     */
+    private void alignRecentRows() {
+        alignRows(recentWorkspacesMenu.getItems());
+    }
+
+    /** Takes the items rather than reading the field, so it can be exercised on its own. */
+    static void alignRows(List<MenuItem> items) {
+        List<Label> labels = new ArrayList<>();
+        for (MenuItem item : items) {
+            if (item instanceof CustomMenuItem custom
+                    && custom.getContent() instanceof HBox row
+                    && !row.getChildren().isEmpty()
+                    && row.getChildren().get(0) instanceof Label label) {
+                labels.add(label);
+            }
+        }
+        double widest = 0;
+        for (Label label : labels) {
+            widest = Math.max(widest, label.getWidth());
+        }
+        if (widest <= 0) {
+            return; // Not laid out yet; nothing useful to level against.
+        }
+        for (Label label : labels) {
+            label.setMinWidth(widest);
+        }
     }
 
     /**
