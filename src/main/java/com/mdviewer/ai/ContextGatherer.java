@@ -263,53 +263,81 @@ public final class ContextGatherer {
                 .comparingInt((Path f) -> -relevance(f, root, keywords))
                 .thenComparingLong(f -> -sizeOf(f)));
 
-        /* Then take one file from each folder in turn, best folder first. Relevance alone
-           lets a single package swallow everything: asked about syncing to a "cloud
-           repository", the scorer matched that word against src/main/java/.../repository
-           and read all thirteen Spring Data interfaces - 41% of the budget on files that
-           are little more than method signatures - while entity, service and db/migration
-           went unread. The answer then described tenant types and a plan field it had
-           never seen. Ordering by folder cannot rank the right file first, but it does
-           guarantee that when the budget runs out it has run out across the project
-           rather than inside one package. */
-        List<Path> ordered = new ArrayList<>(files.size());
-        Map<Path, java.util.ArrayDeque<Path>> byFolder = new LinkedHashMap<>();
-        for (Path f : files) {
-            byFolder.computeIfAbsent(f.getParent(), k -> new java.util.ArrayDeque<>()).add(f);
-        }
-        while (!byFolder.isEmpty()) {
-            var round = byFolder.entrySet().iterator();
-            while (round.hasNext()) {
-                java.util.ArrayDeque<Path> queue = round.next().getValue();
-                ordered.add(queue.poll());
-                if (queue.isEmpty()) {
-                    round.remove();
-                }
-            }
-        }
+        /* Relevance order is kept; what changes is that no folder may take more than a
+           quarter of the budget.
 
+           Relevance alone lets one package swallow everything: asked about syncing to a
+           "cloud repository", the scorer matched that word against .../repository and read
+           all thirteen Spring Data interfaces - 41% of the budget on method signatures -
+           while entity, service and db/migration went unread.
+
+           Taking one file from each folder in turn fixed that and broke something else.
+           Every folder became equally worth reading, so at a larger budget three Thymeleaf
+           templates and a stylesheet took a third of it while entity got a single file. A
+           cap stops the monopoly without pretending that templates/admin and entity are
+           equally likely to answer a question about authentication. */
         /* No single file may take more than a share of the budget while a whole project
            is being read. A 40k README against a 90k budget left nothing for the source
            that was actually asked about - the reader got the project's own summary of
            itself and none of its code, which is the opposite of checking claims against
            sources. Reading the first slice of a long file is nearly as good and leaves
-           room for thirty others.
-
-           A sixth was still too generous once folders were read in turn: three files at
-           the cap took 45k of 90k in the first round, so every folder got exactly one
-           file and nothing got a second. A tenth is about 9k - some four pages of code,
-           more than enough to see what a class does. */
+           room for thirty others. A tenth is about 9k at the default budget - some four
+           pages of code, more than enough to see what a class does. */
         int shareCap = Math.max(4_000, totalBudget / 10);
+        int folderCap = Math.max(shareCap, totalBudget / 4);
+        Map<Path, Integer> spentPerFolder = new LinkedHashMap<>();
+
+        /* Breadth first, then relevance. Part of the budget is reserved for the best file
+           out of each folder, best folders first; the rest goes in plain relevance order.
+
+           Both halves are needed, and each one alone was wrong. Pure relevance let one
+           package take 41% of the budget while entity, service and db/migration went
+           unread. One file per folder in turn fixed that but made every folder equally
+           worth reading, so at a larger budget three Thymeleaf templates and a stylesheet
+           took a third of it. Reserving a share for breadth guarantees every folder is
+           looked at; leaving the rest to relevance keeps templates from being paid for
+           twice. */
+        List<Path> ordered = new ArrayList<>(files.size());
+        Set<Path> folders = new LinkedHashSet<>();
+        List<Path> firstOfFolder = new ArrayList<>();
+        List<Path> remainder = new ArrayList<>();
+        for (Path file : files) {
+            (folders.add(file.getParent()) ? firstOfFolder : remainder).add(file);
+        }
+        int breadthBudget = totalBudget * 3 / 5;
+        int planned = 0;
+        List<Path> deferred = new ArrayList<>();
+        for (Path file : firstOfFolder) {
+            int cost = (int) Math.min(sizeOf(file), shareCap);
+            if (planned + cost <= breadthBudget) {
+                ordered.add(file);
+                planned += cost;
+            } else {
+                // No room in the breadth phase; it competes on relevance like anything else.
+                deferred.add(file);
+            }
+        }
+        List<Path> tail = new ArrayList<>(deferred);
+        tail.addAll(remainder);
+        tail.sort(java.util.Comparator
+                .comparingInt((Path f) -> -relevance(f, root, keywords))
+                .thenComparingLong(f -> -sizeOf(f)));
+        ordered.addAll(tail);
 
         int read = 0;
         for (Path file : ordered) {
             if (read >= maxFiles || budget[0] <= 0) {
                 break;
             }
+            Path folder = file.getParent();
+            if (spentPerFolder.getOrDefault(folder, 0) >= folderCap) {
+                continue; // Skip, not stop: a later folder may still have room.
+            }
             int before = budget[0];
             if (readFile(file, root.relativize(file).toString(), sources, skipped,
                     budget, shareCap)) {
                 read++;
+                spentPerFolder.merge(folder, before - budget[0], Integer::sum);
             } else if (budget[0] == before && budget[0] < perFileBudget) {
                 /* Nothing was taken and what is left could not hold a typical file.
                    Carrying on would try every remaining file and add a "budget reached"
