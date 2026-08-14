@@ -38,8 +38,12 @@ public final class ProjectScanner {
      *                everything. A map reduced to bare filenames still looks like a map
      *                from inside a prompt, so the one place it can be noticed is here.
      */
+    /**
+     * @param stoppedBecause why the scan ended early, or null if it read everything
+     */
     public record ScanResult(List<String> findings, int filesRead, int charsRead,
-                             int passes, boolean cancelled, String mapNote) {
+                             int passes, boolean cancelled, String mapNote,
+                             String stoppedBecause) {
 
         public boolean isEmpty() {
             return findings.isEmpty();
@@ -145,13 +149,34 @@ public final class ProjectScanner {
         for (Batch batch : batches) {
             if (cancelled.getAsBoolean()) {
                 return new ScanResult(fold(findings, question, endpoint, onProgress, cancelled),
-                        filesRead, charsRead, pass, true, mapNote(map, files.size()));
+                        filesRead, charsRead, pass, true, mapNote(map, files.size()),
+                        "You pressed Stop scan at pass " + (pass + 1) + " of "
+                                + batches.size() + ".");
             }
             pass++;
             onProgress.accept(new Progress(pass, batches.size(), batch.files, "reading"));
 
-            String reply = ask(endpoint,
-                    passPrompt(root, question, pass, batches.size(), batch, map));
+            String reply;
+            try {
+                reply = askRetrying(endpoint,
+                        passPrompt(root, question, pass, batches.size(), batch, map),
+                        cancelled);
+            } catch (ScanFailed e) {
+                /* Nothing read yet, so there is nothing to answer from: report it. But
+                   once any pass has succeeded, throwing away the rest would discard
+                   minutes of reading over one blip on the network. Keep what was read,
+                   stop, and say where it stopped - a partial answer that knows it is
+                   partial beats no answer at all. */
+                if (findings.isEmpty()) {
+                    throw e;
+                }
+                return new ScanResult(
+                        fold(findings, question, endpoint, onProgress, () -> true),
+                        filesRead, charsRead, pass - 1, true,
+                        mapNote(map, files.size()),
+                        "Stopped at pass " + pass + " of " + batches.size() + ". "
+                                + e.getMessage());
+            }
             filesRead += batch.files;
             charsRead += batch.text.length();
             // A pass with nothing to contribute says so in one word rather than padding the
@@ -188,7 +213,7 @@ public final class ProjectScanner {
             }
         }
         return new ScanResult(folded, filesRead, charsRead, pass, false,
-                mapNote(map, files.size()));
+                mapNote(map, files.size()), null);
     }
 
     /**
@@ -534,6 +559,33 @@ public final class ProjectScanner {
             sum += note.length();
         }
         return sum;
+    }
+
+    /**
+     * One pass, retried once if the endpoint fails.
+     *
+     * <p>A scan is a dozen or more requests over several minutes, so the chance that one
+     * of them meets a momentary network fault is not small - and losing the whole scan to
+     * it is a poor trade against waiting two seconds. Retried once, not repeatedly: a
+     * second failure is a real fault, and hammering a busy local model makes it worse.
+     */
+    private String askRetrying(AiConfig.Endpoint endpoint, List<ChatProvider.Message> messages,
+                               BooleanSupplier cancelled) throws ScanFailed {
+        try {
+            return ask(endpoint, messages);
+        } catch (ScanFailed first) {
+            // Stop means stop. A retry here would make the button feel broken again.
+            if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
+                throw first;
+            }
+            try {
+                Thread.sleep(2_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw first;
+            }
+            return ask(endpoint, messages);
+        }
     }
 
     private String ask(AiConfig.Endpoint endpoint, List<ChatProvider.Message> messages)
