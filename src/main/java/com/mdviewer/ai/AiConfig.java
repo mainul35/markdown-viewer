@@ -68,6 +68,20 @@ public final class AiConfig {
             # 90000 leaves a margin for a longer document. Raise it only after raising
             # OLLAMA_CONTEXT_LENGTH on the server, which costs GPU memory for the KV
             # cache; lower it if replies start coming back truncated.
+            # The ceiling on a whole request - sources, the open document, the earlier
+            # turns and the instructions together. context.totalChars bounds only the
+            # sources; without this, a 40000-character document on top of them already
+            # overruns a 32768-token window, and an endpoint does not refuse an oversized
+            # request. It truncates from the front, taking the instructions first, so the
+            # model keeps the files and forgets what it was asked to do with them.
+            #
+            #   32768 tokens x 4 characters   = 131000 characters
+            #   - room for the reply          -  11000
+            #   = one request                 = 120000
+            #
+            # Oldest turns are dropped first when this is reached, and the panel says so.
+            context.windowChars  = 120000
+
             context.totalChars   = 90000
             context.perFileChars = 40000
             context.maxFiles     = 80

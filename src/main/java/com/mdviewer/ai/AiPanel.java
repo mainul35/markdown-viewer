@@ -63,6 +63,9 @@ public final class AiPanel extends VBox {
     /** Set from the FX thread, read by the scan thread between passes. */
     private volatile boolean cancelScan = false;
 
+    /** Everything one request may carry, sources and document and history together. */
+    private final int windowChars;
+
     /** Supplies the document in focus, so the panel never reaches into the controller. */
     private Supplier<String> documentSupplier = () -> "";
     private Supplier<String> documentNameSupplier = () -> "the document";
@@ -81,6 +84,7 @@ public final class AiPanel extends VBox {
         this.provider = new ChatProvider(config);
         this.gatherer = new ContextGatherer(config);
         this.scanner = new ProjectScanner(provider, config);
+        this.windowChars = config.intValue("context.windowChars", 120_000);
         getStyleClass().add("ai-panel");
         setMinWidth(0);
 
@@ -314,10 +318,13 @@ public final class AiPanel extends VBox {
                             + (context.totalChars() / 1000) + "k characters). Thinking...");
                 });
             }
-            List<ChatProvider.Message> messages =
+            Prompt prompt =
                     buildMessages(question, document, documentName, context, image);
+            if (prompt.note() != null) {
+                Platform.runLater(() -> setStatus(prompt.note() + " Thinking..."));
+            }
             try {
-                provider.stream(endpoint, messages, token ->
+                provider.stream(endpoint, prompt.messages(), token ->
                         Platform.runLater(() -> {
                             reply.setText(reply.getText() + token);
                             transcriptScroll.setVvalue(1.0);
@@ -507,10 +514,10 @@ public final class AiPanel extends VBox {
      * being edited while the conversation goes on and an assistant answering about a stale
      * copy is worse than one that says it cannot see the file.
      */
-    private List<ChatProvider.Message> buildMessages(String question, String document,
-                                                     String documentName,
-                                                     ContextGatherer.Result context,
-                                                     String image) {
+    private Prompt buildMessages(String question, String document,
+                                 String documentName,
+                                 ContextGatherer.Result context,
+                                 String image) {
         List<ChatProvider.Message> messages = new ArrayList<>();
         messages.add(new ChatProvider.Message("system", """
                 You are helping edit one Markdown document inside a Markdown editor.
@@ -573,7 +580,24 @@ public final class AiPanel extends VBox {
                     + "about a codebase, a folder or a file you were not given, say plainly "
                     + "that you were not given it and ask for the path. Do not guess."));
         }
-        messages.addAll(history);
+        /* Older turns are dropped before the request goes out, not after it comes back
+           wrong. context.totalChars bounds the sources and nothing bounded the rest: the
+           open document is re-sent in full every turn and the history only ever grew, so
+           a 40k document plus 90k of sources already exceeds a 32768-token window. An
+           endpoint does not refuse an oversized request - it truncates from the front,
+           which takes the instructions first and leaves a model that has the files but
+           has forgotten what it was asked to do with them.
+
+           History goes first because it is the one part the conversation can do without;
+           the document and the sources are what the question is about. */
+        int fixed = length(messages) + length(sourcesMessage) + question.length();
+        List<ChatProvider.Message> kept = new ArrayList<>(history);
+        int dropped = 0;
+        while (!kept.isEmpty() && fixed + length(kept) > windowChars) {
+            kept.remove(0);
+            dropped++;
+        }
+        messages.addAll(kept);
         /* Sources go after the history, not before it. A conversation that began
            without them accumulates the model's own refusals, and a model treats its
            own last words as the more recent truth; putting the evidence next to the
@@ -583,7 +607,37 @@ public final class AiPanel extends VBox {
         }
         messages.add(new ChatProvider.Message("user", question,
                 image == null ? List.of() : List.of(image)));
-        return messages;
+
+        int total = length(messages);
+        String note = null;
+        if (dropped > 0) {
+            note = "Dropped the " + dropped + " oldest message"
+                    + (dropped == 1 ? "" : "s") + " to stay inside the model's window.";
+        }
+        if (total > windowChars) {
+            // Nothing left to drop: the document and sources alone are too big. Say so
+            // rather than sending it and letting the endpoint cut the instructions off.
+            note = "This request is " + (total / 1000) + "k characters against a window of "
+                    + (windowChars / 1000) + "k, and the endpoint will silently cut the "
+                    + "front off. Lower context.totalChars in " + config.getFile().getFileName()
+                    + ", or ask about a smaller folder.";
+        }
+        return new Prompt(messages, note);
+    }
+
+    /** Messages and what had to be left out of them, if anything. */
+    private record Prompt(List<ChatProvider.Message> messages, String note) {}
+
+    private static int length(List<ChatProvider.Message> messages) {
+        int total = 0;
+        for (ChatProvider.Message message : messages) {
+            total += length(message);
+        }
+        return total;
+    }
+
+    private static int length(ChatProvider.Message message) {
+        return message == null ? 0 : message.content().length();
     }
 
     /** Says exactly what was read, so the answer's basis is visible rather than implied. */
