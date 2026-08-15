@@ -992,13 +992,11 @@ public class MainController {
                 assistantDivider = mainSplit.getDividerPositions()[divider];
             }
             mainSplit.getItems().remove(aiPanel);
-            /* Only if it is still where the assistant put it. Choosing Raw or Split while
-               the assistant is open is a decision, and undoing it on close would throw
-               that away. */
-            if (modeBeforeAssistant != null && currentMode == EditorMode.FULL_PREVIEW) {
-                currentMode = modeBeforeAssistant;
-                updateLayout();
-            }
+            /* The preview keeps the whole column. Springing back to a split editor on
+               close was worse than leaving it alone: closing the assistant is asking for
+               more room to read in, and being handed a half-width preview and an editor
+               nobody asked for is the opposite of that. Raw and Split are one click away
+               for anyone who wants them. */
             modeBeforeAssistant = null;
         }
         assistantMenuItem.setText(visible ? "Hide Assistant" : "Show Assistant");
