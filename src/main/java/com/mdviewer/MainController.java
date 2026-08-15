@@ -53,6 +53,7 @@ import com.mdviewer.ui.FindBar;
 import com.mdviewer.ui.MarkdownFiles;
 import com.mdviewer.ui.PathTreeItem;
 import com.mdviewer.ui.PreviewToolbar;
+import com.mdviewer.ui.WelcomeView;
 import com.mdviewer.ui.WorkspaceView;
 
 import java.io.File;
@@ -120,6 +121,17 @@ public class MainController {
     private Menu recentWorkspacesMenu;
 
     private final WorkspaceHistory workspaceHistory = new WorkspaceHistory();
+
+    /** Shown while nothing is open; the editor column sits behind it in a StackPane. */
+    private WelcomeView welcomeView;
+
+    /** The tabs, editor and preview as one column - what the welcome screen stands in for. */
+    private Node editorSide;
+
+    /** So the explorer is restored only if the welcome screen was what hid it. */
+    private boolean explorerHiddenForWelcome;
+
+    private static final String APP_VERSION = "1.0.0";
 
     /**
      * Re-reads the workspace tree on a timer. The explorer caches directory listings, so a
@@ -318,6 +330,10 @@ public class MainController {
         int workspaceSlot = mainSplit.getItems().indexOf(workspaceTabs);
         mainSplit.getItems().set(workspaceSlot, rightSide);
 
+        // After the right-hand side exists, because it is that whole column - tabs, editor
+        // and preview together - the welcome screen stands in front of.
+        installWelcome(rightSide);
+
         initPreviewEngine();
 
         updateWordCount();
@@ -392,6 +408,7 @@ public class MainController {
         workspaces.add(workspace);
         workspaceTabs.getTabs().add(workspace.getTab());
         fileTreePanel.addWorkspaceRoot(normalized);
+        updateWelcome();
         // Only a real folder is worth remembering; the scratch workspace holding unsaved
         // documents has no root to return to.
         if (normalized != null) {
@@ -405,6 +422,61 @@ public class MainController {
      * hold it at a time - a JavaFX node has a single parent - so this is what makes the
      * tabs act as selectors over one editor rather than N editors and N WebViews.
      */
+    /**
+     * Puts the welcome screen behind the tabs, to be shown while nothing is open.
+     *
+     * <p>The tabs stay in the scene rather than being swapped out. Removing and re-adding
+     * the pane that holds the editor and the preview is the teardown that blanks the
+     * WebView, and the empty state is exactly when that would look like a broken window.
+     * Both live in a StackPane and take turns being visible.
+     */
+    private void installWelcome(Node editorSide) {
+        welcomeView = new WelcomeView(APP_VERSION,
+                this::handleNewFile, this::handleOpenFile, this::handleOpenFolder,
+                this::openRecentWorkspace);
+        this.editorSide = editorSide;
+
+        /* The host goes into the split first and the column into the host after. Built the
+           other way round - new StackPane(editorSide, welcomeView) - the constructor
+           re-parents the column, which takes it out of the split, and the index read a
+           line earlier no longer points at anything. */
+        int index = mainSplit.getItems().indexOf(editorSide);
+        StackPane host = new StackPane();
+        if (index >= 0) {
+            mainSplit.getItems().set(index, host);
+        }
+        host.getChildren().addAll(editorSide, welcomeView);
+        updateWelcome();
+    }
+
+    /**
+     * Shows the welcome screen when there is nothing open, and hides it otherwise.
+     *
+     * <p>The explorer goes with it: a file tree with no roots is an empty grey column, and
+     * two empty panels say less than one screen that offers somewhere to start.
+     */
+    private void updateWelcome() {
+        if (welcomeView == null) {
+            return;
+        }
+        boolean empty = workspaces.isEmpty();
+        welcomeView.setVisible(empty);
+        welcomeView.setManaged(empty);
+        if (editorSide != null) {
+            editorSide.setVisible(!empty);
+        }
+        if (empty) {
+            welcomeView.setRecent(workspaceHistory.list());
+            if (isExplorerVisible()) {
+                explorerHiddenForWelcome = true;
+                showExplorer(false);
+            }
+        } else if (explorerHiddenForWelcome) {
+            explorerHiddenForWelcome = false;
+            showExplorer(true);
+        }
+    }
+
     private void onActiveDocumentChanged() {
         updateLayout();
         updateWordCount();
@@ -692,6 +764,9 @@ public class MainController {
         workspaces.remove(workspace);
         workspaceTabs.getTabs().remove(workspace.getTab());
         fileTreePanel.removeWorkspaceRoot(workspace.getRoot());
+        // Closing the last one puts the welcome screen back, so the window is never an
+        // empty grey rectangle with no indication of what to do next.
+        updateWelcome();
     }
 
     /** @return true if it is safe to discard this document's state */
