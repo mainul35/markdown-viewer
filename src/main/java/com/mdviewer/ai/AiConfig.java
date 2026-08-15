@@ -259,6 +259,23 @@ public final class AiConfig {
         return wanted.isEmpty() ? all : new ArrayList<>(wanted);
     }
 
+    /**
+     * Writes a provider's endpoint, creating it if the file has never mentioned it.
+     *
+     * <p>Base URL and model only. The key goes through {@link #saveKey} or
+     * {@link #setRuntimeKey}, which is the difference that matters: those two decide
+     * whether a secret reaches the disk, and folding them in here would make that a side
+     * effect of editing an address.
+     */
+    public boolean saveEndpoint(String provider, String baseUrl, String model) {
+        if (provider == null || provider.isBlank()) {
+            return false;
+        }
+        boolean ok = saveProperty(provider + ".baseUrl", baseUrl == null ? "" : baseUrl.strip());
+        ok &= saveProperty(provider + ".model", model == null ? "" : model.strip());
+        return ok;
+    }
+
     /** Records which providers the assistant offers. Written to the file, like a setting. */
     public boolean saveEnabledProviders(List<String> names) {
         String joined = names == null ? "" : String.join(", ", names);

@@ -810,3 +810,13 @@
     -fx-font-size: 11.5px;
     -fx-text-fill: -mdv-text-muted;
 }
+
+/* The per-row Configure button. Quiet: the row is a list of facts about a provider,
+   and a column of loud buttons down the right would read as the point of the
+   screen rather than as the way to change one line of it. */
+.provider-configure {
+    -fx-font-size: 11px;
+    -fx-padding: 2 9 2 9;
+    -fx-background-radius: 4;
+    -fx-cursor: hand;
+}
