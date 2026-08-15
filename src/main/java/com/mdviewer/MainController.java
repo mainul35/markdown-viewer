@@ -1392,6 +1392,13 @@ public class MainController {
         themeMenuItem.setText(next);
 
         applyPreviewTheme();
+        /* The transcript is a WebView too, with the preview's own stylesheet, so it needs
+           telling as well - the panel's JavaFX chrome follows the .dark-theme class on the
+           scene root and looked right, which made the white page inside it read as a bug
+           in the panel rather than as the one part nobody had told. */
+        if (aiPanel != null) {
+            aiPanel.setDarkMode(darkMode);
+        }
     }
 
     private void applyPreviewTheme() {

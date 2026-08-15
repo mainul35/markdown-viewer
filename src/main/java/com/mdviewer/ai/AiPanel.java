@@ -86,6 +86,9 @@ public final class AiPanel extends VBox {
     private final WebView transcriptView = new WebView();
     private boolean transcriptReady = false;
 
+    /** Kept so the theme survives the page being loaded, or reloaded, after it was set. */
+    private boolean darkMode = false;
+
     /** One message, kept as Markdown so it can be re-rendered and copied as written. */
     private record Turn(String who, String text, String kind) {}
 
@@ -1284,6 +1287,9 @@ public final class AiPanel extends VBox {
                 transcriptReady = true;
                 JSObject window = (JSObject) engine.executeScript("window");
                 window.setMember("aiBridge", new Bridge());
+                // Theme first: the page starts light, and painting the turns before
+                // setting it shows a white flash on every load in dark mode.
+                call("__aiTheme", darkMode ? "dark" : "light");
                 renderTranscript();
             } else if (now == Worker.State.FAILED || now == Worker.State.CANCELLED) {
                 transcriptReady = false;
@@ -1498,8 +1504,16 @@ public final class AiPanel extends VBox {
         syncComposer();
     }
 
-    /** Repaints the transcript for the editor's theme, so the panel matches the preview. */
+    /**
+     * Repaints the transcript for the editor's theme, so the panel matches the preview.
+     *
+     * <p>Remembered as well as applied. The page loads asynchronously and a call made
+     * before it is up goes nowhere, so the theme is re-applied when the page becomes
+     * ready - otherwise turning on dark mode before the assistant has ever been opened
+     * leaves a white transcript inside a dark panel.
+     */
     public void setDarkMode(boolean dark) {
+        this.darkMode = dark;
         call("__aiTheme", dark ? "dark" : "light");
     }
 
