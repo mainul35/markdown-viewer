@@ -46,9 +46,54 @@ public final class AiConfig {
             openwebui.model     = qwen3-coder:30b
             openwebui.apiKey    = ${env:OPENWEBUI_API_KEY}
 
+            # ----------------------------------------------------------------- others
+            #
+            # Every provider below speaks the OpenAI chat-completions shape, which is what
+            # this app sends. They are listed ready to use; none of them can be reached
+            # until you both set its key and add its host to allowedHosts, which is two
+            # deliberate acts rather than one accident.
+            #
+            # Anthropic is not here. Its API is /v1/messages with a different request and
+            # response shape and an x-api-key header, so it is not a base URL away - see
+            # the note under allowedHosts. Bedrock is not here either: it authenticates
+            # with AWS SigV4 request signing, which is a different problem again.
+
+            openai.baseUrl      = https://api.openai.com/v1
+            openai.model        = gpt-4o
+            openai.apiKey       = ${env:OPENAI_API_KEY}
+
+            # Ollama, on this machine. No key, and nothing leaves the machine.
+            ollama.baseUrl      = http://localhost:11434/v1
+            ollama.model        = qwen3-coder:30b
+            ollama.apiKey       =
+
+            ollamacloud.baseUrl = https://ollama.com/v1
+            ollamacloud.model   = qwen3-coder:480b-cloud
+            ollamacloud.apiKey  = ${env:OLLAMA_API_KEY}
+
+            groq.baseUrl        = https://api.groq.com/openai/v1
+            groq.model          = llama-3.3-70b-versatile
+            groq.apiKey         = ${env:GROQ_API_KEY}
+
+            openrouter.baseUrl  = https://openrouter.ai/api/v1
+            openrouter.model    = anthropic/claude-sonnet-4
+            openrouter.apiKey   = ${env:OPENROUTER_API_KEY}
+
+            mistral.baseUrl     = https://api.mistral.ai/v1
+            mistral.model       = mistral-large-latest
+            mistral.apiKey      = ${env:MISTRAL_API_KEY}
+
+            deepseek.baseUrl    = https://api.deepseek.com/v1
+            deepseek.model      = deepseek-chat
+            deepseek.apiKey     = ${env:DEEPSEEK_API_KEY}
+
             # Hosts this app may send document content to. A request to anything not on
             # this list is refused before it is built. Add to it deliberately: the
-            # documents this tool is used on are not all public.
+            # documents this tool is used on are not all public, and a provider being
+            # configured above is not the same as having agreed to send this work to it.
+            #
+            # To use one of the others, add its host here. For example:
+            #   allowedHosts = localhost, 127.0.0.1, litellm.mainul35.dev, api.openai.com
             allowedHosts        = localhost, 127.0.0.1, litellm.mainul35.dev, ai.mainul35.dev
 
             # How much of a codebase to send.
@@ -294,6 +339,16 @@ public final class AiConfig {
     }
 
     private void load() {
+        /* Defaults first, then the file on top of them. The file used to be the whole
+           truth, which meant a provider added to this app never reached anyone who had
+           already run it once - their ai.properties was written before the entry existed
+           and the app promises not to rewrite it. As a base layer, new providers simply
+           appear, and every key the file does set still wins.
+
+           allowedHosts is the one that matters: a file that lists two hosts keeps listing
+           exactly those two. Being able to pick a provider is not permission to send
+           anything to it. */
+        loadDefaultsInMemory();
         try {
             if (!Files.exists(file)) {
                 writeDefaults();
