@@ -1096,15 +1096,32 @@ public class MainController {
             if (alreadyOpen) {
                 return;
             }
-            // Opening does close the menu, unlike forgetting. Guarded because the popup
-            // does not exist until the menu has been shown at least once, and the list is
-            // built once at startup before that has happened.
-            if (recentWorkspacesMenu.getParentPopup() != null) {
-                recentWorkspacesMenu.getParentPopup().hide();
-            }
+            closeMenuBarMenu();
             openRecentWorkspace(root);
         });
         return item;
+    }
+
+    /**
+     * Closes the whole File menu, through the menu rather than around it.
+     *
+     * <p>These rows do not hide on click, because the cross has to be pressable without
+     * the menu closing under it - so opening a workspace has to close the menu itself.
+     * Hiding the popup was the obvious way and the wrong one: the popup is the File menu's,
+     * and hiding it directly leaves {@code Menu.showing} true. The menu bar tracks that
+     * property to know which of its buttons is open, so it went on believing File was
+     * still showing and ignored every click on it until another menu was opened and the
+     * bar's idea of the world was corrected.
+     *
+     * <p>Hiding the top Menu instead sets that property, which is what the bar is
+     * listening for.
+     */
+    private void closeMenuBarMenu() {
+        Menu menu = recentWorkspacesMenu;
+        while (menu.getParentMenu() != null) {
+            menu = menu.getParentMenu();
+        }
+        menu.hide();
     }
 
     /**
