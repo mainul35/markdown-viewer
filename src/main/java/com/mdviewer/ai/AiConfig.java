@@ -192,6 +192,9 @@ public final class AiConfig {
      * deliberate act - so by default it lives exactly as long as the app does.
      */
     private final java.util.Map<String, String> runtimeKeys = new java.util.HashMap<>();
+
+    /** Hosts allowed by answering the dialog, for this run only. */
+    private final Set<String> sessionHosts = new LinkedHashSet<>();
     private final Path file;
 
     public AiConfig() {
@@ -311,7 +314,90 @@ public final class AiConfig {
                 hosts.add(trimmed);
             }
         }
+        hosts.addAll(sessionHosts);
         return hosts;
+    }
+
+    /**
+     * Allows {@code host} until the app is closed. Writes nothing.
+     *
+     * <p>The list exists so that a mistyped base URL cannot quietly ship a private
+     * document to a stranger. That guarantee survives this: the only way in here is a
+     * dialog naming the host and saying what allowing it means, which is the deliberate
+     * act the list is asking for. What it replaces is a refusal with no way forward except
+     * editing a file by hand - which taught people to keep the file permissive rather than
+     * to think about each host.
+     */
+    public void allowHostForSession(String host) {
+        String cleaned = hostOf(host);
+        if (!cleaned.isEmpty()) {
+            sessionHosts.add(cleaned);
+        }
+    }
+
+    /**
+     * Adds {@code host} to allowedHosts in the config file.
+     *
+     * <p>Rewrites the one line, like {@link #saveKey}, so the comments explaining the file
+     * survive. Only ever called because someone asked for it to be remembered.
+     *
+     * @return true if the file was updated
+     */
+    public boolean saveAllowedHost(String host) {
+        String cleaned = hostOf(host);
+        if (cleaned.isEmpty()) {
+            return false;
+        }
+        Set<String> hosts = new LinkedHashSet<>();
+        for (String existing : value("allowedHosts").split(",")) {
+            String trimmed = existing.strip().toLowerCase(Locale.ROOT);
+            if (!trimmed.isEmpty()) {
+                hosts.add(trimmed);
+            }
+        }
+        if (!hosts.add(cleaned)) {
+            return true; // Already there; nothing to write.
+        }
+        String line = "allowedHosts        = " + String.join(", ", hosts);
+        try {
+            List<String> lines = Files.exists(file)
+                    ? new ArrayList<>(Files.readAllLines(file, java.nio.charset.StandardCharsets.UTF_8))
+                    : new ArrayList<>();
+            boolean replaced = false;
+            for (int i = 0; i < lines.size(); i++) {
+                if (lines.get(i).strip().startsWith("allowedHosts")) {
+                    lines.set(i, line);
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                lines.add(line);
+            }
+            Files.write(file, lines, java.nio.charset.StandardCharsets.UTF_8);
+            properties.setProperty("allowedHosts", String.join(", ", hosts));
+            return true;
+        } catch (IOException | RuntimeException e) {
+            System.err.println("MDViewer: could not update allowedHosts in " + file + " - " + e);
+            return false;
+        }
+    }
+
+    /** The host part of a URL, or the text itself if it is already a bare host. */
+    public static String hostOf(String urlOrHost) {
+        if (urlOrHost == null || urlOrHost.isBlank()) {
+            return "";
+        }
+        String text = urlOrHost.strip();
+        try {
+            String host = URI.create(text).getHost();
+            if (host != null && !host.isBlank()) {
+                return host.toLowerCase(Locale.ROOT);
+            }
+        } catch (RuntimeException e) {
+            // Not a URL; treated as a bare host below.
+        }
+        return text.toLowerCase(Locale.ROOT);
     }
 
     /** True if {@code baseUrl}'s host is on the allowlist. Anything unparseable is refused. */
