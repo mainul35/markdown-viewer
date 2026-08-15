@@ -109,6 +109,23 @@ public final class AiPanel extends VBox {
         private String draft = "";
         private boolean scan = false;
         private String status = "";
+
+        /* And so does the work in progress. A scan started here used to disable Send and
+           show its progress on every document, because whether the panel was busy was a
+           property of the panel. It is a property of the conversation: reading a project
+           to answer a question about one file says nothing about asking a question about
+           another, and there is no reason two of them cannot run at once. */
+        private volatile boolean running = false;
+        private volatile Thread worker;
+        private volatile boolean cancelScan = false;
+        /** Index of the reply still arriving, or -1: shown as text until it is complete. */
+        private int streamingTurn = -1;
+        /** 0..1 through a scan, or -1 for work that cannot say how far along it is. */
+        private double progress = -1;
+        /** Set while a scan runs, so the percentage can be shown beside the status. */
+        private boolean scanning = false;
+        /** Turn numbering, per conversation: two documents may each have one running. */
+        private int generation = 0;
     }
 
     private final Map<String, Conversation> conversations = new LinkedHashMap<>();
@@ -120,24 +137,10 @@ public final class AiPanel extends VBox {
     private final Button allowHost = new Button("Allow this host...");
     private final Label status = new Label();
 
-    /** Set from the FX thread, read by the scan thread between passes. */
-    private volatile boolean cancelScan = false;
+    /** The conversation whose composer is on screen. Never null after construction. */
+    private Conversation active = new Conversation();
 
-    /** The turn in flight, so Stop can interrupt a request rather than wait it out. */
-    private volatile Thread worker;
 
-    /** Index of the reply still arriving, or -1. It is shown as text until it is complete. */
-    private int streamingTurn = -1;
-
-    /**
-     * Which turn the panel is currently interested in.
-     *
-     * <p>A request cannot be un-sent, only ignored. Every callback from a turn carries the
-     * number it was started with and does nothing if that is no longer this; abandoning a
-     * turn is then a matter of moving the number on. Read and written on the FX thread
-     * only, which is the one place all of those callbacks arrive.
-     */
-    private int generation = 0;
 
     /** The preview's renderer, so an answer is formatted the way the document is. */
     private final MarkdownService markdown = new MarkdownService();
@@ -160,7 +163,45 @@ public final class AiPanel extends VBox {
        current conversation" without knowing there is more than one. */
     private List<ChatProvider.Message> history = new ArrayList<>();
     private List<Turn> turns = new ArrayList<>();
-    private boolean busy = false;
+    /**
+     * Brings the composer into line with whichever conversation is on screen.
+     *
+     * <p>Send, Stop scan, the progress bar and the status line all describe one document's
+     * work. They used to describe the panel's, so a scan begun on one file left every
+     * other file unable to send until it finished.
+     */
+    private void syncComposer() {
+        send.setDisable(active.running);
+        stopScan.setVisible(active.running && active.scanning);
+        stopScan.setManaged(active.running && active.scanning);
+        if (active.running) {
+            progress.setProgress(active.progress < 0
+                    ? ProgressBar.INDETERMINATE_PROGRESS : active.progress);
+            progress.setVisible(true);
+            progress.setManaged(true);
+        } else {
+            progress.setVisible(false);
+            progress.setManaged(false);
+            progress.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+        }
+        status.setText(active.status == null ? "" : active.status);
+        boolean hasStatus = !status.getText().isBlank();
+        status.setVisible(hasStatus);
+        status.setManaged(hasStatus);
+    }
+
+    /** Says something about the conversation on screen. */
+    private void setStatus(String message) {
+        setStatus(active, message);
+    }
+
+    /** Records a status line against a conversation, and shows it if that one is on screen. */
+    private void setStatus(Conversation conversation, String message) {
+        conversation.status = message == null ? "" : message;
+        if (conversation == active) {
+            syncComposer();
+        }
+    }
 
     public AiPanel(AiConfig config) {
         this.config = config;
@@ -252,13 +293,13 @@ public final class AiPanel extends VBox {
                running: Send stayed disabled for however long a scan had left, and when the
                answer finally arrived it was added to the history that had just been
                cleared. Clearing a conversation means being done with it. */
-            boolean wasBusy = busy;
-            cancelTurn();
+            boolean wasBusy = active.running;
+            cancelTurn(active);
             // This document's conversation only: the others are not on screen, and
             // clearing what you cannot see is not something a Clear button should do.
             history.clear();
             turns.clear();
-            streamingTurn = -1;
+            active.streamingTurn = -1;
             renderTranscript();
             setStatus(wasBusy ? "Cleared, and the request in progress was stopped." : "");
         });
@@ -283,9 +324,9 @@ public final class AiPanel extends VBox {
            makes the blocked send throw, which ends the pass now and lets the scan answer
            from what it has already read. */
         stopScan.setOnAction(e -> {
-            cancelScan = true;
+            active.cancelScan = true;
             setStatus("Stopping - answering from what has been read so far...");
-            Thread running = worker;
+            Thread running = active.worker;
             if (running != null && running.isAlive()) {
                 running.interrupt();
             }
@@ -596,49 +637,42 @@ public final class AiPanel extends VBox {
         lookup.start();
     }
 
-    /** Turns the bar on, indeterminate until something can say how far along it is. */
-    private void showProgress(double fraction) {
-        progress.setProgress(fraction);
-        progress.setVisible(true);
-        progress.setManaged(true);
-    }
-
-    private void hideProgress() {
-        progress.setVisible(false);
-        progress.setManaged(false);
-        progress.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
-    }
-
     private void sendCurrentInput() {
         String question = input.getText().strip();
-        if (question.isEmpty() || busy) {
+        // Only this document's own turn blocks it. Another file's scan is that file's
+        // business and must not hold this one's Send button down.
+        if (question.isEmpty() || active.running) {
             return;
         }
         AiConfig.Endpoint endpoint = currentEndpoint();
         if (endpoint == null || endpoint.baseUrl().isBlank()) {
-            setStatus("No endpoint is configured. Edit " + config.getFile() + ".");
+            setStatus(active, "No endpoint is configured. Edit " + config.getFile() + ".");
             return;
         }
         input.clear();
         addTurn("You", question, "user");
 
         int replyTurn = addTurn(endpoint.model(), "", "assistant");
-        streamingTurn = replyTurn;
         StringBuilder answer = new StringBuilder();
 
         /* The turn's own number, and the conversation it belongs to. Everything that comes
            back checks the number, so a turn that has been cleared away cannot write into
-           what replaced it. The lists are held rather than read from the fields, because
-           the fields follow the document on screen and a turn belongs to the document it
-           was asked about - switching away while it runs must not put the answer in
-           another document's conversation. */
-        final int turnId = ++generation;
-        final List<Turn> myTurns = turns;
-        final List<ChatProvider.Message> myHistory = history;
-        busy = true;
-        send.setDisable(true);
-        showProgress(ProgressBar.INDETERMINATE_PROGRESS);
-        setStatus("Thinking...");
+           what replaced it, and holds the conversation rather than reading the field -
+           which follows the document on screen, while a turn belongs to the document it
+           was asked about. */
+        final Conversation convo = active;
+        final int turnId = ++convo.generation;
+        final List<Turn> myTurns = convo.turns;
+        final List<ChatProvider.Message> myHistory = convo.history;
+
+        boolean scanning = scanProject.isSelected();
+        convo.streamingTurn = replyTurn;
+        convo.running = true;
+        convo.cancelScan = false;
+        convo.scanning = scanning;
+        convo.progress = -1;
+        setStatus(convo, "Thinking...");
+        syncComposer();
 
         String document = documentSupplier.get();
         String documentName = documentNameSupplier.get();
@@ -646,13 +680,7 @@ public final class AiPanel extends VBox {
         String image = attachedImage;
         setAttachedImage(null, 0, 0);
 
-        boolean scanning = scanProject.isSelected();
-        cancelScan = false;
-        if (scanning) {
-            stopScan.setVisible(true);
-            stopScan.setManaged(true);
-        }
-
+        final Conversation scanConvo = convo;
         // Off the FX thread: reading a project and waiting on a model both block.
         Thread worker = new Thread(() -> {
             /* Everything in here runs on a thread of its own, so anything thrown and not
@@ -665,19 +693,19 @@ public final class AiPanel extends VBox {
                 ContextGatherer.Result context;
                 if (scanning) {
                     try {
-                        context = runScan(question, workspaceRoot, endpoint, turnId);
+                        context = runScan(question, workspaceRoot, endpoint, turnId, convo);
                     } catch (ProjectScanner.ScanFailed e) {
                         Platform.runLater(() -> {
-                            if (turnId == generation) {
-                                failed(question, e.getMessage());
+                            if (turnId == convo.generation) {
+                                failed(convo, question, e.getMessage());
                             }
                         });
                         return;
                     }
                     if (context == null) {
                         Platform.runLater(() -> {
-                            if (turnId == generation) {
-                                failed(question, "Nothing to scan: the question names no "
+                            if (turnId == convo.generation) {
+                                failed(convo, question, "Nothing to scan: the question names no "
                                         + "folder, and no workspace is open.");
                             }
                         });
@@ -689,7 +717,7 @@ public final class AiPanel extends VBox {
                 if (!context.isEmpty()) {
                     final ContextGatherer.Result read = context;
                     Platform.runLater(() -> {
-                        if (turnId != generation) {
+                        if (turnId != convo.generation) {
                             return;
                         }
                         addSourcesNote(read);
@@ -701,7 +729,7 @@ public final class AiPanel extends VBox {
                         buildMessages(question, document, documentName, context, image);
                 if (prompt.note() != null) {
                     Platform.runLater(() -> {
-                        if (turnId == generation) {
+                        if (turnId == convo.generation) {
                             setStatus(prompt.note() + " Thinking...");
                         }
                     });
@@ -712,7 +740,7 @@ public final class AiPanel extends VBox {
                             answer.append(token);
                         }
                         Platform.runLater(() -> {
-                            if (turnId != generation) {
+                            if (turnId != convo.generation) {
                                 return; // Cleared away while this was arriving.
                             }
                             String so_far;
@@ -725,13 +753,13 @@ public final class AiPanel extends VBox {
                             }
                             // Text, not a re-render: half an answer is not valid Markdown,
                             // and rendering per token would be both wrong and slow.
-                            if (myTurns == turns) {
+                            if (convo == active) {
                                 call("__aiStream", so_far);
                             }
                         });
                     });
                     Platform.runLater(() -> {
-                        if (turnId != generation) {
+                        if (turnId != convo.generation) {
                             return;
                         }
                         String whole = answer.toString();
@@ -741,24 +769,24 @@ public final class AiPanel extends VBox {
                             myTurns.set(replyTurn,
                                     new Turn(endpoint.model(), whole, "assistant"));
                         }
-                        streamingTurn = -1;
+                        convo.streamingTurn = -1;
                         // Only if that conversation is the one on screen; otherwise it is
                         // waiting in its own document and will be drawn on the way back.
-                        if (myTurns == turns) {
+                        if (convo == active) {
                             renderTranscript(); // Complete now, so render it as Markdown.
                         }
-                        finish("");
+                        finish(convo, "");
                     });
                 } catch (ChatProvider.NotAllowedException e) {
                     Platform.runLater(() -> {
-                        if (turnId == generation) {
-                            failed(question, e.getMessage());
+                        if (turnId == convo.generation) {
+                            failed(convo, question, e.getMessage());
                         }
                     });
                 } catch (Exception e) {
                     Platform.runLater(() -> {
-                        if (turnId == generation) {
-                            failed(question, "Could not reach " + endpoint.host()
+                        if (turnId == convo.generation) {
+                            failed(convo, question, "Could not reach " + endpoint.host()
                                     + ": " + e.getMessage());
                         }
                     });
@@ -767,8 +795,8 @@ public final class AiPanel extends VBox {
                 String what = t.getClass().getSimpleName()
                         + (t.getMessage() == null ? "" : ": " + t.getMessage());
                 Platform.runLater(() -> {
-                    if (turnId == generation) {
-                        failed(question, "The assistant stopped on an unexpected error - "
+                    if (turnId == convo.generation) {
+                        failed(convo, question, "The assistant stopped on an unexpected error - "
                                 + what + ". Your question is back in the box; nothing was "
                                 + "sent to the model after this point.");
                     }
@@ -776,7 +804,7 @@ public final class AiPanel extends VBox {
             }
         }, "ai-chat");
         worker.setDaemon(true);
-        this.worker = worker;
+        convo.worker = worker;
         worker.start();
     }
 
@@ -795,25 +823,27 @@ public final class AiPanel extends VBox {
      * checked against that number before it is allowed to touch anything. The interrupt is
      * so it stops sooner rather than running a scan nobody is waiting for.
      */
-    private void cancelTurn() {
-        if (!busy) {
+    private void cancelTurn(Conversation conversation) {
+        if (!conversation.running) {
             return;
         }
-        generation++;
-        cancelScan = true;
-        Thread running = worker;
+        conversation.generation++;
+        conversation.cancelScan = true;
+        Thread running = conversation.worker;
         if (running != null && running.isAlive()) {
             running.interrupt();
         }
-        finish("");
+        finish(conversation, "");
     }
 
-    private void failed(String question, String message) {
-        if (input.getText().isBlank()) {
+    private void failed(Conversation conversation, String question, String message) {
+        // Only into the box in front of you: putting another document's failed question
+        // there would be handing you something you never typed here.
+        if (conversation == active && input.getText().isBlank()) {
             input.setText(question);
             input.positionCaret(question.length());
         }
-        finish(message);
+        finish(conversation, message);
     }
 
     /**
@@ -826,7 +856,8 @@ public final class AiPanel extends VBox {
      * @return null when there is nothing to scan
      */
     private ContextGatherer.Result runScan(String question, Path workspaceRoot,
-                                           AiConfig.Endpoint endpoint, int turnId)
+                                           AiConfig.Endpoint endpoint, int turnId,
+                                           Conversation convo)
             throws ProjectScanner.ScanFailed {
         // The folder named in the question wins over the workspace: naming it is the whole
         // reason it is there. Falling back to the workspace makes the toggle work for the
@@ -843,28 +874,34 @@ public final class AiPanel extends VBox {
         Path scanned = root;
         int expected = scanner.estimatePasses(root);
         Platform.runLater(() -> {
-            if (turnId == generation) {
+            if (turnId == convo.generation) {
                 setStatus("Scanning " + scanned.getFileName() + " in about " + expected
                         + " passes. This takes minutes, not seconds.");
             }
         });
         ProjectScanner.ScanResult result = scanner.scan(root, question, endpoint,
                 step -> Platform.runLater(() -> {
-                    if (turnId != generation) {
+                    if (turnId != convo.generation) {
                         return; // Abandoned; its progress is nobody's business now.
                     }
                     // A scan knows how far along it is, so the bar can say so rather than
                     // spinning for minutes with no sense of an end.
                     if (step.passes() > 0) {
-                        showProgress(Math.min(1.0, step.pass() / (double) step.passes()));
+                        convo.progress = Math.min(1.0, step.pass() / (double) step.passes());
                     }
-                    setStatus("Scanning " + scanned.getFileName() + ": "
+                    /* The percentage leads. A line beginning "Scanning vsd-auth-server:
+                       reading pass 2 of 11" is a sentence to be read before it says how
+                       far along it is, and it was the only sign of life on screen; a
+                       number at the front is legible at a glance. */
+                    int percent = step.passes() > 0
+                            ? (int) Math.round(100.0 * step.pass() / step.passes()) : 0;
+                    setStatus(convo, percent + "%  ·  " + scanned.getFileName() + ", "
                         + step.stage() + " pass " + step.pass() + " of " + step.passes()
                         + (step.filesInPass() > 0
                                 ? " (" + step.filesInPass() + " files)" : "")
-                        + " - press Stop scan to answer from what has been read.");
+                        + "  ·  Stop scan answers from what has been read.");
                 }),
-                () -> cancelScan);
+                () -> convo.cancelScan);
 
         List<ContextGatherer.Source> sources = new ArrayList<>();
         int chars = 0;
@@ -990,15 +1027,16 @@ public final class AiPanel extends VBox {
         worker.start();
     }
 
-    private void finish(String message) {
-        busy = false;
-        worker = null;
-        hideProgress();
-        send.setDisable(false);
-        stopScan.setVisible(false);
-        stopScan.setManaged(false);
-        cancelScan = false;
-        setStatus(message);
+    private void finish(Conversation conversation, String message) {
+        conversation.running = false;
+        conversation.worker = null;
+        conversation.cancelScan = false;
+        conversation.scanning = false;
+        conversation.progress = -1;
+        setStatus(conversation, message);
+        if (conversation == active) {
+            syncComposer();
+        }
     }
 
     /**
@@ -1359,10 +1397,10 @@ public final class AiPanel extends VBox {
                         .append("</div></details>");
             } else {
                 html.append("<div class=\"ai-body\"")
-                        .append(i == streamingTurn
+                        .append(i == active.streamingTurn
                                 ? " id=\"streaming\" class=\"ai-streaming\"" : "")
                         .append('>')
-                        .append(bodyHtml(turn, i == streamingTurn))
+                        .append(bodyHtml(turn, i == active.streamingTurn))
                         .append("</div>");
             }
             html.append("</div>");
@@ -1434,11 +1472,12 @@ public final class AiPanel extends VBox {
         if (leaving != null) {
             leaving.draft = input.getText();
             leaving.scan = scanProject.isSelected();
-            leaving.status = busy ? "" : status.getText();
+            leaving.status = status.getText();
         }
 
         Conversation next = conversations.computeIfAbsent(id, k -> new Conversation());
         activeKey = id;
+        active = next;
         turns = next.turns;
         history = next.history;
         input.setText(next.draft);
@@ -1446,12 +1485,11 @@ public final class AiPanel extends VBox {
         scanProject.setSelected(next.scan);
         renderTranscript();
 
-        /* A turn in flight belongs to the document it was asked about, and its status and
-           progress describe that document's work - so while one is running the composer
-           keeps showing it wherever you are, rather than pretending nothing is happening. */
-        if (!busy) {
-            setStatus(next.status == null ? "" : next.status);
-        }
+        /* And the state of the work with it. A scan reading a project to answer a question
+           about one document says nothing about another, so moving to a file with nothing
+           running gives a working Send button, no Stop scan and no progress bar - even
+           while the first document's scan carries on behind it. */
+        syncComposer();
     }
 
     /** Repaints the transcript for the editor's theme, so the panel matches the preview. */
@@ -1466,9 +1504,5 @@ public final class AiPanel extends VBox {
         setStatus("Copied.");
     }
 
-    private void setStatus(String message) {
-        status.setText(message);
-        status.setVisible(!message.isBlank());
-        status.setManaged(!message.isBlank());
-    }
+
 }
