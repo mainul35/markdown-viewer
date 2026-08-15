@@ -1133,6 +1133,12 @@ public final class AiPanel extends VBox {
                     + "If they are not enough, say exactly which file or folder you still "
                     + "need, by name. 'I cannot access your filesystem' is never the right "
                     + "answer here.\n\n"
+                    /* Naming a file used to do nothing unless it was typed as a full
+                       path, so an answer would report a file as missing while it sat in
+                       the tree on screen. It is fetched now, and saying which one is
+                       wanted is the way to get it rather than a dead end. */
+                    + "Naming a file in the workspace is enough to be given it: say which "
+                    + "one and ask again, and it will be read on the next turn.\n\n"
                     /* A listing is names. Asked about the auth server, a reply cited an
                        AUTHORIZATION_PLAN.md that does not exist - the name was a blend of
                        two filenames it had seen - and described a subscription 'plan'

@@ -117,6 +117,15 @@ public final class ContextGatherer {
             readPath(path, question, sources, skipped, budget);
         }
         if (workspaceRoot != null) {
+            /* A file named in the question, looked up in the workspace. Only absolute
+               paths were followed from what you typed, so naming a file that is sitting
+               in the tree in front of you - "does PLAN.md agree with this?" - read
+               nothing, and the answer said the file had not been provided. Whether it is
+               open in a tab is beside the point: the workspace is the boundary, and a
+               name typed into a question about it is a request to read it. */
+            for (Path path : workspaceFilesNamedIn(question, workspaceRoot)) {
+                readPath(path, question, sources, skipped, budget);
+            }
             for (Path path : relativePathsIn(document, workspaceRoot)) {
                 readPath(path, question, sources, skipped, budget);
             }
@@ -127,6 +136,69 @@ public final class ContextGatherer {
             }
         }
         return new Result(sources, skipped, totalBudget - budget[0]);
+    }
+
+    /** A bare file name or a workspace-relative one: PLAN.md, docs/PLAN.md, src\a\b.java. */
+    private static final Pattern NAMED_FILE = Pattern.compile(
+            "(?<![\\w./\\\\-])([\\w.-]+(?:[/\\\\][\\w.-]+)*\\.[A-Za-z0-9]{1,10})(?![\\w])");
+
+    /** How many files one name may pull in when it matches in several folders. */
+    private static final int MAX_NAME_MATCHES = 4;
+
+    /**
+     * Files in {@code root} whose name appears in {@code question}.
+     *
+     * <p>Matched on the tail of the path, so "PLAN.md" finds it wherever it sits and
+     * "docs/PLAN.md" finds only that one. A name matching in several folders brings back
+     * a few of them rather than choosing: a reader who says "the README" in a project with
+     * six of them means the one they are thinking of, and the honest response is to show
+     * the ones that could be meant.
+     *
+     * <p>Bounded by the workspace, like every other path this class follows that was not
+     * typed out in full. Nothing outside it is reachable by naming a file.
+     */
+    public static List<Path> workspaceFilesNamedIn(String question, Path root) {
+        List<Path> found = new ArrayList<>();
+        if (question == null || root == null || !Files.isDirectory(root)) {
+            return found;
+        }
+        Set<String> names = new LinkedHashSet<>();
+        Matcher matcher = NAMED_FILE.matcher(question);
+        while (matcher.find()) {
+            String name = matcher.group(1).replace('\\', '/').toLowerCase(Locale.ROOT);
+            // Extensions only, so "e.g" and version numbers do not become file lookups.
+            int dot = name.lastIndexOf('.');
+            if (dot > 0 && TEXT_EXTENSIONS.contains(name.substring(dot + 1))) {
+                names.add(name);
+            }
+        }
+        if (names.isEmpty()) {
+            return found;
+        }
+
+        Set<Path> seen = new LinkedHashSet<>();
+        for (Path file : allReadableFiles(root)) {
+            String relative = root.relativize(file).toString()
+                    .replace('\\', '/').toLowerCase(Locale.ROOT);
+            for (String name : names) {
+                boolean tail = relative.equals(name) || relative.endsWith("/" + name);
+                if (tail && seen.add(file)) {
+                    found.add(file);
+                    break;
+                }
+            }
+        }
+        // A name that matches half the tree is not a request to read half the tree.
+        Map<String, Integer> perName = new LinkedHashMap<>();
+        List<Path> capped = new ArrayList<>();
+        for (Path file : found) {
+            String key = file.getFileName().toString().toLowerCase(Locale.ROOT);
+            int count = perName.merge(key, 1, Integer::sum);
+            if (count <= MAX_NAME_MATCHES) {
+                capped.add(file);
+            }
+        }
+        return capped;
     }
 
     // ------------------------------------------------------------------ paths
