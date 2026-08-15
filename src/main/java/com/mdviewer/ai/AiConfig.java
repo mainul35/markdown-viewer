@@ -224,6 +224,78 @@ public final class AiConfig {
         return ordered;
     }
 
+    /**
+     * The providers the assistant should offer, which is not all of them.
+     *
+     * <p>Nine are configured so that using one is a matter of allowing it rather than
+     * looking up a base URL, but a picker with nine entries when two of them work is a
+     * list of things that will refuse you. This is the list someone has actually set up.
+     *
+     * <p>Unset, it means "the ones that could work now": a provider whose host is already
+     * allowed. That keeps an existing install showing exactly what it showed before, and a
+     * new one showing the two it was shipped with, without anybody choosing anything.
+     */
+    public List<String> enabledProviderNames() {
+        String configured = value("providers.enabled");
+        List<String> all = providerNames();
+        if (configured.isBlank()) {
+            List<String> usable = new ArrayList<>();
+            for (String name : all) {
+                if (isAllowed(endpoint(name).baseUrl())) {
+                    usable.add(name);
+                }
+            }
+            // Never nothing: an empty picker offers no way to reach the settings that
+            // would fill it, which is a corner nobody should be able to paint into.
+            return usable.isEmpty() ? all : usable;
+        }
+        Set<String> wanted = new LinkedHashSet<>();
+        for (String name : configured.split(",")) {
+            String trimmed = name.strip();
+            if (!trimmed.isEmpty() && all.contains(trimmed)) {
+                wanted.add(trimmed);
+            }
+        }
+        return wanted.isEmpty() ? all : new ArrayList<>(wanted);
+    }
+
+    /** Records which providers the assistant offers. Written to the file, like a setting. */
+    public boolean saveEnabledProviders(List<String> names) {
+        String joined = names == null ? "" : String.join(", ", names);
+        return saveProperty("providers.enabled", joined);
+    }
+
+    /**
+     * Replaces one property's line in the config file, leaving every other line alone.
+     *
+     * <p>Shared by the key, the host list and the provider list: all three rewrite a
+     * single line so the comments explaining the file survive being edited by the app.
+     */
+    private boolean saveProperty(String property, String newValue) {
+        try {
+            List<String> lines = Files.exists(file)
+                    ? new ArrayList<>(Files.readAllLines(file, java.nio.charset.StandardCharsets.UTF_8))
+                    : new ArrayList<>();
+            boolean replaced = false;
+            for (int i = 0; i < lines.size(); i++) {
+                if (lines.get(i).strip().startsWith(property)) {
+                    lines.set(i, property + " = " + newValue);
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                lines.add(property + " = " + newValue);
+            }
+            Files.write(file, lines, java.nio.charset.StandardCharsets.UTF_8);
+            properties.setProperty(property, newValue);
+            return true;
+        } catch (IOException | RuntimeException e) {
+            System.err.println("MDViewer: could not update " + property + " in " + file);
+            return false;
+        }
+    }
+
     public String defaultProvider() {
         String configured = value("provider.default");
         if (!configured.isBlank() && !endpoint(configured).baseUrl().isBlank()) {
