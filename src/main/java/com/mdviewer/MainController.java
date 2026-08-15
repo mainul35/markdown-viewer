@@ -2869,8 +2869,30 @@ public class MainController {
             }
             /* Sideways scrolling went with display:block. Wrapping is the better trade
                for a document anyway - a column you have to scroll to read is a column you
-               will not read - but an unbroken URL still has to be allowed to break. */
-            th, td { overflow-wrap:break-word; word-break:break-word; }
+               will not read - but an unbroken URL still has to be allowed to break.
+
+               overflow-wrap only, without word-break. word-break:break-word behaves like
+               overflow-wrap:anywhere, and anywhere is not just permission to break a long
+               word - it tells the layout that a column's narrowest possible width is one
+               character. An auto table believes it: a "Question" column against a wide
+               "Decision" one was squeezed to "QUE / STIO / N", a word per three lines,
+               while the column beside it took the rest of the table. overflow-wrap breaks
+               the URL that genuinely cannot fit and leaves the column widths alone. */
+            th, td { overflow-wrap:break-word; }
+            /* A floor under the first column, which is where a short label sits beside a
+               paragraph and gets shaved to fit it.
+
+               A plain length, not min(20ch, max-content): min() takes lengths and
+               percentages, and an intrinsic keyword inside it makes the whole declaration
+               invalid, so it is dropped and the column goes back to being squeezed. That
+               failure is silent - the measured width was identical with 14ch and with
+               24ch, which is what gave it away.
+
+               In ch rather than pixels so it tracks the font, which is what decides how
+               much a character is worth. Twenty of them holds a label like "What requires
+               login" on one line, and is little enough that a column of single words does
+               not read as mostly empty. */
+            th:first-child, td:first-child { min-width:20ch; }
             /* A cell under edit shows raw Markdown, so it gets the mono face - the
                change of typeface is itself the signal that this is the source now and
                not the rendered form. */
