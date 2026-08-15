@@ -117,6 +117,7 @@ public final class AiPanel extends VBox {
     private final Button send = new Button("Send");
     private final CheckBox scanProject = new CheckBox("Scan whole project");
     private final Button stopScan = new Button("Stop scan");
+    private final Button allowHost = new Button("Allow this host...");
     private final Label status = new Label();
 
     /** Set from the FX thread, read by the scan thread between passes. */
@@ -260,6 +261,9 @@ public final class AiPanel extends VBox {
             renderTranscript();
             setStatus(wasBusy ? "Cleared, and the request in progress was stopped." : "");
         });
+        allowHost.setOnAction(e -> promptToAllowHost());
+        allowHost.setVisible(false);
+        allowHost.setManaged(false);
         Button test = new Button("Test connection");
         test.setOnAction(e -> testConnection());
         Button key = new Button("API key...");
@@ -295,7 +299,7 @@ public final class AiPanel extends VBox {
            what they do. */
         Region scanSpacer = new Region();
         HBox.setHgrow(scanSpacer, Priority.ALWAYS);
-        HBox scanRow = new HBox(6, scanProject, scanSpacer, stopScan);
+        HBox scanRow = new HBox(6, scanProject, scanSpacer, allowHost, stopScan);
         scanRow.setAlignment(Pos.CENTER_LEFT);
 
         Region footerSpacer = new Region();
@@ -410,6 +414,84 @@ public final class AiPanel extends VBox {
                 + endpoint.host() + "   ·   " + endpoint.model()
                 + (endpoint.apiKey().isBlank() ? "   ·   no key set" : ""));
         hostLabel.getStyleClass().setAll("ai-host", allowed ? "ai-host-ok" : "ai-host-bad");
+        /* Offered only when the answer is no. Nine providers are listed and a curated
+           allowedHosts names two of them, so picking any of the others gave a refusal and
+           no way forward except editing a file by hand - which teaches people to make the
+           file permissive rather than to think about each host. */
+        allowHost.setVisible(!allowed);
+        allowHost.setManaged(!allowed);
+    }
+
+    /**
+     * Asks whether this host may receive document content.
+     *
+     * <p>The allowlist is a refusal rather than a warning, and that is the point: a
+     * mistyped base URL cannot quietly ship a private document to a stranger. This does
+     * not weaken it. It is the deliberate act the list asks for, moved from editing a file
+     * by hand into the moment it matters - and it names the host, says what will be sent
+     * there, and defaults to this session only.
+     *
+     * <p>Session by default because a decision that lapses is one that gets made again;
+     * a permanent one made in passing is how an allowlist turns into a list of everywhere
+     * anyone ever tried.
+     */
+    private void promptToAllowHost() {
+        AiConfig.Endpoint endpoint = currentEndpoint();
+        if (endpoint == null || endpoint.baseUrl().isBlank()) {
+            setStatus("Choose a provider first.");
+            return;
+        }
+        String host = AiConfig.hostOf(endpoint.baseUrl());
+        if (host.isEmpty()) {
+            setStatus("That provider's base URL has no host in it.");
+            return;
+        }
+
+        Label question = new Label("Allow MDViewer to send document content to " + host + "?");
+        question.setWrapText(true);
+        question.setMaxWidth(420);
+        question.setStyle("-fx-font-weight: bold;");
+
+        Label what = new Label("Questions you ask are sent there with the open document, "
+                + "and with any files a scan reads. Only allow a host you are willing to "
+                + "send this work to.");
+        what.setWrapText(true);
+        what.setMaxWidth(420);
+        what.getStyleClass().add("ai-status");
+
+        CheckBox remember = new CheckBox("Remember in " + config.getFile().getFileName());
+        Label note = new Label("Left unticked, this lasts until MDViewer is closed and "
+                + "nothing is written to disk.");
+        note.setWrapText(true);
+        note.setMaxWidth(420);
+        note.getStyleClass().add("ai-status");
+
+        VBox form = new VBox(10, question, what, remember, note);
+        form.setPadding(new Insets(4));
+
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Allow host");
+        dialog.initOwner(getScene() == null ? null : getScene().getWindow());
+        dialog.getDialogPane().setContent(form);
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        if (getScene() != null) {
+            dialog.getDialogPane().getStylesheets().setAll(getScene().getStylesheets());
+        }
+
+        dialog.showAndWait().ifPresent(button -> {
+            if (button != ButtonType.OK) {
+                return;
+            }
+            config.allowHostForSession(host);
+            if (remember.isSelected() && config.saveAllowedHost(host)) {
+                setStatus(host + " added to allowedHosts in " + config.getFile().getFileName() + ".");
+            } else if (remember.isSelected()) {
+                setStatus(host + " allowed for this session. The file could not be updated.");
+            } else {
+                setStatus(host + " allowed until MDViewer is closed.");
+            }
+            showHost();
+        });
     }
 
     private AiConfig.Endpoint currentEndpoint() {
