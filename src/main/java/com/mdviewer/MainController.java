@@ -14,6 +14,12 @@ import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
+import javafx.geometry.Pos;
+import javafx.scene.control.Button;
+import javafx.scene.control.CustomMenuItem;
+import javafx.scene.control.Label;
+import javafx.scene.control.Tooltip;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
@@ -34,6 +40,7 @@ import com.mdviewer.service.ImageRef;
 import com.mdviewer.service.MarkdownService;
 import com.mdviewer.service.SourceEdits;
 import com.mdviewer.service.TableSource;
+import com.mdviewer.service.WorkspaceHistory;
 import com.mdviewer.service.Trash;
 import com.mdviewer.ui.DocumentView;
 import com.mdviewer.ui.FileTreePanel;
@@ -91,6 +98,11 @@ public class MainController {
 
     @FXML
     private CheckMenuItem autoRefreshMenuItem;
+
+    @FXML
+    private Menu recentWorkspacesMenu;
+
+    private final WorkspaceHistory workspaceHistory = new WorkspaceHistory();
 
     /**
      * Re-reads the workspace tree on a timer. The explorer caches directory listings, so a
@@ -220,6 +232,15 @@ public class MainController {
 
         installReplaceShortcut();
 
+        /* Built when the menu opens rather than kept in step with every open and close.
+           A menu nobody is looking at does not need to be correct, and rebuilding on
+           demand means there is one place that can be wrong instead of several. */
+        recentWorkspacesMenu.setOnShowing(e -> rebuildRecentWorkspaces());
+        // After, not before: a label's real width is only known once the popup has been
+        // laid out with the fonts the stylesheet actually gave it.
+        recentWorkspacesMenu.setOnShown(e -> alignRecentRows());
+        rebuildRecentWorkspaces();
+
         previewDebounce = new PauseTransition(Duration.millis(200));
         previewDebounce.setOnFinished(e -> updatePreview());
 
@@ -337,6 +358,11 @@ public class MainController {
         workspaces.add(workspace);
         workspaceTabs.getTabs().add(workspace.getTab());
         fileTreePanel.addWorkspaceRoot(normalized);
+        // Only a real folder is worth remembering; the scratch workspace holding unsaved
+        // documents has no root to return to.
+        if (normalized != null) {
+            workspaceHistory.record(normalized);
+        }
         return workspace;
     }
 
@@ -861,6 +887,192 @@ public class MainController {
     @FXML
     private void handleToggleExplorer() {
         showExplorer(!isExplorerVisible());
+    }
+
+    /**
+     * Rebuilds the Recent Workspaces menu from the history file.
+     *
+     * <p>Folders that are already open are shown but disabled rather than hidden: a
+     * workspace vanishing from the list the moment you open it makes the list look like it
+     * forgot, and the greyed entry is what tells you it is already there.
+     */
+    private void rebuildRecentWorkspaces() {
+        recentWorkspacesMenu.getItems().clear();
+        List<Path> recent = workspaceHistory.list();
+        if (recent.isEmpty()) {
+            MenuItem empty = new MenuItem("No recent workspaces");
+            empty.setDisable(true);
+            recentWorkspacesMenu.getItems().add(empty);
+            return;
+        }
+        for (Path root : recent) {
+            boolean alreadyOpen = workspaces.stream()
+                    .anyMatch(w -> root.equals(w.getRoot()));
+            recentWorkspacesMenu.getItems().add(recentWorkspaceItem(root, alreadyOpen));
+        }
+        MenuItem clear = new MenuItem("Clear Recent Workspaces");
+        clear.setOnAction(e -> {
+            workspaceHistory.clear();
+            rebuildRecentWorkspaces();
+            setTransientStatus("Recent workspaces cleared.");
+        });
+        recentWorkspacesMenu.getItems().addAll(new SeparatorMenuItem(), clear);
+    }
+
+    /**
+     * One row of the recent list: the workspace, and a cross to forget it.
+     *
+     * <p>A {@link CustomMenuItem} rather than a MenuItem, because a MenuItem is one label
+     * and one action and this row needs two of each. Clearing the whole list was the only
+     * way to drop a single entry before, which is a poor trade when one scratch folder is
+     * sitting among the projects you actually use.
+     *
+     * <p>{@code hideOnClick} is off: the cross removes the entry and the menu stays open,
+     * so several can be dropped in one go. Opening a workspace does close it, which is why
+     * that path hides the menu itself.
+     */
+    private CustomMenuItem recentWorkspaceItem(Path root, boolean alreadyOpen) {
+        Label label = new Label(recentLabel(root));
+        /* Its own class, and its own colour in the stylesheet. A plain Label in here takes
+           its fill from modena's ".menu-item .label", a rule written for native menu rows;
+           relying on it means the text is one selector away from being invisible against
+           the popup, with nothing to say why. A custom row should colour its own text. */
+        label.getStyleClass().add("recent-row-label");
+        label.setMaxWidth(Double.MAX_VALUE);
+        label.setDisable(alreadyOpen);
+        HBox.setHgrow(label, Priority.ALWAYS);
+
+        Button forget = new Button("\u2715");
+        forget.getStyleClass().add("recent-forget");
+        forget.setFocusTraversable(false);
+        forget.setTooltip(new Tooltip("Forget " + root));
+        forget.setOnAction(e -> {
+            // Consumed so the row's own action does not also run and open the workspace
+            // that has just been forgotten.
+            e.consume();
+            workspaceHistory.remove(root);
+            rebuildRecentWorkspaces();
+            setTransientStatus("Removed " + root.getFileName() + " from recent workspaces.");
+        });
+
+        /* The spacer only helps once every row is the same width, which a menu does not
+           arrange on its own: a CustomMenuItem's content keeps its own preferred width
+           rather than being stretched to the popup, measured at 302 pixels for one row
+           and 87 for another in the same 338-pixel menu. So each cross landed wherever
+           its own path happened to end. alignRecentRows below levels the labels once the
+           menu is up and its real widths are known. */
+        Region gap = new Region();
+        HBox.setHgrow(gap, Priority.ALWAYS);
+        HBox row = new HBox(10, label, gap, forget);
+        row.setAlignment(Pos.CENTER_LEFT);
+        row.setMaxWidth(Double.MAX_VALUE);
+
+        CustomMenuItem item = new CustomMenuItem(row);
+        item.setHideOnClick(false);
+        item.setOnAction(e -> {
+            if (alreadyOpen) {
+                return;
+            }
+            closeMenuBarMenu();
+            openRecentWorkspace(root);
+        });
+        return item;
+    }
+
+    /**
+     * Closes the whole File menu, through the menu rather than around it.
+     *
+     * <p>These rows do not hide on click, because the cross has to be pressable without
+     * the menu closing under it - so opening a workspace has to close the menu itself.
+     * Hiding the popup was the obvious way and the wrong one: the popup is the File menu's,
+     * and hiding it directly leaves {@code Menu.showing} true. The menu bar tracks that
+     * property to know which of its buttons is open, so it went on believing File was
+     * still showing and ignored every click on it until another menu was opened and the
+     * bar's idea of the world was corrected.
+     *
+     * <p>Hiding the top Menu instead sets that property, which is what the bar is
+     * listening for.
+     */
+    private void closeMenuBarMenu() {
+        Menu menu = recentWorkspacesMenu;
+        while (menu.getParentMenu() != null) {
+            menu = menu.getParentMenu();
+        }
+        menu.hide();
+    }
+
+    /**
+     * Widens every recent row's label to the widest, so the crosses line up.
+     *
+     * <p>A menu does not stretch a CustomMenuItem's content to the popup width - each row
+     * keeps its own preferred width - so a growing spacer has nothing to grow into and
+     * every cross sits at the end of its own path instead of at the edge. Giving all the
+     * labels the widest label's width makes the rows equal, which is what the spacer
+     * needs.
+     *
+     * <p>Measured rather than computed: the width is read back after the popup is on
+     * screen, when the labels have the fonts the stylesheet gave them. Guessing from
+     * character counts gets the widest row wrong as soon as a path has different letters
+     * in it.
+     */
+    private void alignRecentRows() {
+        alignRows(recentWorkspacesMenu.getItems());
+    }
+
+    /** Takes the items rather than reading the field, so it can be exercised on its own. */
+    static void alignRows(List<MenuItem> items) {
+        List<Label> labels = new ArrayList<>();
+        for (MenuItem item : items) {
+            if (item instanceof CustomMenuItem custom
+                    && custom.getContent() instanceof HBox row
+                    && !row.getChildren().isEmpty()
+                    && row.getChildren().get(0) instanceof Label label) {
+                labels.add(label);
+            }
+        }
+        double widest = 0;
+        for (Label label : labels) {
+            widest = Math.max(widest, label.getWidth());
+        }
+        if (widest <= 0) {
+            return; // Not laid out yet; nothing useful to level against.
+        }
+        for (Label label : labels) {
+            label.setMinWidth(widest);
+        }
+    }
+
+    /**
+     * Folder name first, then where it is - "MDViewer  —  C:\\Users\\...\\codes".
+     *
+     * <p>Several checkouts of the same project are the normal case, so the name alone is
+     * ambiguous exactly when the list is most useful.
+     */
+    private static String recentLabel(Path root) {
+        Path name = root.getFileName();
+        Path parent = root.getParent();
+        if (name == null) {
+            return root.toString();
+        }
+        return parent == null ? name.toString() : name + "  \u2014  " + parent;
+    }
+
+    private void openRecentWorkspace(Path root) {
+        if (!Files.isDirectory(root)) {
+            // Gone since it was recorded: drop it rather than leaving a dead entry.
+            workspaceHistory.remove(root);
+            rebuildRecentWorkspaces();
+            setTransientStatus("That folder no longer exists - removed from recent workspaces.");
+            return;
+        }
+        WorkspaceView workspace = addWorkspace(root);
+        if (workspace == null) {
+            return; // addWorkspace already explained why, e.g. the workspace limit.
+        }
+        workspaceTabs.getSelectionModel().select(workspace.getTab());
+        fileTreePanel.addWorkspaceRoot(root);
+        onActiveDocumentChanged();
+        setTransientStatus("Opened workspace " + root.getFileName() + ".");
     }
 
     @FXML
