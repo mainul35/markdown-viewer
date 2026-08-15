@@ -657,11 +657,12 @@
     -fx-border-width: 2 0 0 0;
 }
 
-/* The bar sits under the buttons and above the status line, so it needs to read as
-   a thin rule rather than a control competing with them. */
+/* Tall enough to be noticed. At four pixels it was a hairline between two rows and
+   read as a divider, which is no use at all when it is the only thing on screen
+   saying that a scan running for minutes is still alive. */
 .ai-progress {
-    -fx-pref-height: 4;
-    -fx-min-height: 4;
+    -fx-pref-height: 10;
+    -fx-min-height: 10;
 }
 
 .ai-progress > .track {
