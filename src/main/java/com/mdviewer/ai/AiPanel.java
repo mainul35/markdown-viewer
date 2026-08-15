@@ -176,8 +176,9 @@ public final class AiPanel extends VBox {
         Region headerSpacer = new Region();
         HBox.setHgrow(headerSpacer, Priority.ALWAYS);
 
-        providerChoice.getItems().setAll(config.providerNames());
-        providerChoice.setValue(config.defaultProvider());
+        List<String> offered = config.enabledProviderNames();
+        providerChoice.getItems().setAll(offered);
+        providerChoice.setValue(firstOffered(offered, config.defaultProvider()));
         providerChoice.valueProperty().addListener((o, a, b) -> {
             showHost();
             loadModels(false);
@@ -399,6 +400,42 @@ public final class AiPanel extends VBox {
 
     public TextArea getInput() {
         return input;
+    }
+
+    /** The panel's configuration, so Settings can edit the same instance it is using. */
+    public AiConfig getConfig() {
+        return config;
+    }
+
+    /**
+     * Rebuilds the provider picker after Settings has changed what is offered.
+     *
+     * <p>Keeps the current selection if it survived. A provider that has just been hidden
+     * cannot stay selected, so the panel falls back to the configured default rather than
+     * leaving a name in the box that is no longer in the list.
+     */
+    public void refreshProviders() {
+        String current = providerChoice.getValue();
+        List<String> offered = config.enabledProviderNames();
+        providerChoice.getItems().setAll(offered);
+        providerChoice.setValue(current != null && offered.contains(current)
+                ? current : firstOffered(offered, config.defaultProvider()));
+        showHost();
+        loadModels(false);
+    }
+
+    /**
+     * The configured default when it is one of the offered providers, else the first.
+     *
+     * <p>provider.default names a provider whether or not it is shown, so hiding it would
+     * otherwise leave a name selected that is not in the list - which reads as a picker
+     * that has lost track of itself.
+     */
+    private static String firstOffered(List<String> offered, String preferred) {
+        if (preferred != null && offered.contains(preferred)) {
+            return preferred;
+        }
+        return offered.isEmpty() ? preferred : offered.get(0);
     }
 
     /** Shows which machine is about to receive the document, and whether that is allowed. */

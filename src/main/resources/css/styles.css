@@ -790,3 +790,22 @@
     -fx-font-size: 11px;
     -fx-text-fill: -mdv-text-muted;
 }
+
+/* --------------------------------------------------------- provider settings */
+.provider-heading {
+    -fx-font-size: 9.5px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+.provider-name {
+    -fx-font-size: 12.5px;
+    -fx-text-fill: -mdv-text;
+}
+
+/* The host and the key state are what the decision rests on, but they are read
+   once and then ignored; quiet enough not to compete with the provider names. */
+.provider-host {
+    -fx-font-size: 11.5px;
+    -fx-text-fill: -mdv-text-muted;
+}

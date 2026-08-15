@@ -89,6 +89,8 @@
                     share or a very large tree is exactly where the scan stops being free.
                 -->
                 <Menu text="Settings">
+                    <MenuItem text="AI Providers..." onAction="#handleProviderSettings"/>
+                    <SeparatorMenuItem/>
                     <CheckMenuItem fx:id="autoRefreshMenuItem" text="Auto-refresh Workspaces (5 min)" selected="true" onAction="#handleToggleAutoRefresh"/>
                 </Menu>
                 <Menu text="Help">

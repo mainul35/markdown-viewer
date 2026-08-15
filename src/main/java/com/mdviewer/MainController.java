@@ -1007,6 +1007,18 @@ public class MainController {
     }
 
     @FXML
+    private void handleProviderSettings() {
+        if (com.mdviewer.ai.ProviderSettings.show(
+                rootPane.getScene() == null ? null : rootPane.getScene().getWindow(),
+                aiPanel.getConfig())) {
+            // The picker is built from the config, so it has to be rebuilt when the config
+            // changes underneath it.
+            aiPanel.refreshProviders();
+            setTransientStatus("AI providers updated.");
+        }
+    }
+
+    @FXML
     private void handleToggleAssistant() {
         showAssistant(!isAssistantVisible());
     }
