@@ -446,9 +446,20 @@ public final class MarkdownService {
          * renderer reads {@code textContent}, so ordinary escaping is exactly what it
          * wants. If the script never loads, what stays on screen is the fence body -
          * readable numbers rather than an empty plate.
+         *
+         * <p>The fence's own offsets ride along, and the renderer carries them onto the
+         * figure it puts in this element's place. Without them a chart is the one block in
+         * the document that can be read but never adjusted: a right-click on it would have
+         * no way to say which fence in the source it means.
          */
-        private void emitChart(String chartSource) {
-            html.tag("pre", Map.of("class", "mdv-chart"));
+        private void emitChart(String chartSource, int[] span) {
+            Map<String, String> attrs = new LinkedHashMap<>();
+            attrs.put("class", "mdv-chart");
+            if (span != null) {
+                attrs.put("data-md-start", String.valueOf(span[0]));
+                attrs.put("data-md-end", String.valueOf(span[1]));
+            }
+            html.tag("pre", attrs);
             html.text(chartSource);
             html.tag("/pre");
         }
@@ -517,7 +528,7 @@ public final class MarkdownService {
 
             if (CHART_TAGS.contains(tag)) {
                 html.line();
-                emitChart(literal);
+                emitChart(literal, spanOf(fence));
                 html.line();
                 return;
             }

@@ -65,6 +65,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -226,6 +227,7 @@ public class MainController {
         previewToolbar = new PreviewToolbar();
         previewToolbar.setOnAction(this::applyFormat);
         previewToolbar.setOnInsertTable(this::insertTable);
+        previewToolbar.setOnInsertChart(this::insertChart);
 
         // The preview column: formatting toolbar above the rendered document.
         previewPane = new VBox(previewToolbar, webView);
@@ -1667,15 +1669,27 @@ public class MainController {
         ContextMenu codeMenu = new ContextMenu(copyItem("Copy"), new SeparatorMenuItem(),
                 languages);
 
+        // A chart's menu is built per right-click rather than once, because which forms
+        // are on offer depends on the data in the chart under the pointer.
+        ContextMenu chartMenu = new ContextMenu();
+
         webView.setOnContextMenuRequested(event -> {
             textMenu.hide();
             imageMenu.hide();
             codeMenu.hide();
+            chartMenu.hide();
             // The page records what was under the pointer on mousedown, which fires
             // before this, so the choice of menu is already known.
             boolean onImage = !previewString("window.__mdImageInfo()").isEmpty();
             boolean onCode = !previewString("window.__mdCodeInfo()").isEmpty();
-            ContextMenu menu = onImage ? imageMenu : onCode ? codeMenu : textMenu;
+            String chart = previewString("window.__mdChartInfo()");
+            ContextMenu menu;
+            if (!chart.isEmpty()) {
+                fillChartMenu(chartMenu, chart);
+                menu = chartMenu;
+            } else {
+                menu = onImage ? imageMenu : onCode ? codeMenu : textMenu;
+            }
             menu.show(webView, event.getScreenX(), event.getScreenY());
             event.consume();
         });
@@ -1683,7 +1697,95 @@ public class MainController {
             textMenu.hide();
             imageMenu.hide();
             codeMenu.hide();
+            chartMenu.hide();
         });
+    }
+
+    /** Chart forms, in the order the picker offers them: fence value to display name. */
+    private static final String[][] CHART_FORMS = {
+            {"bar", "Bar"},
+            {"column", "Column"},
+            {"line", "Line"},
+            {"area", "Area"},
+            {"pie", "Pie"},
+            {"donut", "Donut"},
+            {"stat", "Stat"},
+    };
+
+    /**
+     * Rebuilds the chart menu for the chart that was just right-clicked.
+     *
+     * <p>Forms the data cannot take are shown disabled with the reason beside them rather
+     * than hidden. Hiding them would leave the reader to guess why a chart they have seen
+     * elsewhere is not on offer here, and the reason - "needs one value per row", "shows
+     * one number; this has 12" - is the part worth reading. The current form is disabled
+     * too, for the plainer reason that it is already what you have.
+     *
+     * @param info {@code start,end,describe-output} as recorded on mousedown
+     */
+    private void fillChartMenu(ContextMenu menu, String info) {
+        menu.getItems().clear();
+        String[] parts = info.split(",", 3);
+        Map<String, String> verdicts = new LinkedHashMap<>();
+        if (parts.length > 2) {
+            for (String line : parts[2].split("\n")) {
+                int equals = line.indexOf('=');
+                if (equals > 0) {
+                    verdicts.put(line.substring(0, equals).trim(), line.substring(equals + 1).trim());
+                }
+            }
+        }
+        String current = verdicts.getOrDefault("type", "");
+
+        Menu change = new Menu("Change chart to");
+        for (String[] form : CHART_FORMS) {
+            String verdict = verdicts.get(form[0]);
+            boolean isCurrent = form[0].equals(current);
+            boolean fits = "ok".equals(verdict);
+            MenuItem item = new MenuItem(isCurrent ? form[1] + "  (current)"
+                    : fits ? form[1]
+                    : form[1] + "  -  " + verdict);
+            item.setDisable(isCurrent || !fits);
+            item.setOnAction(e -> setChartType(form[0]));
+            change.getItems().add(item);
+        }
+
+        MenuItem edit = new MenuItem("Edit chart data...");
+        edit.setOnAction(e -> revealChartSource(info));
+
+        menu.getItems().addAll(change, new SeparatorMenuItem(), edit, copyItem("Copy"));
+    }
+
+    /**
+     * Opens the editor on the chart's fence, so its numbers can be changed.
+     *
+     * <p>The chart itself is an SVG - there is nothing in it to click into - so the honest
+     * answer to "edit this" is to show the source it was compiled from and put the caret
+     * in it, rather than invent an editing surface over a picture.
+     */
+    private void revealChartSource(String info) {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            return;
+        }
+        String[] parts = info.split(",", 3);
+        int start;
+        int end;
+        try {
+            start = Integer.parseInt(parts[0]);
+            end = Integer.parseInt(parts[1]);
+        } catch (NumberFormatException e) {
+            return;
+        }
+        if (currentMode == EditorMode.FULL_PREVIEW) {
+            currentMode = EditorMode.SPLIT;
+            updateLayout();
+        }
+        TextArea editor = document.getEditor();
+        int limit = editor.getLength();
+        editor.selectRange(Math.min(start, limit), Math.min(end, limit));
+        editor.requestFocus();
+        setTransientStatus("Chart source selected - edit the numbers and the chart redraws.");
     }
 
     private MenuItem copyItem(String label) {
@@ -2054,9 +2156,43 @@ public class MainController {
             statusRestore.stop();
         }
 
-        webView.getEngine().print(job);
+        /* Charts are laid out in pixels for the pane they are in, which is not the width
+           of the paper. Letting the page scale them to fit would shrink their type along
+           with their geometry, so they are drawn again for the page the job is actually
+           going to - taken from the settings the dialog returned, since paper size and
+           orientation are both still the user's to change in there. */
+        prepareChartsForPrint(job.getJobSettings().getPageLayout());
+        try {
+            webView.getEngine().print(job);
+        } finally {
+            // In a finally block because a print that throws must not leave the reader
+            // looking at charts laid out for A4 and every table view forced open.
+            previewString("window.__mdChartsAfterPrint()");
+        }
         job.endJob();
         setTransientStatus("Sent " + jobName + " to " + job.getPrinter().getName() + ".");
+    }
+
+    /**
+     * Draws every chart again at the width of the page being printed, and opens the table
+     * views so the numbers are on the paper.
+     *
+     * <p>The printable width comes back from the page layout in points - a seventy-second
+     * of an inch - and CSS pixels are ninety-sixths of one, so the conversion is the ratio
+     * of those two. Without it a chart drawn for a 430-pixel pane prints at 430 pixels on
+     * a 720-pixel page, taking up three-fifths of the width it was given.
+     *
+     * <p>Undone by {@code __mdChartsAfterPrint} once the job has been handed over.
+     */
+    private void prepareChartsForPrint(PageLayout layout) {
+        if (layout == null) {
+            return;
+        }
+        int width = (int) Math.round(layout.getPrintableWidth() * 96.0 / 72.0);
+        if (width < 320) {
+            return; // Not a page anything readable fits on; leave the charts as they are.
+        }
+        previewString("window.__mdChartsForPrint(" + width + ")");
     }
 
     /**
@@ -2158,6 +2294,57 @@ public class MainController {
                 document.getEditor().getCaretPosition(), rows, columns));
         document.getEditor().requestFocus();
         setTransientStatus("Inserted a " + rows + " x " + columns + " table.");
+    }
+
+    /**
+     * Inserts a chart of the chosen form, with example data already in it.
+     *
+     * <p>The title is selected rather than the first number, because naming the chart is
+     * the one thing every chart needs and the numbers are easier to find once it draws.
+     */
+    private void insertChart(String type) {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            setTransientStatus("Open a document before inserting a chart.");
+            return;
+        }
+        applyEdit(document, SourceEdits.insertChart(
+                document.getEditor().getText(),
+                document.getEditor().getCaretPosition(), type));
+        document.getEditor().requestFocus();
+        setTransientStatus("Inserted a " + type + " chart - replace the example data.");
+    }
+
+    /**
+     * Changes the form of the chart that was right-clicked.
+     *
+     * <p>Only the {@code type:} line is rewritten, so the data survives the change intact -
+     * which is the whole point of offering this: seeing the same numbers as a column chart
+     * and as a line is how you find out which one they wanted to be.
+     */
+    private void setChartType(String type) {
+        DocumentView document = activeDocument();
+        String info = previewString("window.__mdChartInfo()");
+        if (document == null || info.isEmpty()) {
+            return;
+        }
+        String[] parts = info.split(",", 3);
+        int start;
+        int end;
+        try {
+            start = Integer.parseInt(parts[0]);
+            end = Integer.parseInt(parts[1]);
+        } catch (NumberFormatException e) {
+            return;
+        }
+        SourceEdits.Edit edit = SourceEdits.setChartType(
+                document.getEditor().getText(), start, end, type);
+        if (edit == null) {
+            setTransientStatus("That chart could not be located in the source.");
+            return;
+        }
+        applyEdit(document, edit);
+        setTransientStatus("Chart changed to " + type + ".");
     }
 
     /** Chooser plus copy-into-assets, shared by Insert image and Replace image. */
@@ -2851,7 +3038,8 @@ public class MainController {
               margin-left:var(--gutter); margin-right:auto;
             }
             body > .mdv-code, body > table, body > .mdv-diagram,
-            body > pre.mermaid, body > .mdv-diagram-error, body > hr {
+            body > pre.mermaid, body > .mdv-diagram-error, body > hr,
+            body > .mdv-chart-out, body > pre.mdv-chart {
               width:var(--plate); max-width:none;
               margin-left:var(--gutter); margin-right:auto;
               /* border-box, or the plates' own padding and accent border would be
@@ -3092,7 +3280,13 @@ public class MainController {
               --mdc-series-4:#EDA100; --mdc-series-5:#E87BA4; --mdc-series-6:#008300;
               --mdc-series-7:#4A3AA7; --mdc-series-8:#E34948;
 
-              margin-top:1.8em; margin-bottom:1.8em; padding:16px 18px 12px;
+              /* The horizontal margins are set to nothing on purpose. A <figure> carries
+                 40px of left and right margin from the browser's own stylesheet, and the
+                 rule further up that gives figures their vertical rhythm sets only the
+                 vertical ones - so a chart was quietly 80px narrower than the box it was
+                 measured against, and the SVG it produced got scaled down to fit, taking
+                 its 11px type to 5px along with it. */
+              margin:1.8em 0; padding:16px 18px 12px; box-sizing:border-box;
               background:var(--mdc-plate);
               border:1px solid var(--rule); border-left:3px solid var(--accent);
               border-radius:7px; box-shadow:var(--plate-shadow);
@@ -3112,8 +3306,21 @@ public class MainController {
               margin:0 0 2px; text-align:left;
             }
             .mdc-unit { font-weight:400; color:var(--mdc-ink-soft); }
+            /* "Drawn as a bar chart - a pie is unreadable past 6 slices and this has 7."
+               A chart that asks for a form its data cannot carry is drawn in the nearest
+               form that works, and this is the line that says so. Quiet, in the plate's
+               own soft ink with an ochre marker: it is a footnote about the chart above
+               it, not a warning about the document. */
+            .mdc-swap {
+              margin:0 0 8px; font-size:.82em; color:var(--mdc-ink-soft);
+              border-left:2px solid var(--mark); padding-left:8px;
+            }
             .mdc-plot { overflow-x:auto; }
             .mdc-svg { display:block; max-width:100%; }
+            /* A pie keeps a fixed size however wide the plate is - it does not get more
+               readable by being bigger - so it is centred rather than left to sit against
+               the left edge of a plate three times its width. */
+            .mdc-figure-round .mdc-svg { margin-left:auto; margin-right:auto; }
             .mdc-figure-stat { padding:18px 20px; }
 
             /* Legend: the dependable identity channel whenever there is more than one
@@ -3171,6 +3378,37 @@ public class MainController {
             }
             .mdc-table table { margin:8px 0 0; font-size:1em; }
             .mdc-table td { font-variant-numeric:tabular-nums; }
+
+            /* A chart that was not drawn on purpose.
+
+               This is advice, and it is styled as advice: the document's own paper and
+               rule, an ochre edge rather than a red one, and a plate label that says
+               what happened in three words. It was error-red at first, and a reader
+               who met one in their own document read it as the app having broken -
+               which is exactly the wrong conclusion, because the chart was refused by
+               a rule that was working. A genuine failure is below, and still looks
+               like one. */
+            .mdc-note {
+              position:relative; box-sizing:border-box;
+              margin:1.8em 0; padding:34px 18px 14px;
+              background:var(--stripe);
+              border:1px solid var(--rule); border-left:3px solid var(--mark);
+              border-radius:7px;
+            }
+            .mdc-note::before {
+              content:"chart not drawn"; position:absolute; top:9px; left:18px;
+              font-family:var(--mono); font-size:10.5px; font-weight:600;
+              letter-spacing:.16em; text-transform:uppercase; color:var(--mark);
+            }
+            .mdc-note-msg {
+              margin:0 0 10px; color:var(--ink); font-size:.95em; line-height:1.5;
+            }
+            /* The fence body, kept: a chart that will not draw should still leave the
+               numbers on the page rather than an empty plate. */
+            .mdc-note-src {
+              margin:0; font-family:var(--mono); font-size:.82em; white-space:pre-wrap;
+              color:var(--ink-soft); background:none; border:none; padding:0;
+            }
 
             .mdc-error {
               border-left:3px solid var(--err-line); background:var(--err-bg);
@@ -3240,7 +3478,8 @@ public class MainController {
               body { padding:0; font-size:10.5pt; background:#FFFFFF; }
               body > * { width:100%; margin-left:0; }
               body > .mdv-code, body > table, body > .mdv-diagram,
-              body > pre.mermaid, body > .mdv-diagram-error, body > hr {
+              body > pre.mermaid, body > .mdv-diagram-error, body > hr,
+              body > .mdv-chart-out, body > pre.mdv-chart {
                 width:100%; margin-left:0;
               }
 
@@ -3249,6 +3488,31 @@ public class MainController {
               img, figure, .mdv-diagram, pre.mermaid, .mdv-diagram-error, .mdv-code {
                 page-break-inside:avoid; break-inside:avoid;
               }
+
+              /* Charts on paper.
+
+                 The figure is one object: a chart split across a page fold is not a
+                 chart, it is two halves of a picture. Its own plot area must not
+                 scroll either - there is nothing to scroll on paper, so anything
+                 past the edge would simply be gone. The chart itself is laid out
+                 again at the printable width before the job starts, which is the
+                 part CSS cannot do; see __mdChartsForPrint.
+
+                 The plate stays tinted rather than going white. It is a light
+                 surface already, the palette was validated against it, and dropping
+                 it would put the four lighter series hues on bare paper below the
+                 contrast they were checked at. */
+              .mdc-figure { page-break-inside:avoid; break-inside:avoid; }
+              .mdc-plot { overflow:visible; }
+              .mdc-svg { max-width:100%; height:auto; }
+
+              /* The table view is not an appendix on paper - it is where the numbers
+                 are. Four of the eight light-mode hues sit below 3:1, which is legal
+                 here only because the values are also readable as text, and a printed
+                 page cannot open a fold to find them. Opened before the job runs; this
+                 makes the summary line stop looking like something still clickable. */
+              .mdc-table summary { cursor:default; color:var(--ink-soft); }
+              .mdc-table table { page-break-inside:auto; break-inside:auto; }
 
               /* Tables are the deliberate exception: a long table SHOULD run across
                  pages, and its header has to follow. display:table is restated rather
@@ -3363,6 +3627,53 @@ public class MainController {
               if (!window.MdChart) { return; }
               try { MdChart.renderAll(document); } catch (e) {}
             };
+
+            /* Charts, made ready for paper.
+
+               Two things are wrong at print time and neither is fixable in CSS. A chart
+               is laid out in pixels for the pane it is in, and letting the page scale
+               that to fit the paper takes the type down with it - the same bug that made
+               11px labels render at 7px on screen, except on paper there is no zooming
+               out of it. So every chart is drawn again at the printable width, which
+               only Java knows, and drawn back afterwards.
+
+               And the table view is a <details>, which prints exactly as it sits: closed.
+               The table is the guarantee that no value is reachable only by hovering, and
+               a printed page cannot hover at all, so on paper it is the only copy of the
+               numbers. Opened here and closed again after, so the screen is as it was. */
+            window.__mdChartsForPrint = function (width) {
+              /* Which table views the reader had open, remembered before the redraw
+                 rather than after: a redraw rebuilds every figure, so the details
+                 elements standing afterwards are not the ones on screen now. */
+              window.__mdcOpenTables = [];
+              var before = document.querySelectorAll('.mdc-table');
+              for (var i = 0; i < before.length; i++) {
+                window.__mdcOpenTables.push(before[i].hasAttribute('open'));
+              }
+              var drawn = 0;
+              if (window.MdChart) {
+                try { drawn = MdChart.redrawAll(width); } catch (e) { drawn = 0; }
+              }
+              var tables = document.querySelectorAll('.mdc-table');
+              for (var j = 0; j < tables.length; j++) {
+                tables[j].setAttribute('open', '');
+              }
+              return drawn;
+            };
+            window.__mdChartsAfterPrint = function () {
+              if (window.MdChart) {
+                try { MdChart.redrawAll(0); } catch (e) {}
+              }
+              var was = window.__mdcOpenTables || [];
+              var tables = document.querySelectorAll('.mdc-table');
+              for (var i = 0; i < tables.length; i++) {
+                if (was[i]) {
+                  tables[i].setAttribute('open', '');
+                } else {
+                  tables[i].removeAttribute('open');
+                }
+              }
+            };
             window.__mdSetDiagram = function (id, svg) {
               var el = document.getElementById(id);
               if (!el) { return; }
@@ -3474,6 +3785,30 @@ public class MainController {
               }
             });
             window.__mdCodeInfo = function () { return window.__mdCodeBlock; };
+
+            /* The chart under the pointer, plus what its data could be drawn as.
+               Captured on mousedown like the others, and the verdicts are asked for here
+               rather than when the menu opens because the source is on this element and
+               the menu is built on the other side of the bridge. */
+            window.__mdChartBlock = '';
+            document.addEventListener('mousedown', function (event) {
+              var el = event.target;
+              while (el && el !== document.body
+                     && !(el.classList && el.classList.contains('mdv-chart-out'))) {
+                el = el.parentElement;
+              }
+              if (el && el.classList && el.classList.contains('mdv-chart-out')
+                  && el.getAttribute('data-md-start') && window.MdChart) {
+                var source = el.getAttribute('data-mdc-src') || '';
+                var verdicts = '';
+                try { verdicts = MdChart.describe(source); } catch (e) { verdicts = ''; }
+                window.__mdChartBlock = el.getAttribute('data-md-start') + ','
+                    + el.getAttribute('data-md-end') + ',' + verdicts;
+              } else {
+                window.__mdChartBlock = '';
+              }
+            });
+            window.__mdChartInfo = function () { return window.__mdChartBlock; };
 
             /* ---- editing a table cell in place ----------------------------------
                Double-click, not single: a table is read far more often than it is
