@@ -1,13 +1,15 @@
 /*
  * mdchart - charts from a Markdown-shaped fence.
  *
- * Compiles a ```chart fence into inline SVG. No dependencies, no network, no canvas:
- * SVG scales, prints, and can be themed from CSS custom properties, which is what lets a
- * chart follow the editor's light/dark switch with no re-render. Mermaid and PlantUML
- * cannot do that here - they bake their colours into the SVG they emit, which is why the
- * diagram plate in this app is pinned to a white background. A chart drawn here is not.
+ * Compiles a ```chart fence into inline SVG. No dependencies, no network, no canvas, no
+ * build step: drop in the script and the stylesheet and call MdChart.renderAll().
  *
- * The syntax is meant to survive being read as plain text. A reader looking at the raw
+ * SVG rather than canvas because it scales, it prints, and it can be drawn from CSS
+ * custom properties - which is what lets a chart follow a page's light/dark switch with
+ * no re-render at all. Mermaid and PlantUML cannot: they bake their colours into the SVG
+ * they emit, which is why diagrams from those tools usually sit on a pinned white plate.
+ *
+ * The syntax is meant to survive being read as plain text. Someone looking at the raw
  * Markdown should see the numbers, not markup:
  *
  *     ```chart
@@ -22,20 +24,26 @@
  * Rules that are enforced rather than documented, because a chart that breaks them is
  * misleading rather than ugly:
  *
- *   - Categorical hues are assigned in a fixed order and never cycled. A ninth series is
- *     refused with a message, not given a generated colour.
+ *   - Categorical hues are assigned in a fixed order and never cycled. Past eight series
+ *     the smallest fold into "Other" rather than being given a ninth indistinguishable
+ *     hue, and every original row stays in the table view.
  *   - No dual axis, ever. Two measures of different scale are two charts.
  *   - One series gets one colour; bar length is never double-encoded as hue.
  *   - Every chart carries a table view, so no value is reachable only by hovering.
  *
- * The palette is the validated default from the house data-viz reference, checked with
- * its own validator against this app's plate surfaces (#EFF3F7 light, #131C26 dark)
- * rather than the reference surfaces - contrast is only meaningful against the surface
- * the chart actually renders on. Both modes pass; four light-mode hues sit below 3:1,
- * which is why direct labels and the table view are not optional here.
+ * A form that does not suit the data is drawn as the nearest one that does, with a line
+ * saying what changed - a pie past six slices becomes a bar. Refusing to draw does not
+ * make a pie readable; it just leaves the reader with nothing.
  *
- * Colours are read from CSS custom properties (--mdc-series-1 ...), declared in the
- * preview stylesheet for both themes. This file never hard-codes a hue.
+ * The palette is a validated categorical set, checked with a contrast/CVD validator
+ * against the plate surfaces it is actually drawn on (#EFF3F7 light, #131C26 dark) rather
+ * than against white. Both modes pass; four light-mode hues sit below 3:1 against the
+ * plate, which is why direct labels and the table view are not optional here.
+ *
+ * Colours are read from CSS custom properties (--mdc-series-1 ...) declared in
+ * mdchart.css. This file never hard-codes a hue.
+ *
+ * MIT licensed. https://github.com/mainul35/mdchart
  */
 (function (global) {
   "use strict";
@@ -781,14 +789,13 @@
   /**
    * Which forms this data could take, and why the rest cannot have it.
    *
-   * Asked by the editor before it offers "change chart type", so the menu can say what a
+   * Asked by an editor before it offers "change chart type", so a menu can say what a
    * form would cost rather than silently omitting it or - worse - accepting it and
    * dropping the values that no longer fit. Every answer here is derived from the same
    * rules render() enforces; nothing decides twice.
    *
-   * Returned as lines of "key=value" because the caller is a JavaFX menu on the other
-   * side of a string-only bridge, and a shape it can read at a glance beats a shape it
-   * has to parse.
+   * Returned as lines of "key=value" rather than as an object, because the caller is
+   * often on the other side of a string-only bridge into a host application.
    */
   function describe(source) {
     var parsed = parse(source);
@@ -892,9 +899,30 @@
    * Marked done rather than removed, so a re-render of the same DOM does not compile a
    * chart twice, and so a failure leaves the source visible instead of a blank plate.
    */
-  function renderAll(root) {
+  /**
+   * Where a chart fence ends up in HTML, by the time it reaches this library.
+   *
+   * <p>Different Markdown renderers emit it differently: most produce
+   * {@code <pre><code class="language-chart">}, some tag the {@code <pre>} itself, and an
+   * application that renders its own can use whatever it likes. All of the usual shapes
+   * are matched by default and a caller can pass its own selector instead.
+   */
+  var DEFAULT_SELECTOR = "pre.mdchart, pre.language-chart, pre.mdv-chart, "
+    + "pre > code.language-chart, pre > code.language-mdchart";
+
+  function renderAll(root, selector) {
     var scope = root || document;
-    var blocks = scope.querySelectorAll("pre.mdv-chart:not([data-mdc-done])");
+    var found = scope.querySelectorAll(selector || DEFAULT_SELECTOR);
+    var blocks = [];
+    for (var b = 0; b < found.length; b++) {
+      /* A matched <code> means the <pre> around it is the block to replace: replacing the
+         code alone would leave an empty <pre> wrapped around the chart. */
+      var block = found[b].tagName === "CODE" ? found[b].parentNode : found[b];
+      if (block && !block.hasAttribute("data-mdc-done")
+          && blocks.indexOf(block) < 0) {
+        blocks.push(block);
+      }
+    }
     for (var i = 0; i < blocks.length; i++) {
       var pre = blocks[i];
       var source = pre.textContent || "";

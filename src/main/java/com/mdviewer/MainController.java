@@ -3026,8 +3026,32 @@ public class MainController {
      * into one grey wall. Sharing the sheet means the assistant's prose looks like the
      * preview's, down to the theme, without a second set of rules to keep in step.
      */
+    /**
+     * The chart library's own stylesheet, read from the classpath.
+     *
+     * <p>Vendored from ../mdchart by sync-mdchart.ps1 rather than copied by hand. It used
+     * to be a block of rules inside the text block below, which meant two copies of the
+     * same design - one here and one in the library - with nothing keeping them in step.
+     *
+     * <p>It is placed before this app's own rules so the block further down can map
+     * MDViewer's palette onto the library's {@code --mdc-*} variables and win.
+     */
+    private static String chartCss() {
+        try (InputStream in = MainController.class.getResourceAsStream("/css/mdchart.css")) {
+            if (in == null) {
+                System.err.println("MDViewer: mdchart.css not on the classpath "
+                        + "- charts will render without colour.");
+                return "";
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException | RuntimeException e) {
+            System.err.println("MDViewer: chart stylesheet unavailable - " + e);
+            return "";
+        }
+    }
+
     public static String previewCss() {
-        return """
+        return chartCss() + """
             :root {
               --paper:#F6F8FA; --ink:#16202B; --ink-soft:#5A6875;
               --rule:#DFE5EC; --line:#C7D2DE;
@@ -3313,161 +3337,28 @@ public class MainController {
                disappear on a dark panel. */
             /* ---------------------------------------------------------- charts
 
-               Unlike mermaid and PlantUML, which bake their colours into the SVG they
-               emit and therefore have to sit on a pinned white plate, a chart here is
-               drawn from these custom properties. Switching theme repaints it with no
-               re-render, the same trick the rest of the preview uses.
+               The rules themselves are mdchart.css, loaded above from the library's own
+               repository. All that is left here is the join: MDViewer's palette mapped
+               onto the library's --mdc-* variables, so a chart takes the document's rule
+               colour, accent, plate shadow and typefaces and looks like it belongs on
+               the page rather than like something pasted onto it.
 
-               The eight series hues are the house data-viz palette, validated with its
-               own checker against these two plate surfaces rather than the reference
-               ones - contrast only means anything against the surface a chart is
-               actually drawn on. Both modes pass; four light hues sit below 3:1, which
-               is why every chart ships direct labels and a table view. */
-            .mdc-figure {
-              --mdc-plate:#EFF3F7; --mdc-grid:#DFE5EC; --mdc-axis:#C7D2DE;
-              --mdc-ink:#16202B; --mdc-ink-soft:#5A6875;
-              --mdc-series-1:#2A78D6; --mdc-series-2:#EB6834; --mdc-series-3:#1BAF7A;
-              --mdc-series-4:#EDA100; --mdc-series-5:#E87BA4; --mdc-series-6:#008300;
-              --mdc-series-7:#4A3AA7; --mdc-series-8:#E34948;
-
-              /* The horizontal margins are set to nothing on purpose. A <figure> carries
-                 40px of left and right margin from the browser's own stylesheet, and the
-                 rule further up that gives figures their vertical rhythm sets only the
-                 vertical ones - so a chart was quietly 80px narrower than the box it was
-                 measured against, and the SVG it produced got scaled down to fit, taking
-                 its 11px type to 5px along with it. */
-              margin:1.8em 0; padding:16px 18px 12px; box-sizing:border-box;
-              background:var(--mdc-plate);
-              border:1px solid var(--rule); border-left:3px solid var(--accent);
-              border-radius:7px; box-shadow:var(--plate-shadow);
-              font-family:var(--body);
-            }
-            /* The dark column is the same eight hues stepped for the dark surface - a
-               selected palette, not an automatic flip of the light one. */
-            html[data-theme="dark"] .mdc-figure {
-              --mdc-plate:#131C26; --mdc-grid:#22303F; --mdc-axis:#2C3D4E;
-              --mdc-ink:#D7DEE6; --mdc-ink-soft:#8A9AAA;
-              --mdc-series-1:#3987E5; --mdc-series-2:#D95926; --mdc-series-3:#199E70;
-              --mdc-series-4:#C98500; --mdc-series-5:#D55181; --mdc-series-6:#008300;
-              --mdc-series-7:#9085E9; --mdc-series-8:#E66767;
-            }
-            .mdc-title {
-              font-size:.95em; font-weight:600; color:var(--mdc-ink);
-              margin:0 0 2px; text-align:left;
-            }
-            .mdc-unit { font-weight:400; color:var(--mdc-ink-soft); }
-            /* "Drawn as a bar chart - a pie is unreadable past 6 slices and this has 7."
-               A chart that asks for a form its data cannot carry is drawn in the nearest
-               form that works, and this is the line that says so. Quiet, in the plate's
-               own soft ink with an ochre marker: it is a footnote about the chart above
-               it, not a warning about the document. */
-            .mdc-swap {
-              margin:0 0 8px; font-size:.82em; color:var(--mdc-ink-soft);
-              border-left:2px solid var(--mark); padding-left:8px;
-            }
-            .mdc-plot { overflow-x:auto; }
-            .mdc-svg { display:block; max-width:100%; }
-            /* A pie keeps a fixed size however wide the plate is - it does not get more
-               readable by being bigger - so it is centred rather than left to sit against
-               the left edge of a plate three times its width. */
-            .mdc-figure-round .mdc-svg { margin-left:auto; margin-right:auto; }
-            .mdc-figure-stat { padding:18px 20px; }
-
-            /* Legend: the dependable identity channel whenever there is more than one
-               series. Text stays in ink; the swatch beside it carries the colour. */
-            .mdc-legend {
-              display:flex; flex-wrap:wrap; gap:4px 16px; margin:2px 0 10px;
-              font-size:.82em; color:var(--mdc-ink-soft);
-            }
-            .mdc-key { display:inline-flex; align-items:center; gap:6px; }
-            .mdc-swatch {
-              width:10px; height:10px; border-radius:3px; display:inline-block;
-            }
-
-            .mdc-grid { stroke:var(--mdc-grid); stroke-width:1; }
-            .mdc-tick, .mdc-cat {
-              fill:var(--mdc-ink-soft); font-size:11px; font-family:var(--body);
-            }
-            .mdc-tick { font-variant-numeric:tabular-nums; }
-            .mdc-value {
-              fill:var(--mdc-ink); font-size:11px; font-family:var(--body);
-              font-variant-numeric:tabular-nums;
-            }
-            .mdc-line { fill:none; stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
-            /* A wash under the line, never a saturated block. */
-            .mdc-area { opacity:.10; }
-            /* The ring is surface-coloured so overlapping dots stay legible without a
-               stroke that would read as data ink. */
-            .mdc-dot { stroke:var(--mdc-plate); stroke-width:2; }
-            .mdc-slice { stroke:none; }
-            .mdc-hero {
-              fill:var(--mdc-ink); font-size:20px; font-weight:600;
-              font-family:var(--body);
-            }
-
-            .mdc-stat-label {
-              margin:0 0 4px; font-size:.85em; color:var(--mdc-ink-soft);
-            }
-            /* Proportional figures on purpose: tabular-nums gives every digit the width
-               of a zero, which makes a large number look loose. */
-            .mdc-stat-value {
-              margin:0; font-size:2.4em; font-weight:600; line-height:1.1;
-              color:var(--mdc-ink); font-family:var(--body);
-            }
-            .mdc-stat-unit {
-              font-size:.4em; font-weight:400; color:var(--mdc-ink-soft); margin-left:.4em;
-            }
-            .mdc-stat-delta { margin:4px 0 0; font-size:.85em; }
-            .mdc-stat-delta.is-up { color:#0CA30C; }
-            .mdc-stat-delta.is-down { color:#D03B3B; }
-
-            /* The table twin, so no value is reachable only by hovering. */
-            .mdc-table { margin-top:10px; font-size:.85em; }
-            .mdc-table summary {
-              cursor:pointer; color:var(--mdc-ink-soft); font-size:.9em;
-            }
-            .mdc-table table { margin:8px 0 0; font-size:1em; }
-            .mdc-table td { font-variant-numeric:tabular-nums; }
-
-            /* A chart that was not drawn on purpose.
-
-               This is advice, and it is styled as advice: the document's own paper and
-               rule, an ochre edge rather than a red one, and a plate label that says
-               what happened in three words. It was error-red at first, and a reader
-               who met one in their own document read it as the app having broken -
-               which is exactly the wrong conclusion, because the chart was refused by
-               a rule that was working. A genuine failure is below, and still looks
-               like one. */
-            .mdc-note {
-              position:relative; box-sizing:border-box;
-              margin:1.8em 0; padding:34px 18px 14px;
-              background:var(--stripe);
-              border:1px solid var(--rule); border-left:3px solid var(--mark);
-              border-radius:7px;
-            }
-            .mdc-note::before {
-              content:"chart not drawn"; position:absolute; top:9px; left:18px;
-              font-family:var(--mono); font-size:10.5px; font-weight:600;
-              letter-spacing:.16em; text-transform:uppercase; color:var(--mark);
-            }
-            .mdc-note-msg {
-              margin:0 0 10px; color:var(--ink); font-size:.95em; line-height:1.5;
-            }
-            /* The fence body, kept: a chart that will not draw should still leave the
-               numbers on the page rather than an empty plate. */
-            .mdc-note-src {
-              margin:0; font-family:var(--mono); font-size:.82em; white-space:pre-wrap;
-              color:var(--ink-soft); background:none; border:none; padding:0;
-            }
-
-            .mdc-error {
-              border-left:3px solid var(--err-line); background:var(--err-bg);
-              padding:10px 14px; border-radius:5px;
-            }
-            .mdc-error-msg { margin:0 0 6px; color:var(--err-fg); font-size:.9em; }
-            .mdc-error-src {
-              margin:0; font-family:var(--mono); font-size:.82em; white-space:pre-wrap;
-              color:var(--ink-soft); background:none; border:none; padding:0;
+               Declared on :root rather than on the figure, because the theme switch
+               redefines --rule and the rest there - so these follow it with no rule of
+               their own for dark mode. That is also why a chart repaints on a theme
+               switch with no re-render, which mermaid and PlantUML cannot do: they bake
+               their colours into the SVG and have to sit on a pinned white plate. */
+            :root {
+              --mdc-line:var(--rule);
+              --mdc-accent:var(--accent);
+              --mdc-shadow:var(--plate-shadow);
+              --mdc-font:var(--body);
+              --mdc-mono:var(--mono);
+              --mdc-mark:var(--mark);
+              --mdc-note-bg:var(--stripe);
+              --mdc-error-ink:var(--err-fg);
+              --mdc-error-bg:var(--err-bg);
+              --mdc-error-line:var(--err-line);
             }
 
             .mdv-diagram, pre.mermaid {
@@ -3539,30 +3430,16 @@ public class MainController {
                 page-break-inside:avoid; break-inside:avoid;
               }
 
-              /* Charts on paper.
+              /* Charts on paper are mdchart.css's own print block: kept whole, never
+                 split across a fold, nothing allowed to scroll off an edge that cannot
+                 be scrolled. Two things it cannot do from CSS are done in Java before
+                 the job starts - laying every chart out again at the printable width,
+                 and opening the table views - see __mdChartsForPrint.
 
-                 The figure is one object: a chart split across a page fold is not a
-                 chart, it is two halves of a picture. Its own plot area must not
-                 scroll either - there is nothing to scroll on paper, so anything
-                 past the edge would simply be gone. The chart itself is laid out
-                 again at the printable width before the job starts, which is the
-                 part CSS cannot do; see __mdChartsForPrint.
-
-                 The plate stays tinted rather than going white. It is a light
-                 surface already, the palette was validated against it, and dropping
-                 it would put the four lighter series hues on bare paper below the
-                 contrast they were checked at. */
-              .mdc-figure { page-break-inside:avoid; break-inside:avoid; }
-              .mdc-plot { overflow:visible; }
-              .mdc-svg { max-width:100%; height:auto; }
-
-              /* The table view is not an appendix on paper - it is where the numbers
-                 are. Four of the eight light-mode hues sit below 3:1, which is legal
-                 here only because the values are also readable as text, and a printed
-                 page cannot open a fold to find them. Opened before the job runs; this
-                 makes the summary line stop looking like something still clickable. */
-              .mdc-table summary { cursor:default; color:var(--ink-soft); }
-              .mdc-table table { page-break-inside:auto; break-inside:auto; }
+                 The plate stays tinted rather than going white. It is a light surface
+                 already, the palette was validated against it, and dropping it would put
+                 the four lighter series hues on bare paper below the contrast they were
+                 checked at. */
 
               /* Tables are the deliberate exception: a long table SHOULD run across
                  pages, and its header has to follow. display:table is restated rather
