@@ -832,6 +832,51 @@
     return out.join("\n");
   }
 
+  /**
+   * The fence, taken apart into the grid an editor can put on screen.
+   *
+   * <p>Asked for when a chart is opened for editing. The editor needs rows, columns and
+   * settings as separate things, and this is the only place that knows how to get them
+   * out of the text - working it out a second time in the editor is how two readings of
+   * the same fence start to disagree.
+   *
+   * <p>Values come back as they were written rather than as numbers, so "1,200" and
+   * "12.5%" survive being edited and put back. Tab-separated, because a label may well
+   * contain a comma and every one of these fields is free text.
+   */
+  function model(source) {
+    var parsed = parse(source);
+    var rows = [];
+    var widest = 0;
+    for (var i = 0; i < parsed.rows.length; i++) {
+      var bar = parsed.rows[i].indexOf("|");
+      var name = bar >= 0 ? parsed.rows[i].slice(0, bar).trim() : "";
+      var rest = bar >= 0 ? parsed.rows[i].slice(bar + 1) : parsed.rows[i];
+      var values = splitList(rest);
+      if (!values.length) continue;
+      widest = Math.max(widest, values.length);
+      rows.push({ name: name, values: values });
+    }
+
+    /* The same test render() uses: one value per row is a list of items, several is a
+       series per row plotted against the categories. */
+    var single = widest <= 1;
+    var categories = single ? [] : (splitList(parsed.settings.x).length
+      ? splitList(parsed.settings.x) : countUp(widest));
+
+    var out = [];
+    out.push("type=" + (parsed.settings.type || ""));
+    out.push("title=" + (parsed.settings.title || ""));
+    out.push("unit=" + (parsed.settings.unit || ""));
+    out.push("delta=" + (parsed.settings.delta || ""));
+    out.push("single=" + single);
+    out.push("categories=" + categories.join("\t"));
+    rows.forEach(function (r) {
+      out.push("row=" + r.name + "\t" + r.values.join("\t"));
+    });
+    return out.join("\n");
+  }
+
   /** A pie's slices are its categories, so its legend is built from those, not series. */
   function legendFromCategories(cats) {
     var items = cats.map(function (c, i) {
@@ -966,6 +1011,6 @@
 
   global.MdChart = {
     render: render, renderAll: renderAll, relayout: relayout, redrawAll: redrawAll,
-    parse: parse, describe: describe, types: TYPES
+    parse: parse, describe: describe, model: model, types: TYPES
   };
 })(typeof window !== "undefined" ? window : this);
