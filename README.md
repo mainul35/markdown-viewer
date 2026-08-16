@@ -1,18 +1,25 @@
 # MDViewer
 
-![MDViewer Preview](screenshots/app-preview.png)
+![1](assets/1.png)
+
+![2](assets/2.png)
+
+![3](assets/3.png)
 
 Professional Markdown desktop application built with JavaFX.
 
 ## Download
 
-**Latest Release:** [MDViewer v1.0.0 Early Access](https://github.com/mainul35/markdown-viewer/releases/latest)
+**Latest Release:** [MDViewer 1.0.0](https://github.com/mainul35/markdown-viewer/releases/latest) (`1.0.0-release`)
 
-1. Download `mdviewer-1.0.0-EA-release.zip` from the Releases page
-2. Extract the zip file
-3. Run: `java -jar mdviewer-1.0.0-EA.jar`
+1. Download the release archive from the Releases page
+2. Extract it
+3. Run: `java -jar mdviewer-1.0.0.jar`
 
 > **Note:** Requires JDK 21 or higher. See installation instructions below.
+
+Earlier tags — `1.0.0-EA` and `1.0.0-beta-1` — are kept for reference. `1.0.0-release`
+adds the assistant, the welcome screen and recent workspaces on top of `1.0.0-beta-1`.
 
 ## Prerequisites
 
@@ -57,7 +64,11 @@ java -jar target/mdviewer-1.0.0.jar
 java -jar target/mdviewer-1.0.0.jar file.md
 ```
 
+<div align="left">
+
 ## Distribution
+
+</div>
 
 `mvn clean package` (or `package.bat` / `package.ps1`) produces **one self-contained jar**:
 `target/mdviewer-1.0.0.jar`, roughly 57 MB. Everything it needs is inside it — JavaFX
@@ -65,7 +76,11 @@ java -jar target/mdviewer-1.0.0.jar file.md
 mermaid bundle. The target machine needs only a JRE 21; no JavaFX SDK, no Graphviz, and no
 internet connection.
 
+<div align="left">
+
 Two consequences of that packaging worth knowing:
+
+</div>
 
 - **The jar is platform-specific.** It embeds the JavaFX natives for the OS it was built on,
   so a jar built on Windows runs on Windows. Build on each OS you intend to ship to.
@@ -89,6 +104,40 @@ module'` is expected and harmless — it is JavaFX noting that it is running fro
 rather than the module path.
 
 ## Features
+
+- **Welcome screen:** with nothing open, the window offers New document, Open file, Open
+  folder and the folders you had open last, rather than an empty grey rectangle. The file
+  tree hides with it — two empty panels say less than one screen that offers somewhere to
+  start — and comes back when something is open.
+
+- **Assistant** (right-hand panel, **View → Show Assistant**, or the tab down the right
+  edge): a conversation about the document in front of you. It answers from that document,
+  and from sources it is given rather than from memory.
+
+  It reads what a question names: an absolute path, a URL, or a file named by name
+  anywhere in the open workspace. What it read is listed under the answer, folded away,
+  along with anything it had to skip and why.
+
+  **Scan whole project** reads every file instead. A real project does not fit in a
+  context window at any budget, so it reads in passes and answers from the findings —
+  about ten passes for a 138-file Java project. Every pass carries a map of the whole
+  project's declarations, extracted locally, which is what lets a pass say where something
+  is defined even though it was given a different part of the project. Progress and the
+  pass count are shown, and Stop scan answers from what has been read so far.
+
+  Each document keeps its own conversation, its own draft question and its own scan, so
+  two files can be asked about at once and neither waits for the other. Answers are
+  rendered as Markdown in the preview's own style.
+
+  **Nothing is sent to a host you have not agreed to.** `allowedHosts` in
+  `~/.mdviewer/ai.properties` is a refusal, not a warning: a mistyped base URL cannot
+  quietly ship a private document to a stranger. Agreeing is a dialog that names the host
+  and says exactly what goes there — your question, the open document, and every file a
+  scan reads. **Settings → AI Providers** lists the configured providers, chooses which
+  appear in the panel, allows their hosts, and sets each one's address, model and key. Nine
+  are configured out of the box (LiteLLM, Open WebUI, OpenAI, Ollama local and cloud, Groq,
+  OpenRouter, Mistral, DeepSeek), all speaking the OpenAI chat-completions shape. An API
+  key is kept for the session unless you ask for it to be saved.
 
 - **Workspaces:** a workspace is a folder. Opening a file adopts its folder as a workspace;
   opening another file from anywhere inside that folder joins the same one, while a file
@@ -116,6 +165,10 @@ rather than the module path.
   justify taking one, and a line-per-path file is something you can read and edit in any
   editor. Everything about it is best effort: a history that cannot be read or written is
   a missing convenience, never a reason to fail an open.
+
+  Each row carries a **✕** that forgets just that folder, because clearing the whole list
+  is a poor trade when one scratch directory is sitting among the projects you use. The
+  menu stays open while you do it, so several can go in one pass.
 
 - **Workspace refresh:** the explorer caches directory listings, so a file written outside
   the app — by a build, a `git pull`, or another editor — would otherwise stay invisible
@@ -206,10 +259,10 @@ rather than the module path.
 - **Three editing modes:** Raw (editor only), Split (side-by-side), Full Preview (rendered
   view only). Switch via toolbar buttons or View menu.
 
-- **Dark/Light theme:** Toolbar toggle or View menu. Both JavaFX chrome and preview document
-  switch together. Preview keeps both palettes loaded, so theme changes are instant with no
-  scroll jump. Diagrams stay light in dark mode (PlantUML/Mermaid bake dark strokes into SVG).
-  Theme resets on restart (always starts light).
+- **Dark/Light theme:** Toolbar toggle or View menu. The JavaFX chrome, the preview document
+  and the assistant transcript switch together. Preview keeps both palettes loaded, so theme
+  changes are instant with no scroll jump. Diagrams stay light in dark mode (PlantUML/Mermaid
+  bake dark strokes into SVG). Theme resets on restart (always starts light).
 
 - **Responsive window:** Opens at 85% of screen's work area (excludes taskbar), centered.
   Minimum 900×600, scales to 4K. Position/size not persisted between runs.
@@ -260,11 +313,20 @@ MDViewer/
 │   │   │   ├── SourceEdits.java       # Markdown source transformations (formatting, tables)
 │   │   │   ├── ImageRef.java          # Image path handling & markup generation
 │   │   │   └── Trash.java             # Cross-platform recycle bin support
+│   │   ├── ai/
+│   │   │   ├── AiPanel.java           # The assistant panel: transcript, composer, per-document threads
+│   │   │   ├── AiConfig.java          # ai.properties: endpoints, keys, allowedHosts
+│   │   │   ├── ChatProvider.java      # OpenAI-compatible streaming, by hand (no JSON library)
+│   │   │   ├── ContextGatherer.java   # Turns paths, URLs and file names into text to send
+│   │   │   ├── ProjectScanner.java    # Reads a whole project in passes and folds the findings
+│   │   │   ├── ProjectIndex.java      # Declarations per file, carried into every pass
+│   │   │   └── ProviderSettings.java  # Settings → AI Providers
 │   │   └── ui/
 │   │       ├── FileTreePanel.java   # Workspace explorer (markdown-only tree)
 │   │       ├── PathTreeItem.java    # Lazy-loading tree node
 │   │       ├── WorkspaceView.java   # Workspace tab + document tabs management
 │   │       ├── DocumentView.java    # Single document (editor + metadata)
+│   │       ├── WelcomeView.java     # First screen when nothing is open
 │   │       ├── PreviewToolbar.java  # Formatting toolbar actions
 │   │       ├── FindBar.java         # Find & replace bar
 │   │       └── CropDialog.java      # Image crop dialog
@@ -295,7 +357,11 @@ MDViewer/
 - ✅ **Phase 3:** Mode Logic & Workspace (Raw Editor, Split View sync, Full Preview toggle)
 - ✅ **Phase 4:** Toolbar Bridge & GUI Editor (Toolbar integration, JS bridge logic, formatting actions)
 - ✅ **Phase 5:** OS Deployment & Polishing (Workspace management, file operations, find/replace, dark mode, diagram rendering)
+- ✅ **Phase 6:** Assistant (reads the document and the sources it names; whole-project scan; per-document conversations) — shipped in `1.0.0-release`
+- ⏳ **Assistant phase 2:** Propose a whole-document rewrite and show it as a side-by-side diff, merged only on approval. Nothing in the assistant writes to a document yet.
+- ⏳ **Session persistence:** Open workspaces, open documents, theme and window geometry are forgotten on exit. Recent workspaces already persist; the rest do not.
 - ⏳ **Native Packaging:** Bundle JRE for true double-click execution without requiring Java installation
+- ⏳ **OS context menu:** "Open with MDViewer" via the Windows registry
 
 ## License
 
