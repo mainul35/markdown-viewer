@@ -509,3 +509,314 @@
     -fx-background-radius: 5;
     -fx-cursor: hand;
 }
+
+
+/* ------------------------------------------------------------- assistant */
+
+.ai-panel {
+    -fx-background-color: -mdv-surface-alt;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 0 0 1;
+}
+
+.ai-panel-header {
+    -fx-padding: 5 8 5 12;
+    -fx-min-height: 32;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 0 1 0;
+}
+
+.ai-panel-title {
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+/* Which machine is about to receive the document. On screen at all times, because
+   this is the only part of the app that sends anything anywhere. */
+.ai-host {
+    -fx-padding: 4 12 4 12;
+    -fx-font-size: 10.5px;
+}
+
+.ai-host-ok {
+    -fx-text-fill: -mdv-text-muted;
+}
+
+.ai-host-bad {
+    -fx-text-fill: #A23B2E;
+    -fx-font-weight: bold;
+}
+
+.ai-transcript-scroll,
+.ai-transcript-scroll .viewport {
+    -fx-background-color: -mdv-paper;
+}
+
+.ai-speaker {
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+/* A read-only TextArea dressed as a bubble, so the text can be selected and copied. */
+.ai-bubble,
+.ai-bubble .content {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+}
+
+.ai-bubble {
+    -fx-padding: 4 4 4 4;
+    -fx-background-radius: 7;
+    -fx-text-fill: -mdv-text;
+}
+
+.ai-user, .ai-user .content {
+    -fx-background-color: -mdv-accent-soft;
+    -fx-background-radius: 7;
+}
+
+.ai-assistant .content {
+    -fx-background-color: -mdv-surface;
+    -fx-background-radius: 7;
+}
+
+.ai-assistant {
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 7;
+}
+
+.ai-sources .content {
+    -fx-background-color: -mdv-paper;
+}
+
+.ai-sources {
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 7;
+    -fx-font-family: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
+    -fx-font-size: 10.5px;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+.ai-composer {
+    -fx-background-color: -mdv-surface-alt;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 1 0 0 0;
+}
+
+.ai-input {
+    -fx-font-size: 12.5px;
+}
+
+.ai-status {
+    -fx-font-size: 11px;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+/* ------------------------------------------------------------------ tool stripe
+
+   The strip down the right edge, the way an IDE carries its tool windows. The
+   assistant used to be reachable only from the View menu, which is a memory test
+   for something opened and closed all day; a labelled tab is always in view and
+   says whether the panel is open.
+
+   The button is rotated in code and wrapped in a Group so it takes the space it
+   actually draws. Padding here is therefore read as if the button were still
+   horizontal - top and bottom become the narrow edges. */
+.tool-stripe {
+    -fx-background-color: -mdv-surface-alt;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 0 0 0 1;
+    -fx-padding: 8 0 0 0;
+    -fx-min-width: 30;
+}
+
+.tool-stripe-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 0;
+    -fx-text-fill: -mdv-text-muted;
+    -fx-font-size: 11px;
+    -fx-padding: 4 12 4 12;
+    -fx-cursor: hand;
+}
+
+.tool-stripe-button:hover {
+    -fx-background-color: -mdv-surface;
+    -fx-text-fill: -mdv-text;
+}
+
+/* Selected means the panel is open, so it reads as a pressed tab rather than a
+   button that happens to be highlighted. */
+.tool-stripe-button:selected {
+    -fx-background-color: -mdv-surface;
+    -fx-text-fill: -mdv-accent;
+    -fx-border-color: -mdv-accent transparent transparent transparent;
+    -fx-border-width: 2 0 0 0;
+}
+
+/* Tall enough to be noticed. At four pixels it was a hairline between two rows and
+   read as a divider, which is no use at all when it is the only thing on screen
+   saying that a scan running for minutes is still alive. */
+.ai-progress {
+    -fx-pref-height: 10;
+    -fx-min-height: 10;
+}
+
+.ai-progress > .track {
+    -fx-background-color: -mdv-surface-alt;
+    -fx-background-radius: 2;
+}
+
+.ai-progress > .bar {
+    -fx-background-color: -mdv-accent;
+    -fx-background-radius: 2;
+    -fx-padding: 0;
+}
+
+/* ------------------------------------------------- forgetting a recent workspace
+
+   The cross on a Recent Workspaces row. Muted rather than hidden: revealing it on
+   row hover would be tidier, but it would rest on a descendant selector reaching
+   through the menu's own container, and if that ever stops matching the control is
+   not subtle - it is invisible, and the feature looks broken with nothing on screen
+   to say why. Faint and always present fails visibly instead. */
+/* Stated here rather than inherited. A Label inside a CustomMenuItem picks up
+   modena's ".menu-item .label", which is written for native menu rows; leaning on
+   it leaves this text one selector away from being invisible against the popup,
+   with nothing on screen to explain the blank row. */
+.recent-row-label {
+    -fx-text-fill: -mdv-text;
+}
+
+.recent-row-label:disabled {
+    -fx-opacity: 0.45;
+}
+
+.recent-forget {
+    -fx-background-color: transparent;
+    -fx-text-fill: -mdv-text-muted;
+    -fx-font-size: 10px;
+    -fx-padding: 1 5 1 5;
+    -fx-background-radius: 3;
+    -fx-opacity: 0.5;
+    -fx-cursor: hand;
+}
+
+.recent-forget:hover,
+.recent-forget:focused {
+    -fx-opacity: 1;
+}
+
+/* The palette has no danger colour, and inventing one for a single control would
+   leave a red that nothing else in the app ever uses. Accent-on-soft is the same
+   emphasis every other hover here gets; the cross itself says what it does. */
+.recent-forget:hover {
+    -fx-background-color: -mdv-accent-soft;
+    -fx-text-fill: -mdv-accent;
+}
+
+/* ------------------------------------------------------------ welcome screen
+
+   What the window shows before anything is open. Deliberately plain: it is the
+   first thing seen and the least often seen, so anything decorative here is paid
+   for on every launch and looked at for two seconds. */
+.welcome {
+    -fx-background-color: -mdv-paper;
+}
+
+.welcome-card {
+    -fx-background-color: -mdv-surface;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-padding: 32 34 30 34;
+    -fx-effect: dropshadow(gaussian, rgba(22, 32, 43, 0.10), 26, 0, 0, 8);
+}
+
+.welcome-title {
+    -fx-font-size: 26px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -mdv-text;
+}
+
+.welcome-subtitle {
+    -fx-font-size: 11.5px;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+.welcome-section {
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+/* Hyperlinks, not buttons: these are choices. A column of full-width buttons reads
+   as a form to be filled in. The underline is dropped for the same reason - it is a
+   list of things to do, not prose with links in it. */
+.welcome-action,
+.welcome-recent-name {
+    -fx-text-fill: -mdv-accent;
+    -fx-underline: false;
+    -fx-border-color: transparent;
+    -fx-padding: 3 0 3 0;
+    -fx-cursor: hand;
+}
+
+.welcome-action {
+    -fx-font-size: 14px;
+}
+
+.welcome-action:hover,
+.welcome-recent-name:hover {
+    -fx-underline: true;
+}
+
+.welcome-action:visited,
+.welcome-recent-name:visited {
+    -fx-text-fill: -mdv-accent;
+}
+
+.welcome-shortcut {
+    -fx-font-size: 11px;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+/* The folder name carries the click; the path beside it is only there to tell two
+   checkouts of the same project apart, so it stays quiet and small. */
+.welcome-recent-path {
+    -fx-font-size: 11px;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+/* --------------------------------------------------------- provider settings */
+.provider-heading {
+    -fx-font-size: 9.5px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+.provider-name {
+    -fx-font-size: 12.5px;
+    -fx-text-fill: -mdv-text;
+}
+
+/* The host and the key state are what the decision rests on, but they are read
+   once and then ignored; quiet enough not to compete with the provider names. */
+.provider-host {
+    -fx-font-size: 11.5px;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+/* The per-row Configure button. Quiet: the row is a list of facts about a provider,
+   and a column of loud buttons down the right would read as the point of the
+   screen rather than as the way to change one line of it. */
+.provider-configure {
+    -fx-font-size: 11px;
+    -fx-padding: 2 9 2 9;
+    -fx-background-radius: 4;
+    -fx-cursor: hand;
+}

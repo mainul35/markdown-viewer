@@ -10,9 +10,12 @@ module com.mdviewer {
     // JSObject, for letting the preview page call back into the app - the table cell
     // editor. netscape.javascript lives in its own module, not in javafx.web.
     requires jdk.jsobject;
+    // HttpClient, for the assistant's streaming calls. In the JDK, so no dependency.
+    requires java.net.http;
 
     opens com.mdviewer to javafx.fxml;
     exports com.mdviewer;
     exports com.mdviewer.service;
     exports com.mdviewer.ui;
+    exports com.mdviewer.ai;
 }

@@ -30,6 +30,13 @@
                         <accelerator><KeyCodeCombination alt="UP" code="S" control="UP" meta="UP" shift="DOWN" shortcut="DOWN"/></accelerator>
                     </MenuItem>
                     <SeparatorMenuItem/>
+                    <!--
+                        Filled in at runtime from ~/.mdviewer/workspaces.txt. Rebuilt each
+                        time it is shown rather than kept in step with every open and
+                        close, which is one place to get wrong instead of several.
+                    -->
+                    <Menu fx:id="recentWorkspacesMenu" text="Recent Workspaces"/>
+                    <SeparatorMenuItem/>
                     <MenuItem text="Close Document" onAction="#handleCloseDocument">
                         <accelerator><KeyCodeCombination alt="UP" code="W" control="UP" meta="UP" shift="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>
@@ -66,6 +73,9 @@
                     <SeparatorMenuItem/>
                     <MenuItem fx:id="explorerMenuItem" text="Hide Explorer" onAction="#handleToggleExplorer"/>
                     <MenuItem text="Reveal Current File" onAction="#handleRevealInTree"/>
+                    <MenuItem fx:id="assistantMenuItem" text="Show Assistant" onAction="#handleToggleAssistant">
+                        <accelerator><KeyCodeCombination alt="UP" code="A" control="UP" meta="UP" shift="DOWN" shortcut="DOWN"/></accelerator>
+                    </MenuItem>
                     <MenuItem text="Refresh Workspaces" onAction="#handleRefreshWorkspaces">
                         <accelerator><KeyCodeCombination alt="UP" code="F5" control="UP" meta="UP" shift="UP" shortcut="UP"/></accelerator>
                     </MenuItem>
@@ -79,6 +89,8 @@
                     share or a very large tree is exactly where the scan stops being free.
                 -->
                 <Menu text="Settings">
+                    <MenuItem text="AI Providers..." onAction="#handleProviderSettings"/>
+                    <SeparatorMenuItem/>
                     <CheckMenuItem fx:id="autoRefreshMenuItem" text="Auto-refresh Workspaces (5 min)" selected="true" onAction="#handleToggleAutoRefresh"/>
                 </Menu>
                 <Menu text="Help">

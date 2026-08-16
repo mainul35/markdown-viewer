@@ -14,9 +14,17 @@ import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
+import javafx.geometry.Pos;
+import javafx.scene.control.Button;
+import javafx.scene.control.CustomMenuItem;
+import javafx.scene.control.Label;
+import javafx.scene.control.Tooltip;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
+import javafx.scene.Group;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.layout.VBox;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
@@ -34,6 +42,9 @@ import com.mdviewer.service.ImageRef;
 import com.mdviewer.service.MarkdownService;
 import com.mdviewer.service.SourceEdits;
 import com.mdviewer.service.TableSource;
+import com.mdviewer.service.WorkspaceHistory;
+import com.mdviewer.ai.AiConfig;
+import com.mdviewer.ai.AiPanel;
 import com.mdviewer.service.Trash;
 import com.mdviewer.ui.DocumentView;
 import com.mdviewer.ui.FileTreePanel;
@@ -42,6 +53,7 @@ import com.mdviewer.ui.FindBar;
 import com.mdviewer.ui.MarkdownFiles;
 import com.mdviewer.ui.PathTreeItem;
 import com.mdviewer.ui.PreviewToolbar;
+import com.mdviewer.ui.WelcomeView;
 import com.mdviewer.ui.WorkspaceView;
 
 import java.io.File;
@@ -90,7 +102,36 @@ public class MainController {
     private MenuItem explorerMenuItem;
 
     @FXML
+    private MenuItem assistantMenuItem;
+
+    private AiPanel aiPanel;
+    /** Remembered so hiding and re-showing the assistant keeps its width. */
+    private double assistantDivider = 0.72;
+
+    /** The mode to go back to when the assistant closes, or null when it is not open. */
+    private EditorMode modeBeforeAssistant;
+
+    /** The edge tab that opens and closes the assistant. */
+    private final ToggleButton assistantTab = new ToggleButton("Assistant");
+
+    @FXML
     private CheckMenuItem autoRefreshMenuItem;
+
+    @FXML
+    private Menu recentWorkspacesMenu;
+
+    private final WorkspaceHistory workspaceHistory = new WorkspaceHistory();
+
+    /** Shown while nothing is open; the editor column sits behind it in a StackPane. */
+    private WelcomeView welcomeView;
+
+    /** The tabs, editor and preview as one column - what the welcome screen stands in for. */
+    private Node editorSide;
+
+    /** So the explorer is restored only if the welcome screen was what hid it. */
+    private boolean explorerHiddenForWelcome;
+
+    private static final String APP_VERSION = "1.0.0";
 
     /**
      * Re-reads the workspace tree on a timer. The explorer caches directory listings, so a
@@ -220,6 +261,32 @@ public class MainController {
 
         installReplaceShortcut();
 
+        /* Built here but not mounted. The assistant is the one part of this app that
+           sends anything anywhere, so it appears when it is asked for and not before. */
+        aiPanel = new AiPanel(new AiConfig());
+        aiPanel.setDocumentSupplier(() -> {
+            DocumentView document = activeDocument();
+            return document == null ? "" : document.getEditor().getText();
+        });
+        aiPanel.setDocumentNameSupplier(() -> {
+            DocumentView document = activeDocument();
+            return document == null ? "an unsaved document" : document.getDisplayName();
+        });
+        aiPanel.setWorkspaceRootSupplier(() -> {
+            WorkspaceView workspace = activeWorkspace();
+            return workspace == null ? null : workspace.getRoot();
+        });
+        installToolStripe();
+
+        /* Built when the menu opens rather than kept in step with every open and close.
+           A menu nobody is looking at does not need to be correct, and rebuilding on
+           demand means there is one place that can be wrong instead of several. */
+        recentWorkspacesMenu.setOnShowing(e -> rebuildRecentWorkspaces());
+        // After, not before: a label's real width is only known once the popup has been
+        // laid out with the fonts the stylesheet actually gave it.
+        recentWorkspacesMenu.setOnShown(e -> alignRecentRows());
+        rebuildRecentWorkspaces();
+
         previewDebounce = new PauseTransition(Duration.millis(200));
         previewDebounce.setOnFinished(e -> updatePreview());
 
@@ -262,6 +329,10 @@ public class MainController {
 
         int workspaceSlot = mainSplit.getItems().indexOf(workspaceTabs);
         mainSplit.getItems().set(workspaceSlot, rightSide);
+
+        // After the right-hand side exists, because it is that whole column - tabs, editor
+        // and preview together - the welcome screen stands in front of.
+        installWelcome(rightSide);
 
         initPreviewEngine();
 
@@ -337,6 +408,12 @@ public class MainController {
         workspaces.add(workspace);
         workspaceTabs.getTabs().add(workspace.getTab());
         fileTreePanel.addWorkspaceRoot(normalized);
+        updateWelcome();
+        // Only a real folder is worth remembering; the scratch workspace holding unsaved
+        // documents has no root to return to.
+        if (normalized != null) {
+            workspaceHistory.record(normalized);
+        }
         return workspace;
     }
 
@@ -345,11 +422,79 @@ public class MainController {
      * hold it at a time - a JavaFX node has a single parent - so this is what makes the
      * tabs act as selectors over one editor rather than N editors and N WebViews.
      */
+    /**
+     * Puts the welcome screen behind the tabs, to be shown while nothing is open.
+     *
+     * <p>The tabs stay in the scene rather than being swapped out. Removing and re-adding
+     * the pane that holds the editor and the preview is the teardown that blanks the
+     * WebView, and the empty state is exactly when that would look like a broken window.
+     * Both live in a StackPane and take turns being visible.
+     */
+    private void installWelcome(Node editorSide) {
+        welcomeView = new WelcomeView(APP_VERSION,
+                this::handleNewFile, this::handleOpenFile, this::handleOpenFolder,
+                this::openRecentWorkspace);
+        this.editorSide = editorSide;
+
+        /* The host goes into the split first and the column into the host after. Built the
+           other way round - new StackPane(editorSide, welcomeView) - the constructor
+           re-parents the column, which takes it out of the split, and the index read a
+           line earlier no longer points at anything. */
+        int index = mainSplit.getItems().indexOf(editorSide);
+        StackPane host = new StackPane();
+        if (index >= 0) {
+            mainSplit.getItems().set(index, host);
+        }
+        host.getChildren().addAll(editorSide, welcomeView);
+        updateWelcome();
+    }
+
+    /**
+     * Shows the welcome screen when there is nothing open, and hides it otherwise.
+     *
+     * <p>The explorer goes with it: a file tree with no roots is an empty grey column, and
+     * two empty panels say less than one screen that offers somewhere to start.
+     */
+    private void updateWelcome() {
+        if (welcomeView == null) {
+            return;
+        }
+        boolean empty = workspaces.isEmpty();
+        welcomeView.setVisible(empty);
+        welcomeView.setManaged(empty);
+        if (editorSide != null) {
+            editorSide.setVisible(!empty);
+        }
+        if (empty) {
+            welcomeView.setRecent(workspaceHistory.list());
+            if (isExplorerVisible()) {
+                explorerHiddenForWelcome = true;
+                showExplorer(false);
+            }
+        } else if (explorerHiddenForWelcome) {
+            explorerHiddenForWelcome = false;
+            showExplorer(true);
+        }
+    }
+
     private void onActiveDocumentChanged() {
         updateLayout();
         updateWordCount();
         updateStatus();
         updateTitle();
+        /* The assistant follows the document. One panel, but a conversation each: asking
+           about a design note and then opening a specification used to carry the first
+           document's questions into the second. Keyed by path so a file keeps its thread
+           across tab closes and reopens; unsaved documents fall back to their tab name,
+           which is the only identity they have. */
+        if (aiPanel != null) {
+            DocumentView document = activeDocument();
+            String key = document == null ? ""
+                    : (document.getPath() != null ? document.getPath().toString()
+                            : "untitled:" + document.getDisplayName());
+            aiPanel.setActiveDocument(key,
+                    document == null ? null : document.getDisplayName());
+        }
         MainApp.setCurrentFile(activeDocument() != null && activeDocument().getPath() != null
                 ? activeDocument().getPath().toFile() : null);
     }
@@ -619,6 +764,9 @@ public class MainController {
         workspaces.remove(workspace);
         workspaceTabs.getTabs().remove(workspace.getTab());
         fileTreePanel.removeWorkspaceRoot(workspace.getRoot());
+        // Closing the last one puts the welcome screen back, so the window is never an
+        // empty grey rectangle with no indication of what to do next.
+        updateWelcome();
     }
 
     /** @return true if it is safe to discard this document's state */
@@ -859,8 +1007,280 @@ public class MainController {
     }
 
     @FXML
+    private void handleProviderSettings() {
+        if (com.mdviewer.ai.ProviderSettings.show(
+                rootPane.getScene() == null ? null : rootPane.getScene().getWindow(),
+                aiPanel.getConfig())) {
+            // The picker is built from the config, so it has to be rebuilt when the config
+            // changes underneath it.
+            aiPanel.refreshProviders();
+            setTransientStatus("AI providers updated.");
+        }
+    }
+
+    @FXML
+    private void handleToggleAssistant() {
+        showAssistant(!isAssistantVisible());
+    }
+
+    /**
+     * The tool stripe down the right edge, the way an IDE does it.
+     *
+     * <p>The assistant was reachable only from the View menu, which is two clicks and a
+     * memory test for something opened and closed all day. A labelled tab on the edge is
+     * always visible, says whether the panel is open, and is the same click either way.
+     *
+     * <p>Rotated inside a Group on purpose: a rotated node keeps its unrotated layout
+     * bounds, so a bare rotated button would reserve a wide, short box and overlap what is
+     * beside it. A Group takes its size from what it actually draws.
+     */
+    private void installToolStripe() {
+        assistantTab.getStyleClass().add("tool-stripe-button");
+        assistantTab.setRotate(90);
+        assistantTab.setFocusTraversable(false);
+        assistantTab.setTooltip(new Tooltip("Show or hide the assistant"));
+        assistantTab.setOnAction(e -> showAssistant(assistantTab.isSelected()));
+
+        VBox stripe = new VBox(new Group(assistantTab));
+        stripe.getStyleClass().add("tool-stripe");
+        stripe.setAlignment(Pos.TOP_CENTER);
+        rootPane.setRight(stripe);
+    }
+
+    private boolean isAssistantVisible() {
+        return mainSplit.getItems().contains(aiPanel);
+    }
+
+    private void showAssistant(boolean visible) {
+        if (visible == isAssistantVisible()) {
+            return;
+        }
+        if (visible) {
+            mainSplit.getItems().add(aiPanel);
+            int divider = mainSplit.getItems().size() - 2;
+            // Twice: a divider cannot be positioned until the new item has been laid out,
+            // the same two-pass dance the split's own mode switching needs.
+            mainSplit.setDividerPosition(divider, assistantDivider);
+            Platform.runLater(() -> mainSplit.setDividerPosition(divider, assistantDivider));
+            /* Three columns is one too many. With the tree, the editor, the preview and
+               the assistant all sharing the width, none of them is wide enough to work in
+               - and the assistant is for reading about the document, which is what the
+               preview is for too. The editor stands down while it is open, and the mode it
+               was in comes back when it closes. */
+            modeBeforeAssistant = currentMode;
+            if (currentMode != EditorMode.FULL_PREVIEW) {
+                currentMode = EditorMode.FULL_PREVIEW;
+                updateLayout();
+            }
+            aiPanel.getInput().requestFocus();
+        } else {
+            int divider = mainSplit.getItems().size() - 2;
+            if (divider >= 0 && divider < mainSplit.getDividerPositions().length) {
+                assistantDivider = mainSplit.getDividerPositions()[divider];
+            }
+            mainSplit.getItems().remove(aiPanel);
+            /* The preview keeps the whole column. Springing back to a split editor on
+               close was worse than leaving it alone: closing the assistant is asking for
+               more room to read in, and being handed a half-width preview and an editor
+               nobody asked for is the opposite of that. Raw and Split are one click away
+               for anyone who wants them. */
+            modeBeforeAssistant = null;
+        }
+        assistantMenuItem.setText(visible ? "Hide Assistant" : "Show Assistant");
+        // The menu and the stripe are two ways to the same switch, so neither may show a
+        // state the other has just changed.
+        assistantTab.setSelected(visible);
+    }
+
+    @FXML
     private void handleToggleExplorer() {
         showExplorer(!isExplorerVisible());
+    }
+
+    /**
+     * Rebuilds the Recent Workspaces menu from the history file.
+     *
+     * <p>Folders that are already open are shown but disabled rather than hidden: a
+     * workspace vanishing from the list the moment you open it makes the list look like it
+     * forgot, and the greyed entry is what tells you it is already there.
+     */
+    private void rebuildRecentWorkspaces() {
+        recentWorkspacesMenu.getItems().clear();
+        List<Path> recent = workspaceHistory.list();
+        if (recent.isEmpty()) {
+            MenuItem empty = new MenuItem("No recent workspaces");
+            empty.setDisable(true);
+            recentWorkspacesMenu.getItems().add(empty);
+            return;
+        }
+        for (Path root : recent) {
+            boolean alreadyOpen = workspaces.stream()
+                    .anyMatch(w -> root.equals(w.getRoot()));
+            recentWorkspacesMenu.getItems().add(recentWorkspaceItem(root, alreadyOpen));
+        }
+        MenuItem clear = new MenuItem("Clear Recent Workspaces");
+        clear.setOnAction(e -> {
+            workspaceHistory.clear();
+            rebuildRecentWorkspaces();
+            setTransientStatus("Recent workspaces cleared.");
+        });
+        recentWorkspacesMenu.getItems().addAll(new SeparatorMenuItem(), clear);
+    }
+
+    /**
+     * One row of the recent list: the workspace, and a cross to forget it.
+     *
+     * <p>A {@link CustomMenuItem} rather than a MenuItem, because a MenuItem is one label
+     * and one action and this row needs two of each. Clearing the whole list was the only
+     * way to drop a single entry before, which is a poor trade when one scratch folder is
+     * sitting among the projects you actually use.
+     *
+     * <p>{@code hideOnClick} is off: the cross removes the entry and the menu stays open,
+     * so several can be dropped in one go. Opening a workspace does close it, which is why
+     * that path hides the menu itself.
+     */
+    private CustomMenuItem recentWorkspaceItem(Path root, boolean alreadyOpen) {
+        Label label = new Label(recentLabel(root));
+        /* Its own class, and its own colour in the stylesheet. A plain Label in here takes
+           its fill from modena's ".menu-item .label", a rule written for native menu rows;
+           relying on it means the text is one selector away from being invisible against
+           the popup, with nothing to say why. A custom row should colour its own text. */
+        label.getStyleClass().add("recent-row-label");
+        label.setMaxWidth(Double.MAX_VALUE);
+        label.setDisable(alreadyOpen);
+        HBox.setHgrow(label, Priority.ALWAYS);
+
+        Button forget = new Button("\u2715");
+        forget.getStyleClass().add("recent-forget");
+        forget.setFocusTraversable(false);
+        forget.setTooltip(new Tooltip("Forget " + root));
+        forget.setOnAction(e -> {
+            // Consumed so the row's own action does not also run and open the workspace
+            // that has just been forgotten.
+            e.consume();
+            workspaceHistory.remove(root);
+            rebuildRecentWorkspaces();
+            setTransientStatus("Removed " + root.getFileName() + " from recent workspaces.");
+        });
+
+        /* The spacer only helps once every row is the same width, which a menu does not
+           arrange on its own: a CustomMenuItem's content keeps its own preferred width
+           rather than being stretched to the popup, measured at 302 pixels for one row
+           and 87 for another in the same 338-pixel menu. So each cross landed wherever
+           its own path happened to end. alignRecentRows below levels the labels once the
+           menu is up and its real widths are known. */
+        Region gap = new Region();
+        HBox.setHgrow(gap, Priority.ALWAYS);
+        HBox row = new HBox(10, label, gap, forget);
+        row.setAlignment(Pos.CENTER_LEFT);
+        row.setMaxWidth(Double.MAX_VALUE);
+
+        CustomMenuItem item = new CustomMenuItem(row);
+        item.setHideOnClick(false);
+        item.setOnAction(e -> {
+            if (alreadyOpen) {
+                return;
+            }
+            closeMenuBarMenu();
+            openRecentWorkspace(root);
+        });
+        return item;
+    }
+
+    /**
+     * Closes the whole File menu, through the menu rather than around it.
+     *
+     * <p>These rows do not hide on click, because the cross has to be pressable without
+     * the menu closing under it - so opening a workspace has to close the menu itself.
+     * Hiding the popup was the obvious way and the wrong one: the popup is the File menu's,
+     * and hiding it directly leaves {@code Menu.showing} true. The menu bar tracks that
+     * property to know which of its buttons is open, so it went on believing File was
+     * still showing and ignored every click on it until another menu was opened and the
+     * bar's idea of the world was corrected.
+     *
+     * <p>Hiding the top Menu instead sets that property, which is what the bar is
+     * listening for.
+     */
+    private void closeMenuBarMenu() {
+        Menu menu = recentWorkspacesMenu;
+        while (menu.getParentMenu() != null) {
+            menu = menu.getParentMenu();
+        }
+        menu.hide();
+    }
+
+    /**
+     * Widens every recent row's label to the widest, so the crosses line up.
+     *
+     * <p>A menu does not stretch a CustomMenuItem's content to the popup width - each row
+     * keeps its own preferred width - so a growing spacer has nothing to grow into and
+     * every cross sits at the end of its own path instead of at the edge. Giving all the
+     * labels the widest label's width makes the rows equal, which is what the spacer
+     * needs.
+     *
+     * <p>Measured rather than computed: the width is read back after the popup is on
+     * screen, when the labels have the fonts the stylesheet gave them. Guessing from
+     * character counts gets the widest row wrong as soon as a path has different letters
+     * in it.
+     */
+    private void alignRecentRows() {
+        alignRows(recentWorkspacesMenu.getItems());
+    }
+
+    /** Takes the items rather than reading the field, so it can be exercised on its own. */
+    static void alignRows(List<MenuItem> items) {
+        List<Label> labels = new ArrayList<>();
+        for (MenuItem item : items) {
+            if (item instanceof CustomMenuItem custom
+                    && custom.getContent() instanceof HBox row
+                    && !row.getChildren().isEmpty()
+                    && row.getChildren().get(0) instanceof Label label) {
+                labels.add(label);
+            }
+        }
+        double widest = 0;
+        for (Label label : labels) {
+            widest = Math.max(widest, label.getWidth());
+        }
+        if (widest <= 0) {
+            return; // Not laid out yet; nothing useful to level against.
+        }
+        for (Label label : labels) {
+            label.setMinWidth(widest);
+        }
+    }
+
+    /**
+     * Folder name first, then where it is - "MDViewer  —  C:\\Users\\...\\codes".
+     *
+     * <p>Several checkouts of the same project are the normal case, so the name alone is
+     * ambiguous exactly when the list is most useful.
+     */
+    private static String recentLabel(Path root) {
+        Path name = root.getFileName();
+        Path parent = root.getParent();
+        if (name == null) {
+            return root.toString();
+        }
+        return parent == null ? name.toString() : name + "  \u2014  " + parent;
+    }
+
+    private void openRecentWorkspace(Path root) {
+        if (!Files.isDirectory(root)) {
+            // Gone since it was recorded: drop it rather than leaving a dead entry.
+            workspaceHistory.remove(root);
+            rebuildRecentWorkspaces();
+            setTransientStatus("That folder no longer exists - removed from recent workspaces.");
+            return;
+        }
+        WorkspaceView workspace = addWorkspace(root);
+        if (workspace == null) {
+            return; // addWorkspace already explained why, e.g. the workspace limit.
+        }
+        workspaceTabs.getSelectionModel().select(workspace.getTab());
+        fileTreePanel.addWorkspaceRoot(root);
+        onActiveDocumentChanged();
+        setTransientStatus("Opened workspace " + root.getFileName() + ".");
     }
 
     @FXML
@@ -972,6 +1392,13 @@ public class MainController {
         themeMenuItem.setText(next);
 
         applyPreviewTheme();
+        /* The transcript is a WebView too, with the preview's own stylesheet, so it needs
+           telling as well - the panel's JavaFX chrome follows the .dark-theme class on the
+           scene root and looked right, which made the white page inside it read as a bug
+           in the panel rather than as the one part nobody had told. */
+        if (aiPanel != null) {
+            aiPanel.setDarkMode(darkMode);
+        }
     }
 
     private void applyPreviewTheme() {
@@ -2334,8 +2761,16 @@ public class MainController {
      * render time, so a webfont would simply fail to load. Sitka is a reading face that
      * ships with Windows and gives documents a plate-like voice that a UI sans cannot.
      */
-    private String buildPreviewShell() {
-        String css = """
+    /**
+     * The preview's stylesheet, on its own so the assistant panel can borrow it.
+     *
+     * <p>An answer about a Markdown document that arrives as unformatted text is harder to
+     * read than the document it is about - headings, tables and code blocks all flattened
+     * into one grey wall. Sharing the sheet means the assistant's prose looks like the
+     * preview's, down to the theme, without a second set of rules to keep in step.
+     */
+    public static String previewCss() {
+        return """
             :root {
               --paper:#F6F8FA; --ink:#16202B; --ink-soft:#5A6875;
               --rule:#DFE5EC; --line:#C7D2DE;
@@ -2528,8 +2963,30 @@ public class MainController {
             }
             /* Sideways scrolling went with display:block. Wrapping is the better trade
                for a document anyway - a column you have to scroll to read is a column you
-               will not read - but an unbroken URL still has to be allowed to break. */
-            th, td { overflow-wrap:break-word; word-break:break-word; }
+               will not read - but an unbroken URL still has to be allowed to break.
+
+               overflow-wrap only, without word-break. word-break:break-word behaves like
+               overflow-wrap:anywhere, and anywhere is not just permission to break a long
+               word - it tells the layout that a column's narrowest possible width is one
+               character. An auto table believes it: a "Question" column against a wide
+               "Decision" one was squeezed to "QUE / STIO / N", a word per three lines,
+               while the column beside it took the rest of the table. overflow-wrap breaks
+               the URL that genuinely cannot fit and leaves the column widths alone. */
+            th, td { overflow-wrap:break-word; }
+            /* A floor under the first column, which is where a short label sits beside a
+               paragraph and gets shaved to fit it.
+
+               A plain length, not min(20ch, max-content): min() takes lengths and
+               percentages, and an intrinsic keyword inside it makes the whole declaration
+               invalid, so it is dropped and the column goes back to being squeezed. That
+               failure is silent - the measured width was identical with 14ch and with
+               24ch, which is what gave it away.
+
+               In ch rather than pixels so it tracks the font, which is what decides how
+               much a character is worth. Twenty of them holds a label like "What requires
+               login" on one line, and is little enough that a column of single words does
+               not read as mostly empty. */
+            th:first-child, td:first-child { min-width:20ch; }
             /* A cell under edit shows raw Markdown, so it gets the mono face - the
                change of typeface is itself the signal that this is the source now and
                not the rendered form. */
@@ -2697,6 +3154,10 @@ public class MainController {
               img.mdv-img-selected { outline:none; }
             }
             """;
+    }
+
+    private String buildPreviewShell() {
+        String css = previewCss();
 
         String js = """
             window.__mdSetTheme = function (theme) {
