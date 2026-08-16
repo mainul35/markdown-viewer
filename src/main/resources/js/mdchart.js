@@ -178,8 +178,14 @@
     });
     var start = Math.floor(min / step) * step;
     var out = [];
-    for (var v = start; v <= max + step * 0.001; v += step) {
+    /* Up to and including the first tick at or above the maximum, which is the tick that
+       decides how tall the plot is. Stopping at the last tick below it leaves the top of
+       the scale short of the data: 377 against a scale ending at 300 drew a column taller
+       than the plot it was in, off the top edge, with its value label somewhere above the
+       SVG entirely. The chart looked deliberate and was wrong by a quarter. */
+    for (var v = start; out.length < 200; v += step) {
       out.push(Math.round(v * 1e6) / 1e6);
+      if (v >= max - step * 1e-9) break;
     }
     return out;
   }
@@ -551,6 +557,24 @@
 
   /* ------------------------------------------------------------------- errors */
 
+  /**
+   * A chart this library will not draw, and why.
+   *
+   * <p>Presented as a note rather than an error, because it is not one. Nothing has gone
+   * wrong here: a rule was applied - a seventh pie slice, a ninth series - and the honest
+   * outcome is to say which rule and what to do instead. The first version painted these
+   * in error red, and a reader seeing one in their own document reasonably read it as the
+   * app having failed rather than as advice about the chart.
+   *
+   * <p>The fence body stays underneath either way, so what is on screen is still the
+   * numbers rather than an empty plate.
+   */
+  function refuse(message, source) {
+    return '<div class="mdc-note"><p class="mdc-note-msg">' + esc(message)
+      + '</p><pre class="mdc-note-src">' + esc(source) + "</pre></div>";
+  }
+
+  /** A genuine failure, which is a different thing and looks like one. */
   function errorBlock(message, source) {
     return '<div class="mdc-error"><p class="mdc-error-msg">' + esc(message)
       + '</p><pre class="mdc-error-src">' + esc(source) + "</pre></div>";
@@ -572,40 +596,36 @@
     var opts = parsed.settings;
     var type = (opts.type || "").toLowerCase();
 
-    if (!type) return errorBlock("chart needs a type: " + TYPES.join(", "), source);
-    if (TYPES.indexOf(type) < 0) {
-      return errorBlock('unknown chart type "' + type + '" - use one of: '
-        + TYPES.join(", "), source);
-    }
-
     var data = readData(parsed);
     if (!data.series.length || !data.categories.length) {
-      return errorBlock("chart has no data rows", source);
+      return refuse("this chart has no data rows yet - add lines like "
+        + '"label | value" under the ---', source);
     }
 
-    /* Refused rather than cycled. A ninth hue is indistinguishable from one already in
-       use, so the honest answer is to say so and let the author fold or facet. */
+    /* Past eight series there are no more colours that can be told apart, so the tail is
+       folded into one "Other" row rather than given a ninth hue nobody could distinguish.
+       The full data is kept for the table below, so folding changes what is plotted and
+       never what is recorded. */
+    var full = data;
+    var folded = null;
     if (data.series.length > SERIES_SLOTS) {
-      return errorBlock("a chart carries at most " + SERIES_SLOTS + " series; this has "
-        + data.series.length + ". Fold the tail into one row, or split into two charts.",
-        source);
+      folded = foldTail(data);
+      data = folded.data;
     }
+
+    var chosen = fit(type, data);
+    type = chosen.type;
 
     var body;
     if (type === "stat") {
       body = drawStat(data, opts);
-      return '<figure class="mdc-figure mdc-figure-stat">' + body + "</figure>";
+      return '<figure class="mdc-figure mdc-figure-stat">'
+        + swapNote(chosen) + body + "</figure>";
     }
 
+    var notes = foldNote(folded) + swapNote(chosen);
+
     if (type === "pie" || type === "donut") {
-      if (!data.singleSeries) {
-        return errorBlock("a pie takes one value per row; for several series use "
-          + '"type: column"', source);
-      }
-      if (data.categories.length > 6) {
-        return errorBlock("a pie is unreadable past 6 slices (" + data.categories.length
-          + " given) - use \"type: bar\"", source);
-      }
       body = drawPie(data, opts, type === "donut");
     } else if (type === "line" || type === "area") {
       body = drawLines(data, opts, type === "area", width);
@@ -617,14 +637,199 @@
       ? legendFromCategories(data.categories)
       : legend(data.series);
 
-    return '<figure class="mdc-figure">'
+    /* A pie is square at a fixed size, so on a wide plate it has to be told where to sit;
+       a plotted chart fills the plate and has no such question. */
+    var round = type === "pie" || type === "donut";
+    return '<figure class="mdc-figure' + (round ? " mdc-figure-round" : "") + '">'
       + (opts.title ? '<figcaption class="mdc-title">' + esc(opts.title)
           + (opts.unit ? ' <span class="mdc-unit">(' + esc(opts.unit) + ")</span>" : "")
           + "</figcaption>" : "")
+      + notes
       + pieLegend
       + '<div class="mdc-plot">' + body + "</div>"
-      + table(data, opts.unit)
+      /* The full data, not the folded set: the table is where nothing is allowed to be
+         lost, and a reader checking what went into "Other" has to find it here. */
+      + table(full, opts.unit)
       + "</figure>";
+  }
+
+  /**
+   * Folds everything past the seventh series into one "Other" row.
+   *
+   * <p>Ranked by total size, so what survives as its own colour is what is actually big
+   * enough to look at, and the rest is summed rather than dropped - the "Other" bar is the
+   * true total of the tail, and every original row is still listed in the table below.
+   *
+   * <p>This is what the house guidance says to do with a ninth series, and it is better
+   * than the alternatives on both sides: a generated ninth hue would be indistinguishable
+   * from one already in use, and refusing to draw at all leaves a reader with numbers they
+   * asked to see as a chart and a paragraph explaining why they cannot.
+   */
+  function foldTail(data) {
+    var keep = SERIES_SLOTS - 1;
+    var ranked = data.series.slice().sort(function (a, b) {
+      return total(b) - total(a);
+    });
+    var kept = ranked.slice(0, keep);
+    var tail = ranked.slice(keep);
+
+    var other = { name: "Other", values: data.categories.map(function (_, j) {
+      return tail.reduce(function (sum, s) {
+        return sum + (isFinite(s.values[j]) ? s.values[j] : 0);
+      }, 0);
+    }) };
+
+    /* Back into the order they were written in, so a reader's own row order survives; the
+       ranking was only ever about deciding which ones to fold. */
+    var order = data.series.map(function (s) { return s; });
+    var keptInOrder = order.filter(function (s) { return kept.indexOf(s) >= 0; });
+
+    return {
+      data: {
+        series: keptInOrder.concat([other]),
+        categories: data.categories,
+        singleSeries: false
+      },
+      count: tail.length,
+      /* Named in the order they were written, not the order they were ranked in: the
+         reader is looking for these rows in their own document. */
+      names: order.filter(function (s) { return tail.indexOf(s) >= 0; })
+        .map(function (s) { return s.name; })
+    };
+  }
+
+  function total(series) {
+    return series.values.reduce(function (sum, v) {
+      return sum + (isFinite(v) ? Math.abs(v) : 0);
+    }, 0);
+  }
+
+  /** Says which series were folded away, so "Other" is never an unexplained bar. */
+  function foldNote(folded) {
+    if (!folded) return "";
+    return '<p class="mdc-swap">The ' + folded.count + " smallest series ("
+      + esc(folded.names.join(", ")) + ') are drawn together as "Other" - past '
+      + SERIES_SLOTS + " there are no more colours that can be told apart. "
+      + "Every row is in the table below.</p>";
+  }
+
+  /**
+   * The form this data will actually be drawn as, and why it is not the one asked for.
+   *
+   * <p>A rule that a chart breaks used to mean no chart: a seven-slice pie printed its
+   * reason and the numbers, and nothing was plotted. The reason was right and the outcome
+   * was still wrong - the reader wanted to see their data, and refusing to draw it does
+   * not make a pie readable, it just leaves them with nothing.
+   *
+   * <p>So the rule is kept and the chart is drawn in the nearest form that honours it,
+   * with a line saying what changed. The guardrail still holds - no misleading pie is ever
+   * produced - and the document still has a chart in it. The only rules that survive as
+   * outright refusals are the two that cannot be met by changing form: more series than
+   * there are colours, and no data at all.
+   */
+  function fit(type, data) {
+    var cats = data.categories.length;
+    var count = data.series.length;
+    var values = 0;
+    var negative = false;
+    data.series.forEach(function (s) {
+      s.values.forEach(function (v) {
+        if (isFinite(v)) { values++; if (v < 0) negative = true; }
+      });
+    });
+
+    /* What this shape of data wants to be when nothing usable was asked for. */
+    var natural = values === 1 ? "stat" : data.singleSeries ? "bar" : "column";
+
+    if (!type) {
+      return { type: natural, why: 'no "type:" was given' };
+    }
+    if (TYPES.indexOf(type) < 0) {
+      return { type: natural, why: 'there is no "' + type + '" chart here' };
+    }
+    if (type === "pie" || type === "donut") {
+      if (!data.singleSeries) {
+        return { type: "column", why: "a pie takes one value per row and these have several" };
+      }
+      if (cats > 6) {
+        return { type: "bar", why: "a pie is unreadable past 6 slices and this has " + cats };
+      }
+      if (negative) {
+        return { type: "bar", why: "a negative value has no share of a whole" };
+      }
+    }
+    if ((type === "line" || type === "area") && cats < 2) {
+      return { type: natural, why: "a line needs at least two points and this has " + cats };
+    }
+    if (type === "area" && count > 3) {
+      return { type: "line", why: "filled areas stop being readable stacked " + count + " deep" };
+    }
+    if (type === "stat" && values !== 1) {
+      return { type: data.singleSeries ? "bar" : "column",
+               why: "a stat shows one number and this has " + values };
+    }
+    return { type: type, why: null };
+  }
+
+  /** Says what was drawn instead, and why. Nothing at all when nothing was substituted. */
+  function swapNote(chosen) {
+    if (!chosen.why) return "";
+    return '<p class="mdc-swap">Drawn as a ' + esc(chosen.type) + " chart - "
+      + esc(chosen.why) + ".</p>";
+  }
+
+  /**
+   * Which forms this data could take, and why the rest cannot have it.
+   *
+   * Asked by the editor before it offers "change chart type", so the menu can say what a
+   * form would cost rather than silently omitting it or - worse - accepting it and
+   * dropping the values that no longer fit. Every answer here is derived from the same
+   * rules render() enforces; nothing decides twice.
+   *
+   * Returned as lines of "key=value" because the caller is a JavaFX menu on the other
+   * side of a string-only bridge, and a shape it can read at a glance beats a shape it
+   * has to parse.
+   */
+  function describe(source) {
+    var parsed = parse(source);
+    var data = readData(parsed);
+    var cats = data.categories.length;
+    var count = data.series.length;
+    var values = 0;
+    var negative = false;
+    data.series.forEach(function (s) {
+      s.values.forEach(function (v) {
+        if (isFinite(v)) { values++; if (v < 0) negative = true; }
+      });
+    });
+
+    var out = ["type=" + (parsed.settings.type || "").toLowerCase().trim()];
+    out.push("series=" + count);
+    out.push("values=" + values);
+
+    function say(name, reason) { out.push(name + "=" + (reason || "ok")); }
+
+    /* A long tail is not a reason to withhold a form: past eight series the smallest are
+       folded into "Other" and the chart is drawn either way, so every plotted form is
+       still on offer here. */
+    say("bar", null);
+    say("column", null);
+    /* A line needs somewhere to go. Through one category it is a dot with an axis. */
+    var line = cats < 2 ? "needs at least two points" : null;
+    say("line", line);
+    /* Filled areas stack up visually even when they are not stacked, so past three the
+       ones underneath stop being readable. */
+    say("area", line || (count > 3 ? "too many series to overlay" : null));
+    var part = !data.singleSeries ? "needs one value per row"
+      : cats > 6 ? "unreadable past 6 slices (" + cats + ")"
+      : negative ? "a negative value has no share of a whole"
+      : null;
+    say("pie", part);
+    say("donut", part);
+    /* A stat tile shows one number. Offering it for a table of them would not be a
+       different chart, it would be a chart with the rest of the data thrown away. */
+    say("stat", values === 1 ? null : "shows one number; this has " + values);
+    return out.join("\n");
   }
 
   /** A pie's slices are its categories, so its legend is built from those, not series. */
@@ -654,33 +859,72 @@
          at the new width. Reading it back off the rendered SVG would be guesswork. */
       host.setAttribute("data-mdc-src", source);
       host.setAttribute("data-mdc-done", "1");
+      /* The fence's offsets travel with the chart. The <pre> that carried them is about
+         to be replaced, and without them on the survivor the editor could render a chart
+         it can never point back at. */
+      copyAttr(pre, host, "data-md-start");
+      copyAttr(pre, host, "data-md-end");
       if (pre.parentNode) pre.parentNode.replaceChild(host, pre);
       draw(host, source);
     }
     return blocks.length;
   }
 
-  /** Lays one chart out at the width its container actually has. */
-  function draw(host, source) {
-    var width = measure(host);
+  /**
+   * Lays one chart out, at {@code width} if given and at its container's width otherwise.
+   *
+   * <p>A caller supplies the width when the width that matters is not the one on screen -
+   * printing being the case that exists: paper is a different measure from the pane, and a
+   * chart laid out for the pane and then scaled to fit the page takes its type size down
+   * with it.
+   *
+   * <p>What the caller passes is the width of the space the chart has, not the width to
+   * draw at: the plate's own padding comes off it here, so a caller never has to know how
+   * thick this chart's chrome happens to be.
+   */
+  function draw(host, source, width) {
     try {
-      host.innerHTML = render(source, width);
+      host.innerHTML = render(source, width ? usable(width) : measure(host));
     } catch (e) {
       host.innerHTML = errorBlock("chart failed to render: " + (e && e.message), source);
     }
   }
 
   /**
+   * Draws every chart on the page again, at {@code width} if one is given.
+   *
+   * <p>Unconditional, unlike relayout(): the caller has a reason the page cannot see.
+   */
+  function redrawAll(width) {
+    var hosts = document.querySelectorAll(".mdv-chart-out[data-mdc-src]");
+    for (var i = 0; i < hosts.length; i++) {
+      draw(hosts[i], hosts[i].getAttribute("data-mdc-src") || "", width);
+    }
+    /* Forget the last measured width, or the next resize check would compare against a
+       width no chart on the page is currently drawn at and decide there is nothing to do. */
+    lastWidth = -1;
+    return hosts.length;
+  }
+
+  /**
    * The usable width inside the chart plate.
    *
-   * <p>Measured from the host's parent rather than the host: the host is empty at this
-   * point, and an empty block's own width is its parent's anyway, but the parent is the
-   * one that survives the plate's padding being taken off.
+   * <p>The host's own width, not its parent's. An earlier version asked the parent on the
+   * grounds that the host is empty at this point and an empty block is as wide as its
+   * parent anyway - which is true of a block with no width of its own, and false of this
+   * one: the plate is sized by the page's own rules, so in full-preview the host was 640
+   * and the body it was asked about was 1223. The chart was drawn at 1183 and displayed at
+   * 520, and the browser scaled the difference out of the type.
+   *
+   * <p>Reading clientWidth forces layout, so the empty host has a real width by the time
+   * the answer comes back.
    */
   function measure(host) {
-    var parent = host.parentNode;
-    var w = (parent && parent.clientWidth) || host.clientWidth || 0;
-    /* The figure's own padding and border, which the plot does not get to use. */
+    return usable(host.clientWidth || (host.parentNode && host.parentNode.clientWidth) || 0);
+  }
+
+  /** What is left of a container once the figure's padding and border are taken off. */
+  function usable(w) {
     return w > 80 ? w - 40 : 680;
   }
 
@@ -715,8 +959,13 @@
 
   watchResize();
 
+  function copyAttr(from, to, name) {
+    var value = from.getAttribute(name);
+    if (value !== null) to.setAttribute(name, value);
+  }
+
   global.MdChart = {
-    render: render, renderAll: renderAll, relayout: relayout,
-    parse: parse, types: TYPES
+    render: render, renderAll: renderAll, relayout: relayout, redrawAll: redrawAll,
+    parse: parse, describe: describe, types: TYPES
   };
 })(typeof window !== "undefined" ? window : this);

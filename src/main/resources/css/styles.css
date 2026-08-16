@@ -227,6 +227,68 @@
     -fx-border-color: -mdv-accent;
 }
 
+/* The chart picker is a menu of decisions rather than a measurement, so it is a list of
+   named forms with the sentence that distinguishes them - see ChartTypePicker. */
+.chart-picker {
+    -fx-background-color: -mdv-surface;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.28), 18, 0, 0, 6);
+}
+
+.chart-picker-heading {
+    -fx-font-size: 11px;
+    -fx-text-fill: -mdv-text-muted;
+    -fx-padding: 2 8 4 8;
+}
+
+.chart-picker-row {
+    -fx-background-radius: 5;
+}
+
+.chart-picker-row:on {
+    -fx-background-color: -mdv-surface-alt;
+}
+
+.chart-picker-name {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -mdv-text;
+}
+
+.chart-picker-purpose {
+    -fx-font-size: 11px;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+/* The glyph is a sketch of the chart, so it uses the marks' own colour rather than the
+   icon stroke: a chart's ink is data, not chrome. */
+.chart-picker-glyph .toolbar-icon-fill {
+    -fx-fill: -mdv-accent;
+}
+
+.chart-picker-glyph .toolbar-icon-stroke {
+    -fx-stroke: -mdv-accent;
+}
+
+/* The second series in a glyph: the same hue, stepped back, the way a real chart's
+   secondary series is. */
+.chart-picker-wash {
+    -fx-fill: -mdv-accent;
+    -fx-opacity: 0.32;
+}
+
+.chart-picker-arc {
+    -fx-stroke: -mdv-accent;
+}
+
+.chart-picker-arc-soft {
+    -fx-stroke: -mdv-accent;
+    -fx-opacity: 0.32;
+}
+
 /* --------------------------------------------------------------- scrollbars
 
    Modena's default thumb is #e5e5e5, which against the explorer's #eef2f6 panel is

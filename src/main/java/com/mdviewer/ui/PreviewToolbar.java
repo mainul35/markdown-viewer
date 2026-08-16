@@ -45,6 +45,7 @@ public final class PreviewToolbar extends HBox {
 
     private Consumer<Action> onAction = a -> { };
     private final TableSizePicker tablePicker = new TableSizePicker();
+    private final ChartTypePicker chartPicker = new ChartTypePicker();
 
     public PreviewToolbar() {
         getStyleClass().add("preview-toolbar");
@@ -67,6 +68,7 @@ public final class PreviewToolbar extends HBox {
                 iconButton(quoteIcon(), "Block quote", Action.QUOTE),
                 iconButton(linkIcon(), "Link", Action.LINK),
                 tableButton(),
+                chartButton(),
                 divider(),
                 iconButton(imageIcon(), "Insert image", Action.IMAGE_INSERT));
 
@@ -97,6 +99,26 @@ public final class PreviewToolbar extends HBox {
      */
     public void setOnInsertTable(BiConsumer<Integer, Integer> handler) {
         tablePicker.setOnPick(handler);
+    }
+
+    /**
+     * Called with the chosen chart type. Separate from {@link #setOnAction} for the same
+     * reason the table's size is: {@link Action} has nowhere to carry which form was
+     * picked.
+     */
+    public void setOnInsertChart(Consumer<String> handler) {
+        chartPicker.setOnPick(handler);
+    }
+
+    private Button chartButton() {
+        Button button = new Button();
+        button.setGraphic(chartIcon());
+        button.getStyleClass().addAll("toolbar-button", "toolbar-icon-button");
+        button.setTooltip(new Tooltip("Insert chart"));
+        button.setFocusTraversable(false);
+        button.setMinWidth(Region.USE_PREF_SIZE);
+        button.setOnAction(e -> chartPicker.showUnder(button));
+        return button;
     }
 
     private Button tableButton() {
@@ -204,6 +226,29 @@ public final class PreviewToolbar extends HBox {
         return icon(frame, head,
                 stroke(0, 8, 14, 8),
                 stroke(4.7, 1, 4.7, 12), stroke(9.3, 1, 9.3, 12));
+    }
+
+    /**
+     * Three columns of different heights on a baseline.
+     *
+     * <p>Columns rather than a pie: at 14px a pie is a circle with a notch, which reads as
+     * a clock. Unequal heights are what makes this read as a chart rather than a barcode.
+     */
+    private static Group chartIcon() {
+        Rectangle[] columns = {
+                new Rectangle(0.5, 6, 3, 6),
+                new Rectangle(5.5, 2.5, 3, 9.5),
+                new Rectangle(10.5, 8, 3, 4),
+        };
+        List<Node> parts = new ArrayList<>();
+        for (Rectangle column : columns) {
+            column.setArcWidth(2.4);
+            column.setArcHeight(2.4);
+            column.getStyleClass().add("toolbar-icon-fill");
+            parts.add(column);
+        }
+        parts.add(stroke(0, 12.6, 14, 12.6));
+        return icon(parts.toArray(new Node[0]));
     }
 
     /** A sheet feeding out of a printer body - the shape everyone reads as print. */
