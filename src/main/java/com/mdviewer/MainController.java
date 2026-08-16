@@ -2324,6 +2324,7 @@ public class MainController {
         engine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
             if (newState == Worker.State.SUCCEEDED) {
                 injectMermaid();
+                injectCharts();
                 injectHighlighter();
                 installBridge();
                 previewReady = true;
@@ -2708,6 +2709,28 @@ public class MainController {
         return TableSource.parse(text) == null ? null : text;
     }
 
+    /**
+     * Loads the chart compiler into the preview page.
+     *
+     * <p>Like the highlighter and mermaid, it is evaluated into the shell once rather than
+     * linked, because the page has no base URL to resolve a script tag against. If it is
+     * missing the fence body stays on screen as text, which for a chart is a readable
+     * table of numbers - a better failure than a blank plate.
+     */
+    private void injectCharts() {
+        try (InputStream in = getClass().getResourceAsStream("/js/mdchart.js")) {
+            if (in == null) {
+                System.err.println("MDViewer: mdchart.js not on the classpath "
+                        + "- chart blocks will stay as plain text.");
+                return;
+            }
+            webView.getEngine().executeScript(
+                    new String(in.readAllBytes(), StandardCharsets.UTF_8));
+        } catch (IOException | RuntimeException e) {
+            System.err.println("MDViewer: mdchart unavailable - " + e);
+        }
+    }
+
     private void injectMermaid() {
         try (InputStream in = getClass().getResourceAsStream("/js/mermaid.min.js")) {
             if (in == null) {
@@ -3050,6 +3073,115 @@ public class MainController {
             /* Diagrams share the plate family. The card keeps a light ground in both
                themes: PlantUML and mermaid bake dark strokes into the SVG, which would
                disappear on a dark panel. */
+            /* ---------------------------------------------------------- charts
+
+               Unlike mermaid and PlantUML, which bake their colours into the SVG they
+               emit and therefore have to sit on a pinned white plate, a chart here is
+               drawn from these custom properties. Switching theme repaints it with no
+               re-render, the same trick the rest of the preview uses.
+
+               The eight series hues are the house data-viz palette, validated with its
+               own checker against these two plate surfaces rather than the reference
+               ones - contrast only means anything against the surface a chart is
+               actually drawn on. Both modes pass; four light hues sit below 3:1, which
+               is why every chart ships direct labels and a table view. */
+            .mdc-figure {
+              --mdc-plate:#EFF3F7; --mdc-grid:#DFE5EC; --mdc-axis:#C7D2DE;
+              --mdc-ink:#16202B; --mdc-ink-soft:#5A6875;
+              --mdc-series-1:#2A78D6; --mdc-series-2:#EB6834; --mdc-series-3:#1BAF7A;
+              --mdc-series-4:#EDA100; --mdc-series-5:#E87BA4; --mdc-series-6:#008300;
+              --mdc-series-7:#4A3AA7; --mdc-series-8:#E34948;
+
+              margin-top:1.8em; margin-bottom:1.8em; padding:16px 18px 12px;
+              background:var(--mdc-plate);
+              border:1px solid var(--rule); border-left:3px solid var(--accent);
+              border-radius:7px; box-shadow:var(--plate-shadow);
+              font-family:var(--body);
+            }
+            /* The dark column is the same eight hues stepped for the dark surface - a
+               selected palette, not an automatic flip of the light one. */
+            html[data-theme="dark"] .mdc-figure {
+              --mdc-plate:#131C26; --mdc-grid:#22303F; --mdc-axis:#2C3D4E;
+              --mdc-ink:#D7DEE6; --mdc-ink-soft:#8A9AAA;
+              --mdc-series-1:#3987E5; --mdc-series-2:#D95926; --mdc-series-3:#199E70;
+              --mdc-series-4:#C98500; --mdc-series-5:#D55181; --mdc-series-6:#008300;
+              --mdc-series-7:#9085E9; --mdc-series-8:#E66767;
+            }
+            .mdc-title {
+              font-size:.95em; font-weight:600; color:var(--mdc-ink);
+              margin:0 0 2px; text-align:left;
+            }
+            .mdc-unit { font-weight:400; color:var(--mdc-ink-soft); }
+            .mdc-plot { overflow-x:auto; }
+            .mdc-svg { display:block; max-width:100%; }
+            .mdc-figure-stat { padding:18px 20px; }
+
+            /* Legend: the dependable identity channel whenever there is more than one
+               series. Text stays in ink; the swatch beside it carries the colour. */
+            .mdc-legend {
+              display:flex; flex-wrap:wrap; gap:4px 16px; margin:2px 0 10px;
+              font-size:.82em; color:var(--mdc-ink-soft);
+            }
+            .mdc-key { display:inline-flex; align-items:center; gap:6px; }
+            .mdc-swatch {
+              width:10px; height:10px; border-radius:3px; display:inline-block;
+            }
+
+            .mdc-grid { stroke:var(--mdc-grid); stroke-width:1; }
+            .mdc-tick, .mdc-cat {
+              fill:var(--mdc-ink-soft); font-size:11px; font-family:var(--body);
+            }
+            .mdc-tick { font-variant-numeric:tabular-nums; }
+            .mdc-value {
+              fill:var(--mdc-ink); font-size:11px; font-family:var(--body);
+              font-variant-numeric:tabular-nums;
+            }
+            .mdc-line { fill:none; stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
+            /* A wash under the line, never a saturated block. */
+            .mdc-area { opacity:.10; }
+            /* The ring is surface-coloured so overlapping dots stay legible without a
+               stroke that would read as data ink. */
+            .mdc-dot { stroke:var(--mdc-plate); stroke-width:2; }
+            .mdc-slice { stroke:none; }
+            .mdc-hero {
+              fill:var(--mdc-ink); font-size:20px; font-weight:600;
+              font-family:var(--body);
+            }
+
+            .mdc-stat-label {
+              margin:0 0 4px; font-size:.85em; color:var(--mdc-ink-soft);
+            }
+            /* Proportional figures on purpose: tabular-nums gives every digit the width
+               of a zero, which makes a large number look loose. */
+            .mdc-stat-value {
+              margin:0; font-size:2.4em; font-weight:600; line-height:1.1;
+              color:var(--mdc-ink); font-family:var(--body);
+            }
+            .mdc-stat-unit {
+              font-size:.4em; font-weight:400; color:var(--mdc-ink-soft); margin-left:.4em;
+            }
+            .mdc-stat-delta { margin:4px 0 0; font-size:.85em; }
+            .mdc-stat-delta.is-up { color:#0CA30C; }
+            .mdc-stat-delta.is-down { color:#D03B3B; }
+
+            /* The table twin, so no value is reachable only by hovering. */
+            .mdc-table { margin-top:10px; font-size:.85em; }
+            .mdc-table summary {
+              cursor:pointer; color:var(--mdc-ink-soft); font-size:.9em;
+            }
+            .mdc-table table { margin:8px 0 0; font-size:1em; }
+            .mdc-table td { font-variant-numeric:tabular-nums; }
+
+            .mdc-error {
+              border-left:3px solid var(--err-line); background:var(--err-bg);
+              padding:10px 14px; border-radius:5px;
+            }
+            .mdc-error-msg { margin:0 0 6px; color:var(--err-fg); font-size:.9em; }
+            .mdc-error-src {
+              margin:0; font-family:var(--mono); font-size:.82em; white-space:pre-wrap;
+              color:var(--ink-soft); background:none; border:none; padding:0;
+            }
+
             .mdv-diagram, pre.mermaid {
               position:relative; margin-top:1.8em; margin-bottom:1.8em; padding:34px 16px 16px;
               background:#FFFFFF; color:#16202B;
@@ -3221,7 +3353,15 @@ public class MainController {
               window.__mdEditingCell = null;
               window.__mdEditingBlock = null;
               window.__mdRunMermaid();
+              window.__mdRunCharts();
               window.__mdHighlight();
+            };
+            /* Charts compile synchronously into SVG, so unlike mermaid there is nothing
+               to await and no failure to swallow quietly - a bad fence renders its own
+               message in place, next to the source that caused it. */
+            window.__mdRunCharts = function () {
+              if (!window.MdChart) { return; }
+              try { MdChart.renderAll(document); } catch (e) {}
             };
             window.__mdSetDiagram = function (id, svg) {
               var el = document.getElementById(id);

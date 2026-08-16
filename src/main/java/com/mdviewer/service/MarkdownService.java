@@ -52,6 +52,8 @@ public final class MarkdownService {
     public record Result(String html, List<Diagram> diagrams) {}
 
     private static final Set<String> MERMAID_TAGS = Set.of("mermaid");
+    /** Handed to the bundled mdchart.js, which compiles the fence body into inline SVG. */
+    private static final Set<String> CHART_TAGS = Set.of("chart", "mdchart");
     private static final Set<String> PLANTUML_TAGS = Set.of("plantuml", "puml", "uml", "plantuml-svg");
 
     /** Matches src=/href= in raw HTML that CommonMark passes through untouched. */
@@ -437,6 +439,20 @@ public final class MarkdownService {
             html.tag("/pre");
         }
 
+        /**
+         * The chart source, left in the page for mdchart.js to compile.
+         *
+         * <p>Emitted as text inside a {@code <pre>} for the same reason mermaid is: the
+         * renderer reads {@code textContent}, so ordinary escaping is exactly what it
+         * wants. If the script never loads, what stays on screen is the fence body -
+         * readable numbers rather than an empty plate.
+         */
+        private void emitChart(String chartSource) {
+            html.tag("pre", Map.of("class", "mdv-chart"));
+            html.text(chartSource);
+            html.tag("/pre");
+        }
+
         private void emitDiagramPlaceholder(String diagramSource) {
             String id = "mdv-uml-" + (diagrams.size() + 1);
             diagrams.add(new Diagram(id, diagramSource));
@@ -495,6 +511,13 @@ public final class MarkdownService {
             if (PLANTUML_TAGS.contains(tag)) {
                 html.line();
                 emitDiagramPlaceholder(literal);
+                html.line();
+                return;
+            }
+
+            if (CHART_TAGS.contains(tag)) {
+                html.line();
+                emitChart(literal);
                 html.line();
                 return;
             }
