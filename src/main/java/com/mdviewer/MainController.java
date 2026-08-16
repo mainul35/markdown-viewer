@@ -39,6 +39,7 @@ import javafx.stage.Stage;
 import javafx.util.Duration;
 import com.mdviewer.service.DiagramService;
 import com.mdviewer.service.ImageRef;
+import com.mdviewer.service.ChartData;
 import com.mdviewer.service.MarkdownService;
 import com.mdviewer.service.SourceEdits;
 import com.mdviewer.service.TableSource;
@@ -48,6 +49,7 @@ import com.mdviewer.ai.AiPanel;
 import com.mdviewer.service.Trash;
 import com.mdviewer.ui.DocumentView;
 import com.mdviewer.ui.FileTreePanel;
+import com.mdviewer.ui.ChartDialog;
 import com.mdviewer.ui.CropDialog;
 import com.mdviewer.ui.FindBar;
 import com.mdviewer.ui.MarkdownFiles;
@@ -1751,23 +1753,13 @@ public class MainController {
         }
 
         MenuItem edit = new MenuItem("Edit chart data...");
-        edit.setOnAction(e -> revealChartSource(info));
+        edit.setOnAction(e -> editChartFromMenu(info));
 
         menu.getItems().addAll(change, new SeparatorMenuItem(), edit, copyItem("Copy"));
     }
 
-    /**
-     * Opens the editor on the chart's fence, so its numbers can be changed.
-     *
-     * <p>The chart itself is an SVG - there is nothing in it to click into - so the honest
-     * answer to "edit this" is to show the source it was compiled from and put the caret
-     * in it, rather than invent an editing surface over a picture.
-     */
-    private void revealChartSource(String info) {
-        DocumentView document = activeDocument();
-        if (document == null) {
-            return;
-        }
+    /** Opens the chart editor on whichever chart was right-clicked. */
+    private void editChartFromMenu(String info) {
         String[] parts = info.split(",", 3);
         int start;
         int end;
@@ -1777,15 +1769,55 @@ public class MainController {
         } catch (NumberFormatException e) {
             return;
         }
-        if (currentMode == EditorMode.FULL_PREVIEW) {
-            currentMode = EditorMode.SPLIT;
-            updateLayout();
+        openChartEditor(start, end, previewString(
+                "(function(){var el=window.__mdChartElement;"
+                + "return el ? (el.getAttribute('data-mdc-src') || '') : '';})()"));
+    }
+
+    /**
+     * The chart editor: a form over the fence, rather than the fence as text.
+     *
+     * <p>The grid comes from the renderer's own reading of the source - there is one
+     * parser for this syntax and it is the one that draws the chart, so what the form
+     * shows can never disagree with the picture it was opened from.
+     *
+     * <p>The write-back is guarded the same way an in-place block edit is: the offsets
+     * came from a render, a render can be a moment behind the editor, and writing to a
+     * range that has moved would overwrite whatever is in it now.
+     */
+    private void openChartEditor(int start, int end, String source) {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            return;
         }
-        TextArea editor = document.getEditor();
-        int limit = editor.getLength();
-        editor.selectRange(Math.min(start, limit), Math.min(end, limit));
-        editor.requestFocus();
-        setTransientStatus("Chart source selected - edit the numbers and the chart redraws.");
+        String text = document.getEditor().getText();
+        if (start < 0 || end > text.length() || start >= end) {
+            setTransientStatus("That chart could not be located in the source.");
+            return;
+        }
+        String original = text.substring(start, end);
+        String model = previewString("MdChart.model("
+                + toJsStringLiteral(source == null ? "" : source) + ")");
+        if (model.isEmpty()) {
+            setTransientStatus("The chart could not be read for editing.");
+            return;
+        }
+
+        String fence = ChartDialog.edit(primaryStage, ChartData.fromModel(model));
+        if (fence == null) {
+            return; // Cancelled.
+        }
+
+        String now = document.getEditor().getText();
+        if (end > now.length() || !now.substring(start, end).equals(original)) {
+            setTransientStatus("The document changed while the chart was open; "
+                    + "the edit was not applied.");
+            updatePreview();
+            return;
+        }
+        applyEdit(document, new SourceEdits.Edit(
+                start, end, fence, start, start + fence.length()));
+        setTransientStatus("Chart updated.");
     }
 
     private MenuItem copyItem(String label) {
@@ -2813,6 +2845,21 @@ public class MainController {
             Platform.runLater(() -> updatePreview());
         }
 
+        /**
+         * Opens the chart editor on the fence at {@code [start, end)}.
+         *
+         * <p>The fence is taken apart by the renderer rather than here, so the form and
+         * the picture can never disagree about what the source says; {@code source} is
+         * the text the chart was compiled from, which the page already has.
+         *
+         * <p>Deferred like every other bridge call: this arrives inside a DOM event
+         * handler, and opening a modal dialog from there would block the page's own event
+         * loop while the reader fills it in.
+         */
+        public void editChart(int start, int end, String source) {
+            Platform.runLater(() -> openChartEditor(start, end, source));
+        }
+
         /** The Markdown a rendered block came from, for editing it in place. */
         public String blockSource(int start, int end) {
             DocumentView document = activeDocument();
@@ -3212,28 +3259,9 @@ public class MainController {
             /* A heading's ::after draws an accent bar; under an open editor it reads as
                part of the text being edited. */
             h1.mdv-block-editing::after { display:none; }
-            /* A chart under edit keeps the plate it had a moment ago, so the fence opens
-               where the picture was rather than the picture being replaced by a bare box
-               on the page background. Labelled, because what is on screen is now the
-               source and the reader needs to know that before they start typing. */
-            .mdv-chart-out.mdv-block-editing {
-              position:relative; box-sizing:border-box;
-              padding:32px 12px 10px;
-              background:var(--mdc-plate, var(--stripe));
-              border:1px solid var(--rule); border-left:3px solid var(--accent);
-              border-radius:7px;
-              outline:none;
-            }
-            .mdv-chart-out.mdv-block-editing::before {
-              content:"editing chart - Ctrl+Enter to apply, Esc to cancel";
-              position:absolute; top:9px; left:14px;
-              font-family:var(--mono); font-size:10.5px; font-weight:600;
-              letter-spacing:.1em; text-transform:uppercase; color:var(--accent);
-            }
-            /* The plate variables live on the figure, which the editor has replaced, so
-               the host has to carry them itself while the fence is open. */
-            .mdv-chart-out.mdv-block-editing { --mdc-plate:#EFF3F7; }
-            html[data-theme="dark"] .mdv-chart-out.mdv-block-editing { --mdc-plate:#131C26; }
+            /* A chart is double-clicked to open its editor, so it gets the pointer that
+               says "this opens something" rather than a text caret over a picture. */
+            .mdv-chart-out { cursor:default; }
             /* The editor inherits nothing from the block it replaces - a heading's
                display face at 2.3rem is not what raw Markdown should be typed in. */
             textarea.mdv-block-editor {
@@ -3826,8 +3854,12 @@ public class MainController {
                 try { verdicts = MdChart.describe(source); } catch (e) { verdicts = ''; }
                 window.__mdChartBlock = el.getAttribute('data-md-start') + ','
                     + el.getAttribute('data-md-end') + ',' + verdicts;
+                /* Kept as well as its offsets, so "Edit chart data" can be handed the
+                   source without going back to the document to find it again. */
+                window.__mdChartElement = el;
               } else {
                 window.__mdChartBlock = '';
+                window.__mdChartElement = null;
               }
             });
             window.__mdChartInfo = function () { return window.__mdChartBlock; };
@@ -3896,12 +3928,19 @@ public class MainController {
             }
 
             document.addEventListener('dblclick', function (event) {
-              /* A chart claims the double-click before the cell editor sees it. Its table
-                 view is made of real cells, but they belong to the fence rather than to
-                 the document, and the cell editor would find no source behind them and
-                 quietly do nothing. */
-              if (mdChartHost(event.target)) {
-                mdBeginBlockEdit(event.target);
+              /* A chart claims the double-click before anything else sees it, and opens a
+                 form rather than its own source. Editing the fence as text worked and put
+                 the reader one keystroke from a fence that no longer parses - a misplaced
+                 pipe turns a chart into a paragraph, and the feedback for that is the
+                 chart vanishing. A form cannot produce a fence that does not parse. */
+              var chartHost = mdChartHost(event.target);
+              if (chartHost) {
+                if (window.mdvBridge) {
+                  window.mdvBridge.editChart(
+                      parseInt(chartHost.getAttribute('data-md-start'), 10),
+                      parseInt(chartHost.getAttribute('data-md-end'), 10),
+                      chartHost.getAttribute('data-mdc-src') || '');
+                }
                 return;
               }
               var cell = event.target;
@@ -3957,8 +3996,10 @@ public class MainController {
                  An SVG has nothing to put a caret in, so unlike a paragraph there is no
                  in-place alternative: showing the source is the only way to edit a chart
                  from the preview, which is exactly what a code block already does. */
-              var chart = mdChartHost(el);
-              if (chart) { return chart; }
+              /* A chart is never edited as a block: it opens a form of its own, handled
+                 before this is ever reached. Refused here as well so that no other path
+                 into the block editor can put a fence in a textarea by accident. */
+              if (mdChartHost(el)) { return null; }
 
               while (el && el !== document.body) {
                 /* A table is edited cell by cell and a diagram is not text at all;
@@ -4030,15 +4071,7 @@ public class MainController {
 
               mdAutosize(area);
               area.focus();
-              /* A paragraph is opened to be replaced, so selecting it means the first
-                 thing typed takes over. A chart is opened to have one number changed, and
-                 arriving with the whole fence selected means one keystroke destroys it -
-                 so the caret goes to the end and nothing is selected. */
-              if (block.classList.contains('mdv-chart-out')) {
-                area.setSelectionRange(area.value.length, area.value.length);
-              } else {
-                area.select();
-              }
+              area.select();
             }
 
             function mdEndBlockEdit(block, commit) {

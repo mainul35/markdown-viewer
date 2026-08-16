@@ -29,11 +29,25 @@ public final class PopupTheme {
     }
 
     public static void matchTo(Popup popup, Node anchor) {
-        Scene scene = anchor.getScene();
-        if (scene == null || popup.getScene() == null) {
+        if (popup.getScene() != null) {
+            matchTo(popup.getScene(), anchor);
+        }
+    }
+
+    /**
+     * Dresses {@code target} in the palette {@code anchor} is currently sitting in.
+     *
+     * <p>Used by dialogs as well as popups: a dialog is another window with a scene of its
+     * own, and inherits no more from its owner than a popup does. A modal dialog cannot be
+     * open while the theme is switched - the switch is behind it - so reading the theme
+     * once, as it opens, is the whole of what it needs.
+     */
+    public static void matchTo(Scene target, Node anchor) {
+        Scene scene = anchor == null ? null : anchor.getScene();
+        if (scene == null || target == null) {
             return;
         }
-        popup.getScene().getStylesheets().setAll(scene.getStylesheets());
+        target.getStylesheets().setAll(scene.getStylesheets());
 
         List<String> classes = new ArrayList<>(scene.getRoot().getStyleClass());
         for (Node node = anchor; node != null; node = node.getParent()) {
@@ -44,10 +58,10 @@ public final class PopupTheme {
             }
         }
         // "root" is what the palette is declared on - .root.dark-theme needs both, and a
-        // scene root that has somehow lost it would take the popup's colours down with it.
+        // scene root that has somehow lost it would take the window's colours down with it.
         if (!classes.contains("root")) {
             classes.add(0, "root");
         }
-        popup.getScene().getRoot().getStyleClass().setAll(classes);
+        target.getRoot().getStyleClass().setAll(classes);
     }
 }
