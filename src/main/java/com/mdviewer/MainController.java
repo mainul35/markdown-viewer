@@ -3212,6 +3212,28 @@ public class MainController {
             /* A heading's ::after draws an accent bar; under an open editor it reads as
                part of the text being edited. */
             h1.mdv-block-editing::after { display:none; }
+            /* A chart under edit keeps the plate it had a moment ago, so the fence opens
+               where the picture was rather than the picture being replaced by a bare box
+               on the page background. Labelled, because what is on screen is now the
+               source and the reader needs to know that before they start typing. */
+            .mdv-chart-out.mdv-block-editing {
+              position:relative; box-sizing:border-box;
+              padding:32px 12px 10px;
+              background:var(--mdc-plate, var(--stripe));
+              border:1px solid var(--rule); border-left:3px solid var(--accent);
+              border-radius:7px;
+              outline:none;
+            }
+            .mdv-chart-out.mdv-block-editing::before {
+              content:"editing chart - Ctrl+Enter to apply, Esc to cancel";
+              position:absolute; top:9px; left:14px;
+              font-family:var(--mono); font-size:10.5px; font-weight:600;
+              letter-spacing:.1em; text-transform:uppercase; color:var(--accent);
+            }
+            /* The plate variables live on the figure, which the editor has replaced, so
+               the host has to carry them itself while the fence is open. */
+            .mdv-chart-out.mdv-block-editing { --mdc-plate:#EFF3F7; }
+            html[data-theme="dark"] .mdv-chart-out.mdv-block-editing { --mdc-plate:#131C26; }
             /* The editor inherits nothing from the block it replaces - a heading's
                display face at 2.3rem is not what raw Markdown should be typed in. */
             textarea.mdv-block-editor {
@@ -3874,6 +3896,14 @@ public class MainController {
             }
 
             document.addEventListener('dblclick', function (event) {
+              /* A chart claims the double-click before the cell editor sees it. Its table
+                 view is made of real cells, but they belong to the fence rather than to
+                 the document, and the cell editor would find no source behind them and
+                 quietly do nothing. */
+              if (mdChartHost(event.target)) {
+                mdBeginBlockEdit(event.target);
+                return;
+              }
               var cell = event.target;
               while (cell && cell !== document.body
                      && cell.tagName !== 'TD' && cell.tagName !== 'TH') {
@@ -3885,6 +3915,19 @@ public class MainController {
               }
               mdBeginBlockEdit(event.target);
             });
+
+            /** The compiled chart {@code node} sits inside, if it is inside one. */
+            function mdChartHost(node) {
+              var el = node && node.nodeType === 1 ? node : (node ? node.parentElement : null);
+              while (el && el !== document.body) {
+                if (el.classList && el.classList.contains('mdv-chart-out')
+                    && el.getAttribute('data-md-start')) {
+                  return el;
+                }
+                el = el.parentElement;
+              }
+              return null;
+            }
 
             /* ---- editing any other block in place -------------------------------
                The same idea as a table cell, and simpler: every rendered block already
@@ -3902,6 +3945,21 @@ public class MainController {
 
             function mdEditableBlock(node) {
               var el = node && node.nodeType === 1 ? node : (node ? node.parentElement : null);
+
+              /* A chart is looked for first, and from anywhere inside it.
+
+                 It has to come first because a chart contains a table - its table view -
+                 and the rule below stops at the first table it meets, which would make
+                 double-clicking the numbers underneath a chart do nothing. That table is
+                 generated from the fence and is not in the document at all; the fence is,
+                 and the fence is what opens.
+
+                 An SVG has nothing to put a caret in, so unlike a paragraph there is no
+                 in-place alternative: showing the source is the only way to edit a chart
+                 from the preview, which is exactly what a code block already does. */
+              var chart = mdChartHost(el);
+              if (chart) { return chart; }
+
               while (el && el !== document.body) {
                 /* A table is edited cell by cell and a diagram is not text at all;
                    either would be destroyed by a whole-block replacement. */
@@ -3972,7 +4030,15 @@ public class MainController {
 
               mdAutosize(area);
               area.focus();
-              area.select();
+              /* A paragraph is opened to be replaced, so selecting it means the first
+                 thing typed takes over. A chart is opened to have one number changed, and
+                 arriving with the whole fence selected means one keystroke destroys it -
+                 so the caret goes to the end and nothing is selected. */
+              if (block.classList.contains('mdv-chart-out')) {
+                area.setSelectionRange(area.value.length, area.value.length);
+              } else {
+                area.select();
+              }
             }
 
             function mdEndBlockEdit(block, commit) {
