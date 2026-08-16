@@ -1,10 +1,20 @@
 # AI assistant panel — implementation plan
 
-A collapsible chat panel that reads the document in focus, explores the sources it
-refers to, and proposes a rewrite — shown as a side-by-side diff and merged only on
-approval.
+**The goal, as set out before any of it was built:** a collapsible chat panel that reads
+the document in focus, explores the sources it refers to, and proposes a rewrite — shown
+as a side-by-side diff and merged only on approval.
 
-Branch: `feat/ai-assistant`. Nothing here is built yet; this is the plan for it.
+**What exists today** is the first two thirds of that: a panel that reads the document and
+the sources you name, and answers questions about them. It proposes no rewrite and writes
+nothing. Read this sentence as the description of the product; read the one above it as
+where it was headed.
+
+Branch: `feat/ai-assistant`, merged to `main` and shipped in `1.0.0-release` (2026-08-16).
+
+**Read §10 before §1–§6.** Sections 1 to 6 are the plan as written before any of it
+existed, kept because the reasoning is still worth having. Several parts were built
+differently, and the headline — a proposed rewrite shown as a diff — was **not built at
+all**. §10 records what shipped, what did not, and where the design changed under use.
 
 ---
 
@@ -165,15 +175,17 @@ Nothing is written to disk by the assistant. It proposes; the existing save path
 
 ## 7. Phases
 
-| Phase | Scope | Ships something useful? |
+| Phase | Scope | State |
 |---|---|---|
-| 1 | **Done.** Collapsible panel (`View → Show Assistant`, Shift+Ctrl+A), provider config, allowlist, streaming chat that can see the open document. No file reads, no writes. | Yes — a chat that can see the document |
-| 2 | Context gathering from links, whole-document rewrite, side-by-side diff, approve/reject | Yes — the actual feature |
-| 3 | Per-hunk approval, remote providers with explicit opt-in, exclude lists | Refinement |
-| 4 | Conversation history per document, cancel mid-stream, token accounting | Polish |
+| 1 | Collapsible panel, provider config, allowlist, streaming chat that can see the open document | **Shipped** in `1.0.0-release` |
+| 1b | Context gathering — paths, URLs and workspace files named in a *question*; whole-project scan; sources listed with what was skipped | **Shipped.** Not in the original plan in this form; see §10.2 |
+| 2 | Whole-document rewrite, side-by-side diff, approve/reject | **Not started.** Still the largest unbuilt piece |
+| 3 | Per-hunk approval, exclude lists | Not started |
+| 3b | Provider and model configuration from Settings, host allowed from the panel | **Shipped.** Pulled forward from phase 3; see §10.3 |
+| 4 | Conversation per document, cancel mid-stream | **Shipped.** Token accounting not done |
 
-Phase 1 and 2 are each roughly the size of everything done in this session so far. This
-is not a one-sitting feature and should not be attempted as one.
+The estimate below held. Phase 1 plus the context work was about forty commits, and phase
+2 remains roughly the same size again.
 
 ---
 
@@ -204,3 +216,118 @@ is not a one-sitting feature and should not be attempted as one.
 | Model invents paths or commands | System prompt forbids it, and the diff makes an invention visible as an added line |
 | A large workspace blows the context window | Per-file and total caps, both shown before sending |
 | Streaming on the FX thread | HTTP on a background thread; tokens appended via `Platform.runLater`, the pattern the workspace sync already uses |
+
+---
+
+## 10. What shipped — and where this plan was wrong
+
+Appended per the operational protocol in `project_plan.md` §3 rather than rewriting
+§1–§6, so the original reasoning stays readable next to what came of it.
+
+### 10.1 The headline feature was not built
+
+**Overwrites Feature #1 (§1, §4, §6) — not implemented as of `ce29293`.**
+
+§1 says the panel's primary product is a proposed rewrite and that "chat is how you steer
+it, not what it produces". That is still unbuilt. What shipped is the thing §1 dismissed:
+a conversation. It summarises a document and answers questions about it, reading sources
+when you name them.
+
+This matters beyond the plan, because the claim leaked. The project website was written
+saying MDViewer reads the repository a document describes and tells you which paragraphs
+have gone stale. It does not, and that copy was corrected. **The tool answers when asked;
+it does not check documentation on its own.** Anything written about it — README, site,
+release notes — has to say the second thing.
+
+Phase 2 remains worth building, and §6's design still looks right: a whole-document reply,
+diffed locally, applied through the existing edit path so Ctrl+Z reverts it in one step.
+
+### 10.2 Context gathering grew well past "what the document links to"
+
+**Overwrites Feature #5 (§5) and Question 3 (§8).** Commits `c9ad9e6`, `8828096`,
+`6da6cc1`, `6ab0694`.
+
+§5 planned to follow links found *in the document*. §8 answered "may it read files the
+document does not reference?" with a flat **no**, on the grounds that following only what
+the document points at makes the job well defined.
+
+Use said otherwise, immediately. The first real question was "analyse the codebase at
+`C:\...\vsd-auth-server`", which the document did not link to and the plan therefore
+refused to read. What shipped reads:
+
+- absolute paths and URLs named **in the question** — you typed it, in a message asking
+  about it, which is consent;
+- files named by name in the question, resolved against the open workspace — "does
+  `PLAN.md` agree with this?" should not require typing a full path;
+- relative paths found in the document, as originally planned;
+- optionally, **every file in a project**, in as many passes as it takes.
+
+The workspace is still the boundary for anything not typed out in full, so §8's fourth
+answer holds. What changed is that the *question* is now a source of consent, not only the
+document.
+
+§5 also says the user "sees exactly what is about to be sent, as a list, and can drop
+entries from it". Only half shipped: the list is shown **after** the answer, folded away,
+and entries cannot be dropped. Reviewing a list of forty files before every question would
+be worse than the problem it solves, but the "drop an entry" idea is still open.
+
+### 10.3 One provider became nine, and the allowlist grew a way in
+
+**Extends Feature #2 (§2) and Feature #3 (§3).** Commits `81cb941`, `79ab715`, `ce29293`.
+
+§2 decided on two self-hosted endpoints. Nine now ship configured — OpenAI, Ollama local
+and cloud, Groq, OpenRouter, Mistral, DeepSeek alongside the original two — all speaking
+the same OpenAI-compatible shape, so this cost nothing but configuration.
+
+The allowlist rule is unchanged and is the reason that was safe: a provider being listed
+is not permission to send anything to it. What changed is that agreeing is now possible
+from inside the app, through a dialog that names the host and says what goes there.
+Refusing with no way forward taught people to make the file permissive in advance, which
+is the opposite of what an allowlist is for.
+
+**Settings → AI Providers** also configures address, model and key per provider — pulled
+forward from phase 3 because a picker offering nine providers and no way to set one up is
+half a feature.
+
+Anthropic and Bedrock are still absent, now deliberately and with the reason recorded in
+`ai.properties`: Anthropic is `/v1/messages` with a different envelope and an `x-api-key`
+header, Bedrock signs with AWS SigV4. Neither is a base URL away.
+
+### 10.4 Shapes that differ from §3 and §4
+
+- **No `AiProvider` interface.** `ChatProvider` is one final class with a blocking
+  `stream(...)` called from a background thread. An interface with one implementation is a
+  guess about the second; add it when Anthropic actually arrives.
+- **No `src/main/resources/ai/system-prompt.md`.** The prompts live in Java, next to the
+  code that assembles them, because they are built from parts — evidence labels, the
+  project map, budget notes — rather than being one editable block. The trade is real:
+  changing wording needs a rebuild.
+- **The prompt's job changed.** §4 was written for a rewriter: "return the complete revised
+  document". What shipped instructs an answerer instead — cite the file behind each claim,
+  distinguish a `DOCUMENT` stating intent from `CODE` stating behaviour, and say plainly
+  what could not be checked. Every one of those rules exists because an answer got
+  something wrong first.
+
+### 10.5 What the plan did not anticipate at all
+
+- **A context window is a hard wall, and overrunning it is silent.** An oversized request
+  is not refused; it is truncated from the front, which removes the instructions and leaves
+  the model holding files it no longer knows what to do with. Everything sent is bounded
+  together now, not just the sources.
+- **A budget is a choice about what to leave out.** Ordering by relevance let one package
+  take 41% of it; ordering by folder gave a stylesheet the same standing as the schema.
+  What shipped reserves part for breadth and spends the rest on relevance.
+- **A project too large for one request needs a shared vocabulary between passes.** The
+  project map — every file's declarations, extracted locally — is what lets a pass name
+  something defined in a part it was never given.
+
+### 10.6 Still open
+
+1. **Phase 2**: whole-document rewrite, side-by-side diff, approve/reject.
+2. **Token accounting.** Budgets are in characters, converted at a rule-of-thumb four per
+   token. A real count would let the ceiling be the model's rather than a guess.
+3. **Per-workspace exclude lists** (§9), never built.
+4. **Dropping entries from the source list** before sending (§5).
+5. **The harnesses.** The assistant's checks — 337 across fifteen JavaFX harnesses — live
+   in a scratchpad, not in `src/test`. Two of them read a private checkout that exists on
+   one machine.
