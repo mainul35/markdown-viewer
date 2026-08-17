@@ -5,11 +5,14 @@ import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
 import javafx.scene.control.TextField;
+import javafx.scene.control.ToggleGroup;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -117,6 +120,11 @@ public final class CloudSyncDialog {
             try {
                 SyncState state = SyncState.forWorkspace(root);
                 runner = new SyncRunner(root, config.client(), state, this::status);
+                if (!state.isEnrolled()) {
+                    List<CloudClient.WorkspaceSummary> existing = config.client().workspaces();
+                    Platform.runLater(() -> askWhichWorkspace(existing));
+                    return;
+                }
                 SyncRunner.Proposal planned = runner.plan();
                 Platform.runLater(() -> showPlan(planned));
             } catch (IOException | RuntimeException e) {
@@ -125,6 +133,122 @@ public final class CloudSyncDialog {
         }, "cloud-sync-plan");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * The one question that cannot be inferred: which cloud workspace is this folder?
+     *
+     * <p>Both answers are offered plainly, because both are legitimate. Linking to one that
+     * already has documents is a merge - the same folder from another machine, or two
+     * folders being deliberately brought together - and creating a new one keeps them apart.
+     * A name cannot tell those cases apart, which is why this is asked once rather than
+     * guessed every time.
+     */
+    private void askWhichWorkspace(List<CloudClient.WorkspaceSummary> existing) {
+        busy(false);
+        changes.getChildren().clear();
+        headline.setText("Which cloud workspace is this folder?");
+        detail.setText("This folder is not linked yet. " + root
+                + "\n\nNothing has been sent or received, and nothing will be until you "
+                + "choose here and then approve the plan on the next screen.");
+
+        ToggleGroup choice = new ToggleGroup();
+
+        RadioButton linkChoice = new RadioButton("Join one I already have - the documents in "
+                + "it come down here, and mine go up");
+        linkChoice.setToggleGroup(choice);
+        linkChoice.setWrapText(true);
+        ComboBox<CloudClient.WorkspaceSummary> picker = new ComboBox<>();
+        picker.getItems().addAll(existing);
+        picker.setMaxWidth(Double.MAX_VALUE);
+        if (!existing.isEmpty()) {
+            picker.getSelectionModel().select(0);
+        }
+        linkChoice.setDisable(existing.isEmpty());
+        picker.setDisable(existing.isEmpty());
+
+        RadioButton createChoice = new RadioButton("Keep it separate, as a new workspace called");
+        createChoice.setToggleGroup(choice);
+        createChoice.setWrapText(true);
+        TextField name = new TextField(runner.suggestedName());
+        name.setMaxWidth(Double.MAX_VALUE);
+
+        // Separate by default. Of the two wrong answers, an extra workspace costs a rename
+        // and a merge of two unrelated folders costs an afternoon of untangling documents.
+        createChoice.setSelected(true);
+
+        Runnable sync = () -> {
+            boolean linking = linkChoice.isSelected();
+            picker.setDisable(!linking || existing.isEmpty());
+            name.setDisable(linking);
+        };
+        linkChoice.setOnAction(e -> sync.run());
+        createChoice.setOnAction(e -> sync.run());
+        sync.run();
+
+        VBox form = new VBox(6, linkChoice, indent(picker), createChoice, indent(name));
+        form.setPadding(new Insets(6, 2, 2, 2));
+        changes.getChildren().add(form);
+
+        if (existing.isEmpty()) {
+            Label none = new Label("You have no cloud workspaces yet, so this will be the first.");
+            none.getStyleClass().add("cloud-sync-detail");
+            changes.getChildren().add(none);
+        }
+
+        apply.setText("Continue");
+        apply.setDisable(false);
+        apply.setOnAction(e -> {
+            apply.setDisable(true);
+            busy(true);
+            boolean linking = linkChoice.isSelected();
+            CloudClient.WorkspaceSummary chosen = picker.getValue();
+            String wanted = name.getText().trim();
+            Thread worker = new Thread(() -> {
+                try {
+                    if (linking && chosen != null) {
+                        runner.link(chosen.id());
+                    } else {
+                        runner.createAndLink(wanted.isEmpty() ? runner.suggestedName() : wanted);
+                    }
+                    SyncRunner.Proposal planned = runner.plan();
+                    Platform.runLater(() -> {
+                        apply.setText("Apply");
+                        apply.setOnAction(ev -> startApply());
+                        showPlan(planned);
+                    });
+                } catch (IOException | RuntimeException e2) {
+                    Platform.runLater(() -> nameProblem(e2, existing));
+                }
+            }, "cloud-sync-enrol");
+            worker.setDaemon(true);
+            worker.start();
+        });
+    }
+
+    /**
+     * The name was taken.
+     *
+     * <p>Which is a fork rather than a failure, so the two ways on are restated with the
+     * question still on screen instead of being replaced by an error.
+     */
+    private void nameProblem(Throwable e, List<CloudClient.WorkspaceSummary> existing) {
+        boolean taken = e instanceof CloudClient.SyncException sync
+                && "workspace_name_taken".equals(sync.code);
+        if (!taken) {
+            failed("Could not link this folder", e);
+            return;
+        }
+        askWhichWorkspace(existing);
+        detail.setText(e.getMessage()
+                + "\n\nJoin it above if it is the same folder from another machine, or "
+                + "give this one a different name.");
+    }
+
+    private static Region indent(Region node) {
+        VBox holder = new VBox(node);
+        holder.setPadding(new Insets(0, 0, 4, 26));
+        return holder;
     }
 
     private void showPlan(SyncRunner.Proposal planned) {
