@@ -90,6 +90,7 @@
                 -->
                 <Menu text="Settings">
                     <MenuItem text="AI Providers..." onAction="#handleProviderSettings"/>
+                    <MenuItem text="Cloud Sync..." onAction="#handleCloudSync"/>
                     <SeparatorMenuItem/>
                     <CheckMenuItem fx:id="autoRefreshMenuItem" text="Auto-refresh Workspaces (5 min)" selected="true" onAction="#handleToggleAutoRefresh"/>
                 </Menu>

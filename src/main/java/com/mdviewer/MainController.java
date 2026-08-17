@@ -1018,6 +1018,34 @@ public class MainController {
         }
     }
 
+    /**
+     * Syncs the active workspace folder, after showing what that would do.
+     *
+     * <p>Per workspace, never per document and never for everything open at once: a
+     * workspace is the unit someone decided to put in the cloud, and the folder currently
+     * in front of them is the only one they can be said to have asked about.
+     */
+    @FXML
+    private void handleCloudSync() {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        if (!config.isEnabled()) {
+            setTransientStatus("Cloud sync is off. Turn it on in "
+                    + System.getProperty("user.home") + "\\.mdviewer\\cloud.properties");
+            return;
+        }
+        WorkspaceView workspace = activeWorkspace();
+        Path root = workspace == null ? null : workspace.getRoot();
+        if (root == null) {
+            setTransientStatus("Open a folder before syncing - a workspace is what syncs, "
+                    + "not a single document.");
+            return;
+        }
+        com.mdviewer.sync.CloudSyncDialog.open(primaryStage, root, config);
+        // A sync can add, change or remove files under the workspace, so the tree on screen
+        // is out of date by definition once it finishes.
+        handleRefreshWorkspaces();
+    }
+
     @FXML
     private void handleToggleAssistant() {
         showAssistant(!isAssistantVisible());
