@@ -58,19 +58,59 @@ public final class SyncRunner {
     public record Outcome(long revision, int uploaded, int downloaded, int deletedLocally,
                           int deletedRemotely, List<String> conflictFiles) { }
 
+    /**
+     * Plans a sync for a folder that is already linked to a cloud workspace.
+     *
+     * <p>Enrolment is not done here, and that is the point. Deciding which cloud workspace
+     * a folder belongs to is the one question this code cannot answer: a folder called
+     * {@code docs} might be the same one from another machine, or an unrelated project that
+     * happens to share a name, and joining the wrong one merges two sets of documents that
+     * were never meant to meet. The reader answers it once, in the dialog, and it is
+     * remembered.
+     *
+     * @throws NotEnrolledException if the folder has not been linked yet
+     */
     public Proposal plan() throws IOException {
+        if (!state.isEnrolled()) {
+            throw new NotEnrolledException();
+        }
         progress.accept("Reading the workspace...");
         lastScan = WorkspaceScanner.scan(root);
-
-        if (!state.isEnrolled()) {
-            progress.accept("Enrolling this workspace...");
-            state.enrol(cloud.createWorkspace(root.getFileName().toString()));
-        }
 
         progress.accept("Asking " + cloud.host() + " what would change...");
         CloudClient.Plan plan = cloud.plan(state.workspaceId(), state.revision(),
                 state.base(), lastScan.files());
         return new Proposal(lastScan, plan);
+    }
+
+    /**
+     * Links this folder to a cloud workspace and remembers it.
+     *
+     * <p>Linking to one that already has documents is a merge, and an intended one: the
+     * next plan offers everything in it as a download and everything here as an upload, so
+     * the two sets join. Nothing is overwritten - anything that differs on both sides comes
+     * through as a conflict with both versions kept.
+     */
+    public void link(String workspaceId) {
+        state.enrol(workspaceId);
+    }
+
+    /** Creates a new cloud workspace under {@code name} and links this folder to it. */
+    public String createAndLink(String name) throws IOException {
+        String id = cloud.createWorkspace(name);
+        state.enrol(id);
+        return id;
+    }
+
+    /** The folder's own name, offered as the default when creating a workspace. */
+    public String suggestedName() {
+        return root.getFileName().toString();
+    }
+
+    public static class NotEnrolledException extends IOException {
+        public NotEnrolledException() {
+            super("this folder is not linked to a cloud workspace yet");
+        }
     }
 
     /**

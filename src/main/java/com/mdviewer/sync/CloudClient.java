@@ -52,6 +52,41 @@ public final class CloudClient {
 
     // ---------------------------------------------------------------- requests
 
+    /** One of the account's cloud workspaces, as a link target. */
+    public record WorkspaceSummary(String id, String name, long revision, int fileCount) {
+
+        @Override
+        public String toString() {
+            return name + "  (" + fileCount + (fileCount == 1 ? " document" : " documents") + ")";
+        }
+    }
+
+    /**
+     * Everything this account already has in the cloud.
+     *
+     * <p>Offered as the alternative to creating a new one. Joining an existing workspace is
+     * a perfectly ordinary thing to want - the same folder on a second machine, or two
+     * folders being deliberately consolidated - and it is only dangerous when it happens by
+     * accident.
+     */
+    public List<WorkspaceSummary> workspaces() throws IOException {
+        String response = send("GET", "/api/v1/workspaces", null, null);
+        List<WorkspaceSummary> out = new ArrayList<>();
+        for (String object : objects(stripArray(response))) {
+            out.add(new WorkspaceSummary(string(object, "id"), string(object, "name"),
+                    number(object, "revision"), (int) number(object, "fileCount")));
+        }
+        return out;
+    }
+
+    /**
+     * Creates a workspace.
+     *
+     * @throws SyncException with {@code code} {@code workspace_name_taken} when the account
+     *         already has one by that name. The server refuses rather than joining, because
+     *         a name cannot tell "my folder on another machine" from "a different folder
+     *         that happens to be called docs".
+     */
     public String createWorkspace(String name) throws IOException {
         String body = "{\"name\":" + quote(name) + "}";
         String response = send("POST", "/api/v1/workspaces", body, "application/json");
@@ -313,6 +348,15 @@ public final class CloudClient {
 
     private static int indexOfField(String json, String field) {
         return json == null ? -1 : json.indexOf("\"" + field + "\"");
+    }
+
+    /** The body of a response that is itself an array, rather than an object with one in it. */
+    static String stripArray(String json) {
+        String trimmed = json == null ? "" : json.trim();
+        if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+            return trimmed.substring(1, trimmed.length() - 1);
+        }
+        return trimmed;
     }
 
     /** The bracketed body of a named array. */
