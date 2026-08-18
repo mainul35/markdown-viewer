@@ -32,6 +32,7 @@ public final class CloudClient {
 
     private final String base;
     private final Authorization authorization;
+    private final DeviceIdentity device = new DeviceIdentity();
 
     /**
      * Where the bearer token comes from, and how to get a fresh one.
@@ -189,7 +190,15 @@ public final class CloudClient {
     private HttpRequest.Builder base(String path) throws IOException {
         return HttpRequest.newBuilder(URI.create(base + path))
                 .timeout(Duration.ofSeconds(60))
-                .header("Authorization", "Bearer " + authorization.token());
+                .header("Authorization", "Bearer " + authorization.token())
+                /*
+                 * Which machine this is, so the account can withdraw this one and leave the
+                 * others alone. Not a credential - it names the machine, the token
+                 * authenticates it - and the label is sent so the list is readable by
+                 * whoever has to decide.
+                 */
+                .header("X-MDViewer-Device", device.id())
+                .header("X-MDViewer-Device-Label", device.label());
     }
 
     private String send(String method, String path, String body, String contentType)
