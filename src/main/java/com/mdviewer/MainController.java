@@ -1046,6 +1046,83 @@ public class MainController {
         handleRefreshWorkspaces();
     }
 
+    /**
+     * Sends this machine's AI settings to the account, and takes back what is there.
+     *
+     * <p>Its own action rather than part of a workspace sync, because settings belong to
+     * the account and workspaces do not - folding them together would mean the reader's
+     * provider configuration changed as a side effect of syncing some documents.
+     *
+     * <p>Credentials are removed before anything is sent, and what was held back is named
+     * in the result: a decision the reader is told about rather than a surprise waiting on
+     * the other machine.
+     */
+    @FXML
+    private void handleCloudSettingsSync() {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        if (!config.isEnabled()) {
+            setTransientStatus("Cloud sync is off. Turn it on in "
+                    + System.getProperty("user.home") + "\\.mdviewer\\cloud.properties");
+            return;
+        }
+
+        Thread worker = new Thread(() -> {
+            String summary;
+            try {
+                com.mdviewer.sync.CloudClient cloud = config.client();
+                com.mdviewer.sync.SettingsSync settings = new com.mdviewer.sync.SettingsSync();
+
+                /* Down first, then up. Taking what is there before sending means another
+                   machine's additions survive; sending first would overwrite them with
+                   whatever this machine happened to hold. */
+                com.mdviewer.sync.SettingsSync.Incoming incoming =
+                        settings.apply(cloud.getSettings());
+                com.mdviewer.sync.SettingsSync.Outgoing outgoing = settings.outgoing();
+                cloud.putSettings(outgoing.json());
+
+                StringBuilder said = new StringBuilder();
+                said.append("Settings synced with ").append(cloud.host()).append(".")
+                        .append(System.lineSeparator()).append(System.lineSeparator());
+                said.append(incoming.added()).append(" added, ")
+                        .append(incoming.changed()).append(" changed on this machine.")
+                        .append(System.lineSeparator());
+                if (!outgoing.withheld().isEmpty()) {
+                    said.append(System.lineSeparator())
+                            .append("Kept on this machine, as always:")
+                            .append(System.lineSeparator());
+                    for (String name : outgoing.withheld()) {
+                        said.append("    ").append(name).append(System.lineSeparator());
+                    }
+                    said.append(System.lineSeparator())
+                            .append("Another machine will ask for these once.");
+                }
+                summary = said.toString();
+            } catch (Exception e) {
+                summary = "Settings were not synced."
+                        + System.lineSeparator() + System.lineSeparator()
+                        + (e.getMessage() == null ? e.toString() : e.getMessage());
+            }
+            final String message = summary;
+            javafx.application.Platform.runLater(() -> {
+                Alert done = new Alert(Alert.AlertType.INFORMATION);
+                done.initOwner(primaryStage);
+                done.setTitle("Cloud settings");
+                done.setHeaderText(null);
+                done.getDialogPane().setMinWidth(460);
+                done.setContentText(message);
+                done.showAndWait();
+                // The assistant's picker is built from the config, so it has to be rebuilt
+                // when the config has changed underneath it.
+                if (aiPanel != null) {
+                    aiPanel.refreshProviders();
+                }
+            });
+        }, "cloud-settings-sync");
+        worker.setDaemon(true);
+        worker.start();
+        setTransientStatus("Syncing settings...");
+    }
+
     @FXML
     private void handleToggleAssistant() {
         showAssistant(!isAssistantVisible());
