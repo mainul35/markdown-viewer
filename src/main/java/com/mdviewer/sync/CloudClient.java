@@ -31,7 +31,23 @@ public final class CloudClient {
             .build();
 
     private final String base;
-    private final String subject;
+    private final Authorization authorization;
+
+    /**
+     * Where the bearer token comes from, and how to get a fresh one.
+     *
+     * <p>An interface rather than a token, because a token is a value that goes stale
+     * during a long sync and this has to be able to ask for another halfway through
+     * uploading forty documents.
+     */
+    public interface Authorization {
+
+        /** A token good for the request about to be made. */
+        String token() throws IOException;
+
+        /** A new token after one was refused, or a failure saying the reader must sign in. */
+        String renew() throws IOException;
+    }
 
     /** What the server says about a path, mirrored from its plan response. */
     public record Change(String path, String action, String localHash, String remoteHash,
@@ -41,9 +57,9 @@ public final class CloudClient {
                        long bytesToUpload, boolean fitsInQuota, boolean needsAttention,
                        long usedBytes, long limitBytes, String tier) { }
 
-    public CloudClient(String base, String subject) {
+    public CloudClient(String base, Authorization authorization) {
         this.base = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
-        this.subject = subject;
+        this.authorization = authorization;
     }
 
     public String host() {
@@ -170,12 +186,10 @@ public final class CloudClient {
 
     // ------------------------------------------------------------------ plumbing
 
-    private HttpRequest.Builder base(String path) {
+    private HttpRequest.Builder base(String path) throws IOException {
         return HttpRequest.newBuilder(URI.create(base + path))
                 .timeout(Duration.ofSeconds(60))
-                // Development identity. The server refuses to honour this outside its own
-                // dev profile; a bearer token replaces it once sign-in is wired up.
-                .header("X-Dev-Subject", subject);
+                .header("Authorization", "Bearer " + authorization.token());
     }
 
     private String send(String method, String path, String body, String contentType)
@@ -195,7 +209,32 @@ public final class CloudClient {
         return response.body();
     }
 
+    /**
+     * One request, and a second one if the first was refused.
+     *
+     * <p>A token can stop being accepted before it expires - the session ended elsewhere,
+     * a key rotated - and a sync that is halfway through uploading is the worst moment to
+     * give up over something a single request can fix. Exactly one retry: if a freshly
+     * issued token is refused too, the problem is not staleness and trying again would only
+     * turn one failure into a loop.
+     *
+     * <p>{@code renew} raises {@code NotSignedIn} when there is nothing left to try, which
+     * is what tells the caller to offer a sign-in rather than report a fault.
+     */
     private <T> HttpResponse<T> exchange(HttpRequest request, HttpResponse.BodyHandler<T> handler)
+            throws IOException {
+        HttpResponse<T> response = once(request, handler);
+        if (response.statusCode() != 401) {
+            return response;
+        }
+        String renewed = authorization.renew();
+        return once(HttpRequest.newBuilder(request,
+                        (name, value) -> !name.equalsIgnoreCase("Authorization"))
+                .header("Authorization", "Bearer " + renewed)
+                .build(), handler);
+    }
+
+    private <T> HttpResponse<T> once(HttpRequest request, HttpResponse.BodyHandler<T> handler)
             throws IOException {
         try {
             return http.send(request, handler);

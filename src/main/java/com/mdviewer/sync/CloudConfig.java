@@ -19,10 +19,16 @@ import java.util.Properties;
  */
 public final class CloudConfig {
 
-    private static final String DEFAULT_ENDPOINT = "http://localhost:8081";
+    private static final String DEFAULT_ENDPOINT = "http://localhost:8090";
+    private static final String DEFAULT_ISSUER = "https://vsdauthserver.visualsitedesigner.com";
+    private static final String DEFAULT_CLIENT = "mdviewer-mdviewer-desktop-client";
+
+    private static CloudSession shared;
+    private static String sharedFor;
 
     private final Path file;
     private final Properties properties = new Properties();
+
 
     public CloudConfig() {
         this(Path.of(System.getProperty("user.home", "."), ".mdviewer", "cloud.properties"));
@@ -41,25 +47,47 @@ public final class CloudConfig {
         return properties.getProperty("cloud.endpoint", DEFAULT_ENDPOINT).trim();
     }
 
+    /** The authorization server that issues the tokens the cloud API verifies. */
+    public String issuer() {
+        return properties.getProperty("cloud.issuer", DEFAULT_ISSUER).trim();
+    }
+
+    /** This application, as vsd-auth-server knows it. Public: a desktop client has no secret. */
+    public String clientId() {
+        return properties.getProperty("cloud.clientId", DEFAULT_CLIENT).trim();
+    }
+
     /**
-     * The identity sent with each request.
+     * The sign-in, made once for the whole application.
      *
-     * <p>A development subject for now. When sign-in against vsd-auth-server is wired up
-     * this becomes a token and no caller changes - which is the reason it is behind a
-     * method rather than read from the file at each use.
+     * <p>Held statically rather than per instance because the menu actions each read a
+     * fresh {@code CloudConfig}, and a session per instance would mean a token refreshed
+     * for one action being unknown to the next - a round trip to the authorization server
+     * for every sync, and a "signed in" state that appears to come and go.
+     *
+     * <p>Rebuilt if the file now names a different authorization server, so changing it
+     * does not leave a session bound to the old one.
      */
-    public String subject() {
-        return properties.getProperty("cloud.subject", System.getProperty("user.name", "desktop"));
+    public static synchronized CloudSession session(String issuer, String clientId) {
+        String key = issuer + " " + clientId;
+        if (shared == null || !key.equals(sharedFor)) {
+            shared = new CloudSession(issuer, clientId);
+            sharedFor = key;
+        }
+        return shared;
+    }
+
+    public CloudSession session() {
+        return session(issuer(), clientId());
     }
 
     public CloudClient client() {
-        return new CloudClient(endpoint(), subject());
+        return new CloudClient(endpoint(), session());
     }
 
-    public void set(boolean enabled, String endpoint, String subject) throws IOException {
+    public void set(boolean enabled, String endpoint) throws IOException {
         properties.setProperty("cloud.enabled", String.valueOf(enabled));
         properties.setProperty("cloud.endpoint", endpoint);
-        properties.setProperty("cloud.subject", subject);
         save();
     }
 
