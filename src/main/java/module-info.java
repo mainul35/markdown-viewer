@@ -12,6 +12,8 @@ module com.mdviewer {
     requires jdk.jsobject;
     // HttpClient, for the assistant's streaming calls. In the JDK, so no dependency.
     requires java.net.http;
+    // The loopback listener that receives the OAuth redirect at sign-in. Also in the JDK.
+    requires jdk.httpserver;
 
     opens com.mdviewer to javafx.fxml;
     exports com.mdviewer;
