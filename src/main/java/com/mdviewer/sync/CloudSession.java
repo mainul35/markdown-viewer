@@ -125,7 +125,8 @@ public final class CloudSession implements CloudClient.Authorization {
      */
     public static class NotSignedIn extends IOException {
         public NotSignedIn() {
-            super("You are not signed in to the cloud. Use Cloud > Sign In to continue.");
+            super("You are not signed in to the cloud. "
+                    + "Use Settings > Sign In to Cloud, then try again.");
         }
     }
 }

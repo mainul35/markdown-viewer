@@ -1025,6 +1025,82 @@ public class MainController {
      * workspace is the unit someone decided to put in the cloud, and the folder currently
      * in front of them is the only one they can be said to have asked about.
      */
+    /**
+     * Signs in to the cloud, in the reader's own browser.
+     *
+     * <p>The browser rather than a window inside MDViewer, and that is the point: the
+     * password goes to the authorization server the reader can see the address of, and this
+     * application never has the chance to read it. A sign-in page drawn inside an
+     * application asks to be trusted; one in the browser can be checked.
+     */
+    @FXML
+    private void handleCloudSignIn() {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        com.mdviewer.sync.CloudSession session = config.session();
+
+        setTransientStatus("Opening " + config.issuer() + " in your browser...");
+
+        Thread worker = new Thread(() -> {
+            String message;
+            try {
+                String missing = session.signIn(uri ->
+                        javafx.application.Platform.runLater(() ->
+                                hostServices.showDocument(uri.toString())));
+
+                String account = session.account();
+                message = "Signed in" + (account.isBlank() ? "" : " as " + account) + ".";
+                if (!missing.isBlank()) {
+                    /*
+                     * Authenticated but not entitled. Worth saying here rather than letting
+                     * it surface as a 403 during a sync, where it looks like the sync is
+                     * broken rather than the grant being absent.
+                     */
+                    message += System.lineSeparator() + System.lineSeparator()
+                            + "This account did not receive: " + missing
+                            + System.lineSeparator()
+                            + "Sync will be refused until those are granted to the MDViewer "
+                            + "application in the authorization server.";
+                }
+            } catch (Exception e) {
+                message = "Not signed in."
+                        + System.lineSeparator() + System.lineSeparator()
+                        + (e.getMessage() == null ? e.toString() : e.getMessage());
+            }
+            final String said = message;
+            javafx.application.Platform.runLater(() -> {
+                Alert done = new Alert(Alert.AlertType.INFORMATION);
+                done.initOwner(primaryStage);
+                done.setTitle("Cloud sign-in");
+                done.setHeaderText(null);
+                done.getDialogPane().setMinWidth(460);
+                done.setContentText(said);
+                done.showAndWait();
+            });
+        }, "cloud-sign-in");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Forgets the sign-in on this machine.
+     *
+     * <p>Local only, and said so in the dialog. Other machines keep theirs, and anything
+     * already in the cloud stays there - signing out of a reader is not a way to withdraw
+     * documents, and it would be a poor thing to let someone believe it was.
+     */
+    @FXML
+    private void handleCloudSignOut() {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        try {
+            config.session().signOut();
+            setTransientStatus("Signed out on this machine. Documents already in the cloud "
+                    + "are untouched.");
+        } catch (Exception e) {
+            setTransientStatus("Could not sign out - "
+                    + (e.getMessage() == null ? e.toString() : e.getMessage()));
+        }
+    }
+
     @FXML
     private void handleCloudSync() {
         com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
