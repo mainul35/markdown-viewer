@@ -35,8 +35,11 @@ import java.util.Set;
  * code is storing nothing and signing in every launch, which people come to resent and
  * then work around. This is the middle one, chosen deliberately. Only the refresh token is
  * kept - the access token lives in memory and is worth minutes.
+ *
+ * <p>Not final; see the note on {@link SignIn}. Standing in for storage is how the
+ * difference between "the server refused you" and "the disk refused us" is held in place.
  */
-public final class TokenStore {
+public class TokenStore {
 
     private static final int ITERATIONS = 210_000;
     private static final int SALT_BYTES = 16;

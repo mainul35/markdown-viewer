@@ -95,21 +95,51 @@ public final class CloudSession implements CloudClient.Authorization {
         if (refreshToken.isBlank()) {
             throw new NotSignedIn();
         }
+        Tokens fresh;
         try {
-            remember(signIn.refresh(refreshToken));
-            return tokens.accessToken();
+            fresh = signIn.refresh(refreshToken);
         } catch (IOException e) {
             /*
              * A refresh token the server will not honour is the ordinary end of a session,
              * not a fault. Clearing it means the next launch offers a sign-in rather than
              * failing the same way again with a stored value that cannot work.
+             *
+             * Only a refusal from the authorization server reaches here. Writing the new
+             * token to disk used to be inside this try, so a full disk or a read-only
+             * ~/.mdviewer was treated as a rejected session: the reader was signed out and
+             * a perfectly good refresh token deleted, over something that had nothing to do
+             * with their credentials.
              */
             tokens = null;
             store.clear();
             throw new NotSignedIn();
         }
+
+        this.tokens = fresh;
+        if (fresh.canRefresh()) {
+            try {
+                store.write(fresh.refreshToken());
+            } catch (IOException e) {
+                /*
+                 * The session is alive and stays alive - it just will not survive a restart.
+                 * Said once, on the stream, rather than raised: interrupting a sync to
+                 * report that a future launch may need signing in again would be the wrong
+                 * moment and the wrong severity.
+                 */
+                System.err.println("MDViewer: signed in, but this machine could not store "
+                        + "the sign-in for next time - " + e.getMessage());
+            }
+        }
+        return tokens.accessToken();
     }
 
+    /**
+     * Keeps a fresh sign-in.
+     *
+     * <p>Used by the interactive sign-in, where the reader is watching and a failure to
+     * store is worth telling them about. The refresh path deliberately does not use this:
+     * there, a storage failure must not be mistaken for a rejected session.
+     */
     private void remember(Tokens fresh) throws IOException {
         this.tokens = fresh;
         if (fresh.canRefresh()) {

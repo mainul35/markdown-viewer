@@ -64,8 +64,18 @@ public final class SyncState {
         return !workspaceId.isBlank();
     }
 
-    public void enrol(String id) {
+    /**
+     * Links this folder to a cloud workspace, and writes it down.
+     *
+     * <p>Saved immediately rather than as a side effect of the first successful sync. The
+     * workspace exists on the server the moment it is created, so a link held only in
+     * memory is lost if the sync that follows fails or the dialog is closed - leaving a
+     * workspace in the cloud that this folder has no record of, and a second attempt
+     * refused because the name is already taken.
+     */
+    public void enrol(String id) throws IOException {
         this.workspaceId = id;
+        save();
     }
 
     /**

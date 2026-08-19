@@ -91,7 +91,7 @@ public final class SyncRunner {
      * the two sets join. Nothing is overwritten - anything that differs on both sides comes
      * through as a conflict with both versions kept.
      */
-    public void link(String workspaceId) {
+    public void link(String workspaceId) throws IOException {
         state.enrol(workspaceId);
     }
 
@@ -183,7 +183,7 @@ public final class SyncRunner {
                 intended.remove(change.path());
                 continue;
             }
-            Path beside = conflictPathFor(change.path());
+            Path beside = conflictPathFor(safeResolve(change.path()));
             progress.accept("Keeping both versions of " + change.path());
             byte[] remote = cloud.getBlob(change.remoteHash());
             write(beside, remote);
@@ -267,17 +267,32 @@ public final class SyncRunner {
      * opens both, keeps what they want and deletes the other - which is a two-minute job
      * with the documents in front of them and impossible after a merge.
      */
-    Path conflictPathFor(String path) {
-        int dot = path.lastIndexOf('.');
-        String stem = dot < 0 ? path : path.substring(0, dot);
-        String extension = dot < 0 ? "" : path.substring(dot);
+    Path conflictPathFor(Path original) throws IOException {
+        /*
+         * Checked here as well as at the call site. Composing two correct steps is only
+         * correct while both are still there, and this one is a single line away from being
+         * dropped by someone tidying up - so the rule lives with the method that would break.
+         */
+        if (!original.startsWith(root.toRealPath())) {
+            throw new IOException("refusing a conflict copy outside the workspace: " + original);
+        }
+        String name = original.getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        String stem = dot < 0 ? name : name.substring(0, dot);
+        String extension = dot < 0 ? "" : name.substring(dot);
         String stamp = STAMP.format(Instant.now());
-        Path candidate = root.resolve(stem + ".conflict-" + stamp + extension);
+        /*
+         * Built from a path that safeResolve has already vouched for, and beside it rather
+         * than resolved afresh from the server's string. Resolving the raw path here was
+         * the one place a reply could name somewhere outside the workspace and be believed -
+         * every other use of a server-supplied path goes through that check.
+         */
+        Path candidate = original.resolveSibling(stem + ".conflict-" + stamp + extension);
         // Two conflicts on the same document in the same minute must not overwrite each
         // other - which would make the conflict handler itself lose a version.
         int n = 2;
         while (Files.exists(candidate)) {
-            candidate = root.resolve(stem + ".conflict-" + stamp + "-" + n++ + extension);
+            candidate = original.resolveSibling(stem + ".conflict-" + stamp + "-" + n++ + extension);
         }
         return candidate;
     }
@@ -288,7 +303,9 @@ public final class SyncRunner {
      * <p>The path came from a server response. Writing {@code ../../.ssh/authorized_keys}
      * because a reply said so is not a thing this will do, however unlikely the reply.
      */
-    private Path safeResolve(String path) throws IOException {
+    /** Package-private so the containment rule can be asserted directly; it is the one
+     * guard between a server-supplied string and a write outside the workspace. */
+    Path safeResolve(String path) throws IOException {
         Path target = root.resolve(path).normalize();
         if (!target.startsWith(root.toRealPath())) {
             throw new IOException("refusing a path that leaves the workspace: " + path);
