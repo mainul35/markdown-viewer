@@ -394,9 +394,6 @@ public final class CloudClient {
         return i;
     }
 
-    private static int indexOfField(String json, String field) {
-        return json == null ? -1 : json.indexOf("\"" + field + "\"");
-    }
 
     /** The body of a response that is itself an array, rather than an object with one in it. */
     static String stripArray(String json) {
@@ -408,6 +405,70 @@ public final class CloudClient {
     }
 
     /** The bracketed body of a named array. */
+    /**
+     * Where the value of a named field begins, or -1.
+     *
+     * <p>Only a name in key position counts - the quoted name has to be followed by a
+     * colon. Matching the text anywhere would let a document called {@code "path".md}, or a
+     * server sentence quoting a field name, redirect the read to a value that is not the
+     * field at all.
+     */
+    private static int indexOfField(String json, String field) {
+        if (json == null) {
+            return -1;
+        }
+        String quoted = "\"" + field + "\"";
+        int from = 0;
+        while (true) {
+            int at = json.indexOf(quoted, from);
+            if (at < 0) {
+                return -1;
+            }
+            int after = skipSpace(json, at + quoted.length());
+            if (after < json.length() && json.charAt(after) == ':') {
+                return at;
+            }
+            from = at + quoted.length();
+        }
+    }
+
+    /**
+     * The index of the bracket closing the one at {@code open}, ignoring any inside a string.
+     *
+     * <p>This is the whole reason the array readers are not three lines of counting. A
+     * document may legally be called {@code summary].md}, and counting brackets without
+     * knowing which are text ended the change list at that bracket - so a plan came back
+     * empty, read as "nothing to do", and a commit built from it would have told the server
+     * that every document this machine had not seen was deleted.
+     */
+    private static int closerFor(String json, int open, char opener, char closer) {
+        int depth = 0;
+        boolean inString = false;
+        for (int i = open; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (inString) {
+                if (c == '\\') {
+                    // Whatever follows is literal, including a quote or a backslash.
+                    i++;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '"') {
+                inString = true;
+            } else if (c == opener) {
+                depth++;
+            } else if (c == closer) {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
     static String section(String json, String field) {
         int at = indexOfField(json, field);
         if (at < 0) {
@@ -417,38 +478,38 @@ public final class CloudClient {
         if (open < 0) {
             return "";
         }
-        int depth = 0;
-        for (int i = open; i < json.length(); i++) {
-            char c = json.charAt(i);
-            if (c == '[') {
-                depth++;
-            } else if (c == ']') {
-                depth--;
-                if (depth == 0) {
-                    return json.substring(open + 1, i);
-                }
-            }
-        }
-        return "";
+        int close = closerFor(json, open, '[', ']');
+        return close < 0 ? "" : json.substring(open + 1, close);
     }
 
     /** Each flat object in an array body. */
     static List<String> objects(String arrayBody) {
         List<String> out = new ArrayList<>();
-        int depth = 0;
-        int start = -1;
-        for (int i = 0; i < arrayBody.length(); i++) {
+        int i = 0;
+        boolean inString = false;
+        while (i < arrayBody.length()) {
             char c = arrayBody.charAt(i);
-            if (c == '{') {
-                if (depth == 0) {
-                    start = i;
+            if (inString) {
+                if (c == '\\') {
+                    i++;
+                } else if (c == '"') {
+                    inString = false;
                 }
-                depth++;
-            } else if (c == '}') {
-                depth--;
-                if (depth == 0 && start >= 0) {
-                    out.add(arrayBody.substring(start, i + 1));
+                i++;
+            } else if (c == '"') {
+                inString = true;
+                i++;
+            } else if (c == '{') {
+                int end = closerFor(arrayBody, i, '{', '}');
+                if (end < 0) {
+                    // Truncated rather than malformed-but-parseable: stop, and let the
+                    // caller see fewer changes than it expected rather than invented ones.
+                    break;
                 }
+                out.add(arrayBody.substring(i, end + 1));
+                i = end + 1;
+            } else {
+                i++;
             }
         }
         return out;
@@ -461,7 +522,15 @@ public final class CloudClient {
         StringBuilder current = new StringBuilder();
         for (int i = 0; i < arrayBody.length(); i++) {
             char c = arrayBody.charAt(i);
-            if (c == '"') {
+            if (inString && c == '\\' && i + 1 < arrayBody.length()) {
+                char next = arrayBody.charAt(++i);
+                current.append(switch (next) {
+                    case 'n' -> '\n';
+                    case 'r' -> '\r';
+                    case 't' -> '\t';
+                    default -> next;
+                });
+            } else if (c == '"') {
                 if (inString) {
                     out.add(current.toString());
                     current.setLength(0);

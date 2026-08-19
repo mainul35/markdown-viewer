@@ -32,8 +32,13 @@ import java.util.function.Consumer;
  * <p>The listener binds the loopback address explicitly rather than every interface, so it
  * is not reachable from the network while it is open. It is opened for one sign-in, waits
  * a few minutes at most, and is closed in a finally block whatever happens.
+ *
+ * <p>Not final. This and {@link TokenStore} are the two collaborators {@link CloudSession}
+ * is defined in terms of, and the behaviour worth pinning down - that a rejected session
+ * signs the reader out and a failed disk write does not - can only be asserted by standing
+ * in for them. Neither is extended in the application itself.
  */
-public final class SignIn {
+public class SignIn {
 
     /**
      * The port the redirect comes back to.
