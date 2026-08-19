@@ -133,13 +133,14 @@ public final class ChartData {
     public static String toFence(String type, String title, String unit, String delta,
                                  List<String> categories, List<Row> rows) {
         StringBuilder out = new StringBuilder("```chart\n");
-        out.append("type: ").append(type == null || type.isBlank() ? "bar" : type.trim())
+        String form = type == null || type.isBlank() ? "bar" : type.trim().toLowerCase();
+        out.append("type: ").append(form)
                 .append('\n');
         appendSetting(out, "title", title);
         appendSetting(out, "unit", unit);
         // Only a stat tile draws a change line; carrying it on a bar chart would leave a
         // setting in the source that nothing reads.
-        if ("stat".equals(type)) {
+        if ("stat".equals(form)) {
             appendSetting(out, "delta", delta);
         }
         if (categories.size() > 1) {
@@ -149,11 +150,11 @@ public final class ChartData {
 
         int widest = 0;
         for (Row row : rows) {
-            widest = Math.max(widest, row.label().length());
+            widest = Math.max(widest, oneLine(row.label()).length());
         }
         for (Row row : rows) {
-            out.append(pad(row.label(), widest)).append(" | ")
-                    .append(String.join(", ", row.values())).append('\n');
+            out.append(pad(oneLine(row.label()).replace("|", "/"), widest)).append(" | ")
+                    .append(String.join(", ", row.values().stream().map(ChartData::oneLine).toList())).append('\n');
         }
         out.append("```");
         return out.toString();
@@ -161,8 +162,30 @@ public final class ChartData {
 
     private static void appendSetting(StringBuilder out, String key, String value) {
         if (value != null && !value.isBlank()) {
-            out.append(key).append(": ").append(value.trim()).append('\n');
+            out.append(key).append(": ").append(oneLine(value)).append('\n');
         }
+    }
+
+
+    /**
+     * Text that cannot break out of the block it is written into.
+     *
+     * <p>Everything here was typed or pasted into the dialog, and the dialog exists so that
+     * nobody has to get fence syntax right by hand - so it has to be the thing that gets it
+     * right. A pasted title carrying a line break used to end the fence where the break
+     * was, leaving the rest of the chart in the document as ordinary text and a stray run
+     * of backticks after it.
+     *
+     * <p>Newlines become spaces and a run of backticks is defanged rather than dropped: the
+     * reader can see what happened to their text and fix it, where silently deleting part
+     * of what they typed would look like the dialog losing their work.
+     */
+    private static String oneLine(String value) {
+        return value.replace("\r\n", " ")
+                .replace('\n', ' ')
+                .replace('\r', ' ')
+                .replace("```", "'''")
+                .trim();
     }
 
     private static String pad(String text, int width) {
