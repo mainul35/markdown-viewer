@@ -513,6 +513,125 @@ public final class SourceEdits {
         return text.length() >= width ? text : text + " ".repeat(width - text.length());
     }
 
+    // ------------------------------------------------------------------ charts
+
+    /**
+     * Starter data for each chart form, so an inserted chart draws something immediately.
+     *
+     * <p>Placeholder rows rather than an empty fence. An empty chart renders as "chart has
+     * no data rows", which is a correct message and a discouraging first impression; a
+     * chart that draws is a chart whose numbers can be replaced one at a time.
+     *
+     * <p>Each shape is the one that form is actually for - a stat tile gets one number, a
+     * line gets a series over time, a donut gets parts of a whole - so the example teaches
+     * the form rather than just filling it.
+     */
+    private static String chartBody(String type) {
+        return switch (type) {
+            case "column" -> """
+                    x: Mon, Tue, Wed, Thu
+                    ---
+                    First  | 120, 140, 131, 128
+                    Second | 340, 352, 377, 361""";
+            case "line", "area" -> """
+                    x: Jan, Feb, Mar, Apr, May
+                    ---
+                    Value | 120, 180, 165, 240, 232""";
+            case "pie", "donut" -> """
+                    First  | 60
+                    Second | 30
+                    Third  | 10""";
+            case "stat" -> """
+                    unit: files
+                    delta: +12% vs last week
+                    ---
+                    Total | 1284""";
+            default -> """
+                    First  | 412
+                    Second | 208
+                    Third  |  96""";
+        };
+    }
+
+    /**
+     * Inserts a chart fence of {@code type} as its own block, with example data in it.
+     *
+     * <p>Placed after the caret's line rather than at the caret, for the same reason a
+     * table is: a fence has to begin at a line boundary, so splicing one into the middle
+     * of a sentence would produce three lines of literal backticks instead of a chart.
+     *
+     * @return an edit whose selection covers the title, so typing names the chart
+     */
+    public static Edit insertChart(String source, int caret, String type) {
+        String form = type == null || type.isBlank() ? "bar" : type.trim().toLowerCase();
+
+        int from = lineStart(source, caret);
+        int to = lineEnd(source, caret);
+        int at = source.substring(from, to).isBlank() ? from : to;
+
+        String before = source.substring(0, at);
+        String after = source.substring(at);
+        String prefix;
+        if (before.isEmpty() || before.endsWith("\n\n")) {
+            prefix = "";
+        } else if (before.endsWith("\n")) {
+            prefix = "\n";
+        } else {
+            prefix = "\n\n";
+        }
+        String suffix = after.isEmpty() || after.startsWith("\n") ? "" : "\n";
+
+        String title = "Chart title";
+        String head = "```chart\ntype: " + form + "\ntitle: ";
+        String chart = head + title + "\n" + chartBody(form) + "\n```\n";
+
+        int selectionStart = at + prefix.length() + head.length();
+        return new Edit(at, at, prefix + chart + suffix,
+                selectionStart, selectionStart + title.length());
+    }
+
+    /** A {@code type:} setting on its own line, anywhere inside the fence body. */
+    private static final Pattern CHART_TYPE_LINE =
+            Pattern.compile("(?m)^([ \\t]*)type[ \\t]*:[ \\t]*(.*)$");
+
+    /**
+     * Changes the chart type of the fence at {@code [start, end)}.
+     *
+     * <p>Only the {@code type:} line is rewritten - the data is never touched, which is
+     * what makes this safe to offer as a right-click. A fence with no type line yet gets
+     * one added directly under the opening fence rather than at the end, so the settings
+     * stay together and the block still reads top-down.
+     *
+     * @return the edit, or null if that range is not a chart fence
+     */
+    public static Edit setChartType(String source, int start, int end, String type) {
+        String form = type == null ? "" : type.trim().toLowerCase();
+        if (form.isEmpty()) {
+            return null;
+        }
+        int from = Math.max(0, Math.min(start, source.length()));
+        int to = Math.max(from, Math.min(end, source.length()));
+
+        int openTo = lineEnd(source, from);
+        Matcher fence = FENCE_LINE.matcher(source.substring(from, openTo));
+        if (!fence.matches()) {
+            return null;
+        }
+
+        String body = source.substring(openTo, to);
+        Matcher typeLine = CHART_TYPE_LINE.matcher(body);
+        if (typeLine.find()) {
+            int lineFrom = openTo + typeLine.start();
+            int lineTo = openTo + typeLine.end();
+            String replacement = typeLine.group(1) + "type: " + form;
+            int caret = lineFrom + replacement.length();
+            return new Edit(lineFrom, lineTo, replacement, caret, caret);
+        }
+        String replacement = "\ntype: " + form;
+        int caret = openTo + replacement.length();
+        return new Edit(openTo, openTo, replacement, caret, caret);
+    }
+
     // ------------------------------------------------------------------ lines
 
     public static int lineStart(String source, int offset) {
