@@ -1022,6 +1022,187 @@ public class MainController {
         }
     }
 
+    /**
+     * Syncs the active workspace folder, after showing what that would do.
+     *
+     * <p>Per workspace, never per document and never for everything open at once: a
+     * workspace is the unit someone decided to put in the cloud, and the folder currently
+     * in front of them is the only one they can be said to have asked about.
+     */
+    /**
+     * Signs in to the cloud, in the reader's own browser.
+     *
+     * <p>The browser rather than a window inside MDViewer, and that is the point: the
+     * password goes to the authorization server the reader can see the address of, and this
+     * application never has the chance to read it. A sign-in page drawn inside an
+     * application asks to be trusted; one in the browser can be checked.
+     */
+    @FXML
+    private void handleCloudSignIn() {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        com.mdviewer.sync.CloudSession session = config.session();
+
+        setTransientStatus("Opening " + config.issuer() + " in your browser...");
+
+        Thread worker = new Thread(() -> {
+            String message;
+            try {
+                String missing = session.signIn(uri ->
+                        javafx.application.Platform.runLater(() ->
+                                hostServices.showDocument(uri.toString())));
+
+                String account = session.account();
+                message = "Signed in" + (account.isBlank() ? "" : " as " + account) + ".";
+                if (!missing.isBlank()) {
+                    /*
+                     * Authenticated but not entitled. Worth saying here rather than letting
+                     * it surface as a 403 during a sync, where it looks like the sync is
+                     * broken rather than the grant being absent.
+                     */
+                    message += System.lineSeparator() + System.lineSeparator()
+                            + "This account did not receive: " + missing
+                            + System.lineSeparator()
+                            + "Sync will be refused until those are granted to the MDViewer "
+                            + "application in the authorization server.";
+                }
+            } catch (Exception e) {
+                message = "Not signed in."
+                        + System.lineSeparator() + System.lineSeparator()
+                        + (e.getMessage() == null ? e.toString() : e.getMessage());
+            }
+            final String said = message;
+            javafx.application.Platform.runLater(() -> {
+                Alert done = new Alert(Alert.AlertType.INFORMATION);
+                done.initOwner(primaryStage);
+                done.setTitle("Cloud sign-in");
+                done.setHeaderText(null);
+                done.getDialogPane().setMinWidth(460);
+                done.setContentText(said);
+                done.showAndWait();
+            });
+        }, "cloud-sign-in");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Forgets the sign-in on this machine.
+     *
+     * <p>Local only, and said so in the dialog. Other machines keep theirs, and anything
+     * already in the cloud stays there - signing out of a reader is not a way to withdraw
+     * documents, and it would be a poor thing to let someone believe it was.
+     */
+    @FXML
+    private void handleCloudSignOut() {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        try {
+            config.session().signOut();
+            setTransientStatus("Signed out on this machine. Documents already in the cloud "
+                    + "are untouched.");
+        } catch (Exception e) {
+            setTransientStatus("Could not sign out - "
+                    + (e.getMessage() == null ? e.toString() : e.getMessage()));
+        }
+    }
+
+    @FXML
+    private void handleCloudSync() {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        if (!config.isEnabled()) {
+            setTransientStatus("Cloud sync is off. Turn it on in "
+                    + System.getProperty("user.home") + "\\.mdviewer\\cloud.properties");
+            return;
+        }
+        WorkspaceView workspace = activeWorkspace();
+        Path root = workspace == null ? null : workspace.getRoot();
+        if (root == null) {
+            setTransientStatus("Open a folder before syncing - a workspace is what syncs, "
+                    + "not a single document.");
+            return;
+        }
+        com.mdviewer.sync.CloudSyncDialog.open(primaryStage, root, config);
+        // A sync can add, change or remove files under the workspace, so the tree on screen
+        // is out of date by definition once it finishes.
+        handleRefreshWorkspaces();
+    }
+
+    /**
+     * Sends this machine's AI settings to the account, and takes back what is there.
+     *
+     * <p>Its own action rather than part of a workspace sync, because settings belong to
+     * the account and workspaces do not - folding them together would mean the reader's
+     * provider configuration changed as a side effect of syncing some documents.
+     *
+     * <p>Credentials are removed before anything is sent, and what was held back is named
+     * in the result: a decision the reader is told about rather than a surprise waiting on
+     * the other machine.
+     */
+    @FXML
+    private void handleCloudSettingsSync() {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        if (!config.isEnabled()) {
+            setTransientStatus("Cloud sync is off. Turn it on in "
+                    + System.getProperty("user.home") + "\\.mdviewer\\cloud.properties");
+            return;
+        }
+
+        Thread worker = new Thread(() -> {
+            String summary;
+            try {
+                com.mdviewer.sync.CloudClient cloud = config.client();
+                com.mdviewer.sync.SettingsSync settings = new com.mdviewer.sync.SettingsSync();
+
+                /* Down first, then up. Taking what is there before sending means another
+                   machine's additions survive; sending first would overwrite them with
+                   whatever this machine happened to hold. */
+                com.mdviewer.sync.SettingsSync.Incoming incoming =
+                        settings.apply(cloud.getSettings());
+                com.mdviewer.sync.SettingsSync.Outgoing outgoing = settings.outgoing();
+                cloud.putSettings(outgoing.json());
+
+                StringBuilder said = new StringBuilder();
+                said.append("Settings synced with ").append(cloud.host()).append(".")
+                        .append(System.lineSeparator()).append(System.lineSeparator());
+                said.append(incoming.added()).append(" added, ")
+                        .append(incoming.changed()).append(" changed on this machine.")
+                        .append(System.lineSeparator());
+                if (!outgoing.withheld().isEmpty()) {
+                    said.append(System.lineSeparator())
+                            .append("Kept on this machine, as always:")
+                            .append(System.lineSeparator());
+                    for (String name : outgoing.withheld()) {
+                        said.append("    ").append(name).append(System.lineSeparator());
+                    }
+                    said.append(System.lineSeparator())
+                            .append("Another machine will ask for these once.");
+                }
+                summary = said.toString();
+            } catch (Exception e) {
+                summary = "Settings were not synced."
+                        + System.lineSeparator() + System.lineSeparator()
+                        + (e.getMessage() == null ? e.toString() : e.getMessage());
+            }
+            final String message = summary;
+            javafx.application.Platform.runLater(() -> {
+                Alert done = new Alert(Alert.AlertType.INFORMATION);
+                done.initOwner(primaryStage);
+                done.setTitle("Cloud settings");
+                done.setHeaderText(null);
+                done.getDialogPane().setMinWidth(460);
+                done.setContentText(message);
+                done.showAndWait();
+                // The assistant's picker is built from the config, so it has to be rebuilt
+                // when the config has changed underneath it.
+                if (aiPanel != null) {
+                    aiPanel.refreshProviders();
+                }
+            });
+        }, "cloud-settings-sync");
+        worker.setDaemon(true);
+        worker.start();
+        setTransientStatus("Syncing settings...");
+    }
+
     @FXML
     private void handleToggleAssistant() {
         showAssistant(!isAssistantVisible());
