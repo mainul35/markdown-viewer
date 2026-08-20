@@ -132,7 +132,7 @@ public final class WorkspaceScanner {
      * documents as far as reconciliation is concerned, and the second machine would
      * download a duplicate of everything it already had.
      */
-    static String relative(Path base, Path file) {
+    public static String relative(Path base, Path file) {
         return base.relativize(file).toString().replace('\\', '/');
     }
 

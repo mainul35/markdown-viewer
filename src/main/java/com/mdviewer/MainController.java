@@ -122,6 +122,14 @@ public class MainController {
 
     private com.mdviewer.sync.AutoSyncService cloudAutoSync;
 
+    /**
+     * Carries the document being written to the cloud about once a minute.
+     *
+     * <p>Made when it is first needed rather than at startup: most sessions never touch the
+     * cloud, and an unused connection should cost nothing.
+     */
+    private com.mdviewer.sync.DraftLink draftLink;
+
     @FXML
     private Menu recentWorkspacesMenu;
 
@@ -503,6 +511,7 @@ public class MainController {
         updateWordCount();
         updateStatus();
         updateTitle();
+        protectActiveDocument();
         /* The assistant follows the document. One panel, but a conversation each: asking
            about a design note and then opening a specification used to carry the first
            document's questions into the second. Keyed by path so a file keeps its thread
@@ -1060,6 +1069,87 @@ public class MainController {
      * <p>Remembered in the same file as everything else about the cloud, so the answer
      * survives a restart - a setting that quietly reverts is one nobody trusts twice.
      */
+    /**
+     * Points the draft link at whatever is being written now.
+     *
+     * <p>Only the document in front of the reader is worth protecting: it is the only one
+     * whose unsaved state is not already on disk. Moving to another document sends the last
+     * of the first one on the way past, because release does that.
+     */
+    private void protectActiveDocument() {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        DocumentView document = activeDocument();
+        WorkspaceView workspace = activeWorkspace();
+
+        if (!config.isEnabled() || document == null || workspace == null
+                || document.getPath() == null) {
+            if (draftLink != null) {
+                draftLink.release();
+            }
+            return;
+        }
+
+        try {
+            com.mdviewer.sync.SyncState state =
+                    com.mdviewer.sync.SyncState.forWorkspace(workspace.getRoot());
+            if (!state.isEnrolled()) {
+                // Not linked to a cloud workspace, so there is nowhere to put a draft.
+                if (draftLink != null) {
+                    draftLink.release();
+                }
+                return;
+            }
+
+            if (draftLink == null) {
+                draftLink = new com.mdviewer.sync.DraftLink(config.endpoint(), config.session(),
+                        state1 -> javafx.application.Platform.runLater(() -> showDraftState(state1)));
+            }
+
+            String path = com.mdviewer.sync.WorkspaceScanner.relative(
+                    workspace.getRoot().toRealPath(), document.getPath());
+
+            /* The text is read on the draft link's own thread, so reading it has to be safe
+               from one - hence the hop back onto the UI thread for the value. */
+            draftLink.protect(state.workspaceId(), path, () -> {
+                final String[] held = new String[1];
+                final java.util.concurrent.CountDownLatch read = new java.util.concurrent.CountDownLatch(1);
+                javafx.application.Platform.runLater(() -> {
+                    try {
+                        DocumentView now = activeDocument();
+                        held[0] = now == null ? null : now.getEditor().getText();
+                    } finally {
+                        read.countDown();
+                    }
+                });
+                try {
+                    return read.await(5, java.util.concurrent.TimeUnit.SECONDS) ? held[0] : null;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            // Cloud drafts are a convenience. Nothing about editing depends on them, and a
+            // reader who cannot reach the cloud should not hear about it while typing.
+        }
+    }
+
+    /**
+     * Says whether what is being written is protected, quietly.
+     *
+     * <p>In the status line and nowhere else. This changes when a laptop leaves a network,
+     * which is often and is not news - a dialog for it would be an interruption every time
+     * somebody walked out of the office.
+     */
+    private void showDraftState(com.mdviewer.sync.DraftLink.State state) {
+        switch (state) {
+            case PROTECTED -> setTransientStatus("Unsaved changes are being kept in the cloud.");
+            case UNPROTECTED -> setTransientStatus("The cloud cannot be reached, so unsaved "
+                    + "changes are only on this machine.");
+            default -> { }
+        }
+    }
+
     @FXML
     private void handleToggleCloudAutoSync() {
         try {
