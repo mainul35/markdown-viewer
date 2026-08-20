@@ -118,6 +118,11 @@ public class MainController {
     private CheckMenuItem autoRefreshMenuItem;
 
     @FXML
+    private CheckMenuItem cloudAutoSyncMenuItem;
+
+    private com.mdviewer.sync.AutoSyncService cloudAutoSync;
+
+    @FXML
     private Menu recentWorkspacesMenu;
 
     private final WorkspaceHistory workspaceHistory = new WorkspaceHistory();
@@ -252,6 +257,17 @@ public class MainController {
         fileTreePanel.setOnRefreshRequested(this::handleRefreshWorkspaces);
         explorerHost.getChildren().add(fileTreePanel);
 
+        /*
+         * Cloud auto-sync watches whichever workspace is open. It reports through the status
+         * line rather than a dialog: this runs while somebody is writing, and a modal that
+         * appears over their document every few minutes would be worse than no sync at all.
+         */
+        // The tick has to match the file, or the menu is a second opinion about the setting.
+        cloudAutoSyncMenuItem.setSelected(new com.mdviewer.sync.CloudConfig().autoSync());
+
+        cloudAutoSync = new com.mdviewer.sync.AutoSyncService(
+                message -> javafx.application.Platform.runLater(() -> setTransientStatus(message)));
+
         workspaceSync = new Timeline(
                 new KeyFrame(WORKSPACE_SYNC_INTERVAL, e -> syncWorkspaces(false)));
         workspaceSync.setCycleCount(Timeline.INDEFINITE);
@@ -291,7 +307,12 @@ public class MainController {
         previewDebounce.setOnFinished(e -> updatePreview());
 
         workspaceTabs.getSelectionModel().selectedItemProperty()
-                .addListener((obs, old, now) -> onActiveDocumentChanged());
+                .addListener((obs, old, now) -> {
+                    onActiveDocumentChanged();
+                    // The workspace in front of the reader is the one worth keeping in step.
+                    WorkspaceView workspace = activeWorkspace();
+                    cloudAutoSync.watch(workspace == null ? null : workspace.getRoot());
+                });
         workspaceTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.ALL_TABS);
 
         /* The editor area is mounted here, once, and never moved again.
@@ -1033,6 +1054,25 @@ public class MainController {
      * application never has the chance to read it. A sign-in page drawn inside an
      * application asks to be trusted; one in the browser can be checked.
      */
+    /**
+     * Turns automatic cloud sync on or off, and remembers it.
+     *
+     * <p>Remembered in the same file as everything else about the cloud, so the answer
+     * survives a restart - a setting that quietly reverts is one nobody trusts twice.
+     */
+    @FXML
+    private void handleToggleCloudAutoSync() {
+        try {
+            new com.mdviewer.sync.CloudConfig().setAutoSync(cloudAutoSyncMenuItem.isSelected());
+            setTransientStatus(cloudAutoSyncMenuItem.isSelected()
+                    ? "Workspaces will keep themselves in step with the cloud."
+                    : "Automatic sync is off. Use Settings > Cloud Sync when you want to sync.");
+        } catch (Exception e) {
+            setTransientStatus("Could not save that setting - "
+                    + (e.getMessage() == null ? e.toString() : e.getMessage()));
+        }
+    }
+
     @FXML
     private void handleCloudSignIn() {
         com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();

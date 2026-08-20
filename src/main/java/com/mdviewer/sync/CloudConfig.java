@@ -81,6 +81,25 @@ public final class CloudConfig {
         return session(issuer(), clientId());
     }
 
+    /**
+     * Whether a workspace keeps itself in step without being asked.
+     *
+     * <p>On by default, but only ever reached when cloud sync itself is on - which is the
+     * deliberate act. Somebody who turned syncing on wants their documents in both places;
+     * making them press a button every time to get it is a chore disguised as a safeguard.
+     *
+     * <p>What it will do unattended is narrow, and {@link AutoSync} decides it: additions in
+     * either direction, and nothing else. Turn this off to go back to syncing by hand.
+     */
+    public boolean autoSync() {
+        return Boolean.parseBoolean(properties.getProperty("cloud.autoSync", "true"));
+    }
+
+    public void setAutoSync(boolean enabled) throws IOException {
+        properties.setProperty("cloud.autoSync", String.valueOf(enabled));
+        save();
+    }
+
     public CloudClient client() {
         return new CloudClient(endpoint(), session());
     }
