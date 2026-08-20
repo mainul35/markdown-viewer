@@ -181,6 +181,20 @@ public final class CloudClient {
         return string(send("GET", "/api/v1/settings", null, null), "content");
     }
 
+    /**
+     * One authenticated request, so the account knows this machine exists.
+     *
+     * <p>Signing in talks to the authorization server and never to the cloud, so until
+     * something syncs there is no record of this installation at all - and the machine list
+     * a reader opens straight after signing in does not include the machine they are sitting
+     * at. That reads as broken, and it is only ever a missing request.
+     *
+     * <p>Quota is the cheapest thing to ask for and needs no scope beyond being signed in.
+     */
+    public void announce() throws IOException {
+        send("GET", "/api/v1/account/quota", null, null);
+    }
+
     public void putSettings(String json) throws IOException {
         send("PUT", "/api/v1/settings", json, "application/json");
     }
