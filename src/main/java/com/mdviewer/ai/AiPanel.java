@@ -35,6 +35,9 @@ import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
 import netscape.javascript.JSObject;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -1110,6 +1113,46 @@ public final class AiPanel extends VBox {
                 If something you were asked about was missing from what you were given,
                 say so at the end, by name.
                 """));
+        /* Charts. The editor compiles a ```chart fence into an SVG, in the transcript as
+           well as in the document, so an answer can hand back something the reader can
+           paste straight in. The syntax is repeated here in full rather than gestured at:
+           a model asked to produce a format it half-knows produces a fence that refuses,
+           and the refusal is what the reader sees. */
+        messages.add(new ChatProvider.Message("system", """
+                CHARTS
+
+                This editor renders a ```chart fence as a chart, in your reply as well as
+                in the document. Use one when the answer is a comparison, a trend or a
+                breakdown that is already in the material - never to decorate prose.
+
+                ```chart
+                type: column
+                title: Requests handled
+                unit: req/s
+                x: Mon, Tue, Wed
+                ---
+                auth    | 120, 140, 131
+                gateway | 340, 352, 377
+                ```
+
+                Settings come first, then a line of three dashes, then the rows. type: is
+                required and is one of bar, column, line, area, pie, donut, stat. title:,
+                unit: and x: are optional; delta: adds a change line to a stat.
+
+                One value per row is a single series and the row labels become the axis.
+                Several values per row is one series per row, plotted against x:.
+
+                A form that does not suit the data is quietly redrawn as one that does, and
+                the chart says so underneath - a pie past 6 slices becomes a bar, a stat
+                with several numbers becomes a bar, and past 8 series the smallest are
+                folded into "Other". Nothing you write will fail to render, but pick the
+                right form yourself: the reader sees the correction.
+
+                Every number in a chart must come from the document or a source you were
+                given, and say underneath which file it came from. A chart drawn from
+                numbers you estimated is a fabrication that looks like a measurement - if
+                you do not have the values, say which ones you are missing instead.
+                """));
         /* The open document is very often a plan: what the user means to build. Answering
            about someone else's codebase, it reads exactly like a description of that
            codebase, and its intentions come back as that system's features. Saying what it
@@ -1287,6 +1330,9 @@ public final class AiPanel extends VBox {
                 transcriptReady = true;
                 JSObject window = (JSObject) engine.executeScript("window");
                 window.setMember("aiBridge", new Bridge());
+                // Before the first render, or the first answer containing a chart would
+                // arrive with nothing on the page able to compile it.
+                injectCharts(engine);
                 // Theme first: the page starts light, and painting the turns before
                 // setting it shows a white flash on every load in dark mode.
                 call("__aiTheme", darkMode ? "dark" : "light");
@@ -1296,6 +1342,25 @@ public final class AiPanel extends VBox {
             }
         });
         engine.loadContent(transcriptShell());
+    }
+
+    /**
+     * The chart library, into the transcript's page.
+     *
+     * <p>The panel has its own WebView and therefore its own JavaScript world - nothing
+     * the preview loaded is visible here. Injected rather than inlined in the shell so
+     * there is one copy of the file on the classpath and no chance of the two pages
+     * compiling charts by different rules.
+     */
+    private void injectCharts(WebEngine engine) {
+        try (InputStream in = AiPanel.class.getResourceAsStream("/js/mdchart.js")) {
+            if (in == null) {
+                return; // Charts stay as their source text; every other answer still works.
+            }
+            engine.executeScript(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+        } catch (IOException | RuntimeException e) {
+            System.err.println("MDViewer: charts unavailable in the assistant - " + e);
+        }
     }
 
     /**
@@ -1354,10 +1419,21 @@ public final class AiPanel extends VBox {
             .ai-sources details[open] summary { margin-bottom:6px; }
             .ai-streaming { white-space:pre-wrap; }
             .ai-empty { color:var(--ink-soft); font-style:italic; }
+            /* A chart in a side panel is a third of the width it gets in the document,
+               so it keeps the plate and loses the page margins around it. */
+            .mdc-figure { margin:12px 0; padding:12px 12px 8px; }
             """;
         String js = """
             window.__aiSet = function (html) {
               document.getElementById('t').innerHTML = html;
+              /* Charts, once the turn is in the page. The answer went through the same
+                 Markdown renderer the document does, so a ```chart fence arrives here as
+                 an uncompiled block; without this it would sit in the transcript as the
+                 numbers it was written from, which is readable but is not the chart the
+                 reader was shown how to ask for. */
+              if (window.MdChart) {
+                try { MdChart.renderAll(document); } catch (e) {}
+              }
               window.scrollTo(0, document.body.scrollHeight);
             };
             /* Streaming writes text, not HTML: a half-arrived answer is not valid Markdown

@@ -39,6 +39,7 @@ import javafx.stage.Stage;
 import javafx.util.Duration;
 import com.mdviewer.service.DiagramService;
 import com.mdviewer.service.ImageRef;
+import com.mdviewer.service.ChartData;
 import com.mdviewer.service.MarkdownService;
 import com.mdviewer.service.SourceEdits;
 import com.mdviewer.service.TableSource;
@@ -48,6 +49,7 @@ import com.mdviewer.ai.AiPanel;
 import com.mdviewer.service.Trash;
 import com.mdviewer.ui.DocumentView;
 import com.mdviewer.ui.FileTreePanel;
+import com.mdviewer.ui.ChartDialog;
 import com.mdviewer.ui.CropDialog;
 import com.mdviewer.ui.FindBar;
 import com.mdviewer.ui.MarkdownFiles;
@@ -65,6 +67,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -251,6 +254,7 @@ public class MainController {
         previewToolbar = new PreviewToolbar();
         previewToolbar.setOnAction(this::applyFormat);
         previewToolbar.setOnInsertTable(this::insertTable);
+        previewToolbar.setOnInsertChart(this::insertChart);
 
         // The preview column: formatting toolbar above the rendered document.
         previewPane = new VBox(previewToolbar, webView);
@@ -2179,15 +2183,27 @@ public class MainController {
         ContextMenu codeMenu = new ContextMenu(copyItem("Copy"), new SeparatorMenuItem(),
                 languages);
 
+        // A chart's menu is built per right-click rather than once, because which forms
+        // are on offer depends on the data in the chart under the pointer.
+        ContextMenu chartMenu = new ContextMenu();
+
         webView.setOnContextMenuRequested(event -> {
             textMenu.hide();
             imageMenu.hide();
             codeMenu.hide();
+            chartMenu.hide();
             // The page records what was under the pointer on mousedown, which fires
             // before this, so the choice of menu is already known.
             boolean onImage = !previewString("window.__mdImageInfo()").isEmpty();
             boolean onCode = !previewString("window.__mdCodeInfo()").isEmpty();
-            ContextMenu menu = onImage ? imageMenu : onCode ? codeMenu : textMenu;
+            String chart = previewString("window.__mdChartInfo()");
+            ContextMenu menu;
+            if (!chart.isEmpty()) {
+                fillChartMenu(chartMenu, chart);
+                menu = chartMenu;
+            } else {
+                menu = onImage ? imageMenu : onCode ? codeMenu : textMenu;
+            }
             menu.show(webView, event.getScreenX(), event.getScreenY());
             event.consume();
         });
@@ -2195,7 +2211,125 @@ public class MainController {
             textMenu.hide();
             imageMenu.hide();
             codeMenu.hide();
+            chartMenu.hide();
         });
+    }
+
+    /** Chart forms, in the order the picker offers them: fence value to display name. */
+    private static final String[][] CHART_FORMS = {
+            {"bar", "Bar"},
+            {"column", "Column"},
+            {"line", "Line"},
+            {"area", "Area"},
+            {"pie", "Pie"},
+            {"donut", "Donut"},
+            {"stat", "Stat"},
+    };
+
+    /**
+     * Rebuilds the chart menu for the chart that was just right-clicked.
+     *
+     * <p>Forms the data cannot take are shown disabled with the reason beside them rather
+     * than hidden. Hiding them would leave the reader to guess why a chart they have seen
+     * elsewhere is not on offer here, and the reason - "needs one value per row", "shows
+     * one number; this has 12" - is the part worth reading. The current form is disabled
+     * too, for the plainer reason that it is already what you have.
+     *
+     * @param info {@code start,end,describe-output} as recorded on mousedown
+     */
+    private void fillChartMenu(ContextMenu menu, String info) {
+        menu.getItems().clear();
+        String[] parts = info.split(",", 3);
+        Map<String, String> verdicts = new LinkedHashMap<>();
+        if (parts.length > 2) {
+            for (String line : parts[2].split("\n")) {
+                int equals = line.indexOf('=');
+                if (equals > 0) {
+                    verdicts.put(line.substring(0, equals).trim(), line.substring(equals + 1).trim());
+                }
+            }
+        }
+        String current = verdicts.getOrDefault("type", "");
+
+        Menu change = new Menu("Change chart to");
+        for (String[] form : CHART_FORMS) {
+            String verdict = verdicts.get(form[0]);
+            boolean isCurrent = form[0].equals(current);
+            boolean fits = "ok".equals(verdict);
+            MenuItem item = new MenuItem(isCurrent ? form[1] + "  (current)"
+                    : fits ? form[1]
+                    : form[1] + "  -  " + verdict);
+            item.setDisable(isCurrent || !fits);
+            item.setOnAction(e -> setChartType(form[0]));
+            change.getItems().add(item);
+        }
+
+        MenuItem edit = new MenuItem("Edit chart data...");
+        edit.setOnAction(e -> editChartFromMenu(info));
+
+        menu.getItems().addAll(change, new SeparatorMenuItem(), edit, copyItem("Copy"));
+    }
+
+    /** Opens the chart editor on whichever chart was right-clicked. */
+    private void editChartFromMenu(String info) {
+        String[] parts = info.split(",", 3);
+        int start;
+        int end;
+        try {
+            start = Integer.parseInt(parts[0]);
+            end = Integer.parseInt(parts[1]);
+        } catch (NumberFormatException e) {
+            return;
+        }
+        openChartEditor(start, end, previewString(
+                "(function(){var el=window.__mdChartElement;"
+                + "return el ? (el.getAttribute('data-mdc-src') || '') : '';})()"));
+    }
+
+    /**
+     * The chart editor: a form over the fence, rather than the fence as text.
+     *
+     * <p>The grid comes from the renderer's own reading of the source - there is one
+     * parser for this syntax and it is the one that draws the chart, so what the form
+     * shows can never disagree with the picture it was opened from.
+     *
+     * <p>The write-back is guarded the same way an in-place block edit is: the offsets
+     * came from a render, a render can be a moment behind the editor, and writing to a
+     * range that has moved would overwrite whatever is in it now.
+     */
+    private void openChartEditor(int start, int end, String source) {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            return;
+        }
+        String text = document.getEditor().getText();
+        if (start < 0 || end > text.length() || start >= end) {
+            setTransientStatus("That chart could not be located in the source.");
+            return;
+        }
+        String original = text.substring(start, end);
+        String model = previewString("MdChart.model("
+                + toJsStringLiteral(source == null ? "" : source) + ")");
+        if (model.isEmpty()) {
+            setTransientStatus("The chart could not be read for editing.");
+            return;
+        }
+
+        String fence = ChartDialog.edit(primaryStage, ChartData.fromModel(model));
+        if (fence == null) {
+            return; // Cancelled.
+        }
+
+        String now = document.getEditor().getText();
+        if (end > now.length() || !now.substring(start, end).equals(original)) {
+            setTransientStatus("The document changed while the chart was open; "
+                    + "the edit was not applied.");
+            updatePreview();
+            return;
+        }
+        applyEdit(document, new SourceEdits.Edit(
+                start, end, fence, start, start + fence.length()));
+        setTransientStatus("Chart updated.");
     }
 
     private MenuItem copyItem(String label) {
@@ -2566,9 +2700,43 @@ public class MainController {
             statusRestore.stop();
         }
 
-        webView.getEngine().print(job);
+        /* Charts are laid out in pixels for the pane they are in, which is not the width
+           of the paper. Letting the page scale them to fit would shrink their type along
+           with their geometry, so they are drawn again for the page the job is actually
+           going to - taken from the settings the dialog returned, since paper size and
+           orientation are both still the user's to change in there. */
+        prepareChartsForPrint(job.getJobSettings().getPageLayout());
+        try {
+            webView.getEngine().print(job);
+        } finally {
+            // In a finally block because a print that throws must not leave the reader
+            // looking at charts laid out for A4 and every table view forced open.
+            previewString("window.__mdChartsAfterPrint()");
+        }
         job.endJob();
         setTransientStatus("Sent " + jobName + " to " + job.getPrinter().getName() + ".");
+    }
+
+    /**
+     * Draws every chart again at the width of the page being printed, and opens the table
+     * views so the numbers are on the paper.
+     *
+     * <p>The printable width comes back from the page layout in points - a seventy-second
+     * of an inch - and CSS pixels are ninety-sixths of one, so the conversion is the ratio
+     * of those two. Without it a chart drawn for a 430-pixel pane prints at 430 pixels on
+     * a 720-pixel page, taking up three-fifths of the width it was given.
+     *
+     * <p>Undone by {@code __mdChartsAfterPrint} once the job has been handed over.
+     */
+    private void prepareChartsForPrint(PageLayout layout) {
+        if (layout == null) {
+            return;
+        }
+        int width = (int) Math.round(layout.getPrintableWidth() * 96.0 / 72.0);
+        if (width < 320) {
+            return; // Not a page anything readable fits on; leave the charts as they are.
+        }
+        previewString("window.__mdChartsForPrint(" + width + ")");
     }
 
     /**
@@ -2670,6 +2838,57 @@ public class MainController {
                 document.getEditor().getCaretPosition(), rows, columns));
         document.getEditor().requestFocus();
         setTransientStatus("Inserted a " + rows + " x " + columns + " table.");
+    }
+
+    /**
+     * Inserts a chart of the chosen form, with example data already in it.
+     *
+     * <p>The title is selected rather than the first number, because naming the chart is
+     * the one thing every chart needs and the numbers are easier to find once it draws.
+     */
+    private void insertChart(String type) {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            setTransientStatus("Open a document before inserting a chart.");
+            return;
+        }
+        applyEdit(document, SourceEdits.insertChart(
+                document.getEditor().getText(),
+                document.getEditor().getCaretPosition(), type));
+        document.getEditor().requestFocus();
+        setTransientStatus("Inserted a " + type + " chart - replace the example data.");
+    }
+
+    /**
+     * Changes the form of the chart that was right-clicked.
+     *
+     * <p>Only the {@code type:} line is rewritten, so the data survives the change intact -
+     * which is the whole point of offering this: seeing the same numbers as a column chart
+     * and as a line is how you find out which one they wanted to be.
+     */
+    private void setChartType(String type) {
+        DocumentView document = activeDocument();
+        String info = previewString("window.__mdChartInfo()");
+        if (document == null || info.isEmpty()) {
+            return;
+        }
+        String[] parts = info.split(",", 3);
+        int start;
+        int end;
+        try {
+            start = Integer.parseInt(parts[0]);
+            end = Integer.parseInt(parts[1]);
+        } catch (NumberFormatException e) {
+            return;
+        }
+        SourceEdits.Edit edit = SourceEdits.setChartType(
+                document.getEditor().getText(), start, end, type);
+        if (edit == null) {
+            setTransientStatus("That chart could not be located in the source.");
+            return;
+        }
+        applyEdit(document, edit);
+        setTransientStatus("Chart changed to " + type + ".");
     }
 
     /** Chooser plus copy-into-assets, shared by Insert image and Replace image. */
@@ -2836,6 +3055,7 @@ public class MainController {
         engine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
             if (newState == Worker.State.SUCCEEDED) {
                 injectMermaid();
+                injectCharts();
                 injectHighlighter();
                 installBridge();
                 previewReady = true;
@@ -3146,6 +3366,21 @@ public class MainController {
             Platform.runLater(() -> updatePreview());
         }
 
+        /**
+         * Opens the chart editor on the fence at {@code [start, end)}.
+         *
+         * <p>The fence is taken apart by the renderer rather than here, so the form and
+         * the picture can never disagree about what the source says; {@code source} is
+         * the text the chart was compiled from, which the page already has.
+         *
+         * <p>Deferred like every other bridge call: this arrives inside a DOM event
+         * handler, and opening a modal dialog from there would block the page's own event
+         * loop while the reader fills it in.
+         */
+        public void editChart(int start, int end, String source) {
+            Platform.runLater(() -> openChartEditor(start, end, source));
+        }
+
         /** The Markdown a rendered block came from, for editing it in place. */
         public String blockSource(int start, int end) {
             DocumentView document = activeDocument();
@@ -3229,6 +3464,28 @@ public class MainController {
         return TableSource.parse(text) == null ? null : text;
     }
 
+    /**
+     * Loads the chart compiler into the preview page.
+     *
+     * <p>Like the highlighter and mermaid, it is evaluated into the shell once rather than
+     * linked, because the page has no base URL to resolve a script tag against. If it is
+     * missing the fence body stays on screen as text, which for a chart is a readable
+     * table of numbers - a better failure than a blank plate.
+     */
+    private void injectCharts() {
+        try (InputStream in = getClass().getResourceAsStream("/js/mdchart.js")) {
+            if (in == null) {
+                System.err.println("MDViewer: mdchart.js not on the classpath "
+                        + "- chart blocks will stay as plain text.");
+                return;
+            }
+            webView.getEngine().executeScript(
+                    new String(in.readAllBytes(), StandardCharsets.UTF_8));
+        } catch (IOException | RuntimeException e) {
+            System.err.println("MDViewer: mdchart unavailable - " + e);
+        }
+    }
+
     private void injectMermaid() {
         try (InputStream in = getClass().getResourceAsStream("/js/mermaid.min.js")) {
             if (in == null) {
@@ -3290,8 +3547,32 @@ public class MainController {
      * into one grey wall. Sharing the sheet means the assistant's prose looks like the
      * preview's, down to the theme, without a second set of rules to keep in step.
      */
+    /**
+     * The chart library's own stylesheet, read from the classpath.
+     *
+     * <p>Vendored from ../mdchart by sync-mdchart.ps1 rather than copied by hand. It used
+     * to be a block of rules inside the text block below, which meant two copies of the
+     * same design - one here and one in the library - with nothing keeping them in step.
+     *
+     * <p>It is placed before this app's own rules so the block further down can map
+     * MDViewer's palette onto the library's {@code --mdc-*} variables and win.
+     */
+    private static String chartCss() {
+        try (InputStream in = MainController.class.getResourceAsStream("/css/mdchart.css")) {
+            if (in == null) {
+                System.err.println("MDViewer: mdchart.css not on the classpath "
+                        + "- charts will render without colour.");
+                return "";
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException | RuntimeException e) {
+            System.err.println("MDViewer: chart stylesheet unavailable - " + e);
+            return "";
+        }
+    }
+
     public static String previewCss() {
-        return """
+        return chartCss() + """
             :root {
               --paper:#F6F8FA; --ink:#16202B; --ink-soft:#5A6875;
               --rule:#DFE5EC; --line:#C7D2DE;
@@ -3349,7 +3630,8 @@ public class MainController {
               margin-left:var(--gutter); margin-right:auto;
             }
             body > .mdv-code, body > table, body > .mdv-diagram,
-            body > pre.mermaid, body > .mdv-diagram-error, body > hr {
+            body > pre.mermaid, body > .mdv-diagram-error, body > hr,
+            body > .mdv-chart-out, body > pre.mdv-chart {
               width:var(--plate); max-width:none;
               margin-left:var(--gutter); margin-right:auto;
               /* border-box, or the plates' own padding and accent border would be
@@ -3522,6 +3804,9 @@ public class MainController {
             /* A heading's ::after draws an accent bar; under an open editor it reads as
                part of the text being edited. */
             h1.mdv-block-editing::after { display:none; }
+            /* A chart is double-clicked to open its editor, so it gets the pointer that
+               says "this opens something" rather than a text caret over a picture. */
+            .mdv-chart-out { cursor:default; }
             /* The editor inherits nothing from the block it replaces - a heading's
                display face at 2.3rem is not what raw Markdown should be typed in. */
             textarea.mdv-block-editor {
@@ -3571,6 +3856,32 @@ public class MainController {
             /* Diagrams share the plate family. The card keeps a light ground in both
                themes: PlantUML and mermaid bake dark strokes into the SVG, which would
                disappear on a dark panel. */
+            /* ---------------------------------------------------------- charts
+
+               The rules themselves are mdchart.css, loaded above from the library's own
+               repository. All that is left here is the join: MDViewer's palette mapped
+               onto the library's --mdc-* variables, so a chart takes the document's rule
+               colour, accent, plate shadow and typefaces and looks like it belongs on
+               the page rather than like something pasted onto it.
+
+               Declared on :root rather than on the figure, because the theme switch
+               redefines --rule and the rest there - so these follow it with no rule of
+               their own for dark mode. That is also why a chart repaints on a theme
+               switch with no re-render, which mermaid and PlantUML cannot do: they bake
+               their colours into the SVG and have to sit on a pinned white plate. */
+            :root {
+              --mdc-line:var(--rule);
+              --mdc-accent:var(--accent);
+              --mdc-shadow:var(--plate-shadow);
+              --mdc-font:var(--body);
+              --mdc-mono:var(--mono);
+              --mdc-mark:var(--mark);
+              --mdc-note-bg:var(--stripe);
+              --mdc-error-ink:var(--err-fg);
+              --mdc-error-bg:var(--err-bg);
+              --mdc-error-line:var(--err-line);
+            }
+
             .mdv-diagram, pre.mermaid {
               position:relative; margin-top:1.8em; margin-bottom:1.8em; padding:34px 16px 16px;
               background:#FFFFFF; color:#16202B;
@@ -3629,7 +3940,8 @@ public class MainController {
               body { padding:0; font-size:10.5pt; background:#FFFFFF; }
               body > * { width:100%; margin-left:0; }
               body > .mdv-code, body > table, body > .mdv-diagram,
-              body > pre.mermaid, body > .mdv-diagram-error, body > hr {
+              body > pre.mermaid, body > .mdv-diagram-error, body > hr,
+              body > .mdv-chart-out, body > pre.mdv-chart {
                 width:100%; margin-left:0;
               }
 
@@ -3638,6 +3950,17 @@ public class MainController {
               img, figure, .mdv-diagram, pre.mermaid, .mdv-diagram-error, .mdv-code {
                 page-break-inside:avoid; break-inside:avoid;
               }
+
+              /* Charts on paper are mdchart.css's own print block: kept whole, never
+                 split across a fold, nothing allowed to scroll off an edge that cannot
+                 be scrolled. Two things it cannot do from CSS are done in Java before
+                 the job starts - laying every chart out again at the printable width,
+                 and opening the table views - see __mdChartsForPrint.
+
+                 The plate stays tinted rather than going white. It is a light surface
+                 already, the palette was validated against it, and dropping it would put
+                 the four lighter series hues on bare paper below the contrast they were
+                 checked at. */
 
               /* Tables are the deliberate exception: a long table SHOULD run across
                  pages, and its header has to follow. display:table is restated rather
@@ -3742,7 +4065,62 @@ public class MainController {
               window.__mdEditingCell = null;
               window.__mdEditingBlock = null;
               window.__mdRunMermaid();
+              window.__mdRunCharts();
               window.__mdHighlight();
+            };
+            /* Charts compile synchronously into SVG, so unlike mermaid there is nothing
+               to await and no failure to swallow quietly - a bad fence renders its own
+               message in place, next to the source that caused it. */
+            window.__mdRunCharts = function () {
+              if (!window.MdChart) { return; }
+              try { MdChart.renderAll(document); } catch (e) {}
+            };
+
+            /* Charts, made ready for paper.
+
+               Two things are wrong at print time and neither is fixable in CSS. A chart
+               is laid out in pixels for the pane it is in, and letting the page scale
+               that to fit the paper takes the type down with it - the same bug that made
+               11px labels render at 7px on screen, except on paper there is no zooming
+               out of it. So every chart is drawn again at the printable width, which
+               only Java knows, and drawn back afterwards.
+
+               And the table view is a <details>, which prints exactly as it sits: closed.
+               The table is the guarantee that no value is reachable only by hovering, and
+               a printed page cannot hover at all, so on paper it is the only copy of the
+               numbers. Opened here and closed again after, so the screen is as it was. */
+            window.__mdChartsForPrint = function (width) {
+              /* Which table views the reader had open, remembered before the redraw
+                 rather than after: a redraw rebuilds every figure, so the details
+                 elements standing afterwards are not the ones on screen now. */
+              window.__mdcOpenTables = [];
+              var before = document.querySelectorAll('.mdc-table');
+              for (var i = 0; i < before.length; i++) {
+                window.__mdcOpenTables.push(before[i].hasAttribute('open'));
+              }
+              var drawn = 0;
+              if (window.MdChart) {
+                try { drawn = MdChart.redrawAll(width); } catch (e) { drawn = 0; }
+              }
+              var tables = document.querySelectorAll('.mdc-table');
+              for (var j = 0; j < tables.length; j++) {
+                tables[j].setAttribute('open', '');
+              }
+              return drawn;
+            };
+            window.__mdChartsAfterPrint = function () {
+              if (window.MdChart) {
+                try { MdChart.redrawAll(0); } catch (e) {}
+              }
+              var was = window.__mdcOpenTables || [];
+              var tables = document.querySelectorAll('.mdc-table');
+              for (var i = 0; i < tables.length; i++) {
+                if (was[i]) {
+                  tables[i].setAttribute('open', '');
+                } else {
+                  tables[i].removeAttribute('open');
+                }
+              }
             };
             window.__mdSetDiagram = function (id, svg) {
               var el = document.getElementById(id);
@@ -3856,6 +4234,34 @@ public class MainController {
             });
             window.__mdCodeInfo = function () { return window.__mdCodeBlock; };
 
+            /* The chart under the pointer, plus what its data could be drawn as.
+               Captured on mousedown like the others, and the verdicts are asked for here
+               rather than when the menu opens because the source is on this element and
+               the menu is built on the other side of the bridge. */
+            window.__mdChartBlock = '';
+            document.addEventListener('mousedown', function (event) {
+              var el = event.target;
+              while (el && el !== document.body
+                     && !(el.classList && el.classList.contains('mdv-chart-out'))) {
+                el = el.parentElement;
+              }
+              if (el && el.classList && el.classList.contains('mdv-chart-out')
+                  && el.getAttribute('data-md-start') && window.MdChart) {
+                var source = el.getAttribute('data-mdc-src') || '';
+                var verdicts = '';
+                try { verdicts = MdChart.describe(source); } catch (e) { verdicts = ''; }
+                window.__mdChartBlock = el.getAttribute('data-md-start') + ','
+                    + el.getAttribute('data-md-end') + ',' + verdicts;
+                /* Kept as well as its offsets, so "Edit chart data" can be handed the
+                   source without going back to the document to find it again. */
+                window.__mdChartElement = el;
+              } else {
+                window.__mdChartBlock = '';
+                window.__mdChartElement = null;
+              }
+            });
+            window.__mdChartInfo = function () { return window.__mdChartBlock; };
+
             /* ---- editing a table cell in place ----------------------------------
                Double-click, not single: a table is read far more often than it is
                edited, and a single click would put a caret in a cell every time
@@ -3920,6 +4326,21 @@ public class MainController {
             }
 
             document.addEventListener('dblclick', function (event) {
+              /* A chart claims the double-click before anything else sees it, and opens a
+                 form rather than its own source. Editing the fence as text worked and put
+                 the reader one keystroke from a fence that no longer parses - a misplaced
+                 pipe turns a chart into a paragraph, and the feedback for that is the
+                 chart vanishing. A form cannot produce a fence that does not parse. */
+              var chartHost = mdChartHost(event.target);
+              if (chartHost) {
+                if (window.mdvBridge) {
+                  window.mdvBridge.editChart(
+                      parseInt(chartHost.getAttribute('data-md-start'), 10),
+                      parseInt(chartHost.getAttribute('data-md-end'), 10),
+                      chartHost.getAttribute('data-mdc-src') || '');
+                }
+                return;
+              }
               var cell = event.target;
               while (cell && cell !== document.body
                      && cell.tagName !== 'TD' && cell.tagName !== 'TH') {
@@ -3931,6 +4352,19 @@ public class MainController {
               }
               mdBeginBlockEdit(event.target);
             });
+
+            /** The compiled chart {@code node} sits inside, if it is inside one. */
+            function mdChartHost(node) {
+              var el = node && node.nodeType === 1 ? node : (node ? node.parentElement : null);
+              while (el && el !== document.body) {
+                if (el.classList && el.classList.contains('mdv-chart-out')
+                    && el.getAttribute('data-md-start')) {
+                  return el;
+                }
+                el = el.parentElement;
+              }
+              return null;
+            }
 
             /* ---- editing any other block in place -------------------------------
                The same idea as a table cell, and simpler: every rendered block already
@@ -3948,6 +4382,23 @@ public class MainController {
 
             function mdEditableBlock(node) {
               var el = node && node.nodeType === 1 ? node : (node ? node.parentElement : null);
+
+              /* A chart is looked for first, and from anywhere inside it.
+
+                 It has to come first because a chart contains a table - its table view -
+                 and the rule below stops at the first table it meets, which would make
+                 double-clicking the numbers underneath a chart do nothing. That table is
+                 generated from the fence and is not in the document at all; the fence is,
+                 and the fence is what opens.
+
+                 An SVG has nothing to put a caret in, so unlike a paragraph there is no
+                 in-place alternative: showing the source is the only way to edit a chart
+                 from the preview, which is exactly what a code block already does. */
+              /* A chart is never edited as a block: it opens a form of its own, handled
+                 before this is ever reached. Refused here as well so that no other path
+                 into the block editor can put a fence in a textarea by accident. */
+              if (mdChartHost(el)) { return null; }
+
               while (el && el !== document.body) {
                 /* A table is edited cell by cell and a diagram is not text at all;
                    either would be destroyed by a whole-block replacement. */
