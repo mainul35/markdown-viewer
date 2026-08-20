@@ -199,6 +199,18 @@ public final class CloudClient {
         send("PUT", "/api/v1/settings", json, "application/json");
     }
 
+    /**
+     * Keeps a diagram this machine drew, so a browser can show the same picture.
+     *
+     * <p>Filed under the hash of the diagram source rather than of the picture: the source
+     * is what both ends have, so the browser can ask for an SVG it has never seen by a name
+     * it works out itself. {@code DiagramKey} is where that rule is written down.
+     */
+    public void putDiagram(String sourceSha256, String svg, String renderer) throws IOException {
+        String body = "{\"svg\":" + quote(svg) + ",\"renderer\":" + quote(renderer) + "}";
+        send("PUT", "/api/v1/diagrams/" + sourceSha256, body, "application/json");
+    }
+
     // ------------------------------------------------------------------ plumbing
 
     private HttpRequest.Builder base(String path) throws IOException {

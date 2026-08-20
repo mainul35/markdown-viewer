@@ -195,6 +195,9 @@ public class MainController {
     /** Last rendered body HTML, re-applied whenever the shell page is (re)loaded. */
     private String currentPreviewHtml = "";
 
+    /** Sends what PlantUML drew to the cloud, so the browser can show the same picture. */
+    private final com.mdviewer.sync.DiagramUpload diagramUpload = new com.mdviewer.sync.DiagramUpload();
+
     /** Diagrams belonging to {@link #currentPreviewHtml}, re-pushed after a shell reload. */
     private List<MarkdownService.Diagram> currentDiagrams = List.of();
 
@@ -2819,11 +2822,20 @@ public class MainController {
         for (MarkdownService.Diagram diagram : diagrams) {
             String cached = diagramService.cached(diagram.source());
             if (cached != null) {
+                // Offered again rather than only on the first render: the cache outlives a
+                // sign-in, so a diagram drawn before signing in would otherwise never go up.
+                diagramUpload.offer(diagram.source(), cached);
                 setDiagram(diagram.id(), cached, generation);
                 continue;
             }
-            diagramService.renderAsync(diagram.source()).thenAccept(svg ->
-                    Platform.runLater(() -> setDiagram(diagram.id(), svg, generation)));
+            diagramService.renderAsync(diagram.source()).thenAccept(svg -> {
+                /* Drawn once, here, on the machine that was going to draw it anyway. The
+                   browser cannot render PlantUML and the cloud server will not, so this is
+                   where the picture it shows comes from. Best-effort and silent: a failed
+                   upload costs a picture in the browser and nothing here. */
+                diagramUpload.offer(diagram.source(), svg);
+                Platform.runLater(() -> setDiagram(diagram.id(), svg, generation));
+            });
         }
     }
 
@@ -3928,5 +3940,6 @@ public class MainController {
     /** Releases the background diagram renderer; called from {@link MainApp#stop()}. */
     public void dispose() {
         diagramService.shutdown();
+        diagramUpload.shutdown();
     }
 }
