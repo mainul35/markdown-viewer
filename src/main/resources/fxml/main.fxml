@@ -95,6 +95,7 @@
                     <SeparatorMenuItem/>
                     <MenuItem text="Cloud Sync..." onAction="#handleCloudSync"/>
                     <MenuItem text="Sync Settings to Cloud..." onAction="#handleCloudSettingsSync"/>
+                    <CheckMenuItem fx:id="cloudAutoSyncMenuItem" text="Sync Workspaces Automatically" selected="true" onAction="#handleToggleCloudAutoSync"/>
                     <SeparatorMenuItem/>
                     <CheckMenuItem fx:id="autoRefreshMenuItem" text="Auto-refresh Workspaces (5 min)" selected="true" onAction="#handleToggleAutoRefresh"/>
                 </Menu>
