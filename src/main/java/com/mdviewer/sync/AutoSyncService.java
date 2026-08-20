@@ -32,6 +32,9 @@ public final class AutoSyncService {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final Consumer<String> say;
 
+    /** Told about a round that failed, and told null when one succeeds again. */
+    private Consumer<Throwable> trouble = failure -> { };
+
     private ScheduledFuture<?> scheduled;
     private Path root;
 
@@ -41,6 +44,18 @@ public final class AutoSyncService {
      */
     public AutoSyncService(Consumer<String> say) {
         this.say = say == null ? message -> { } : say;
+    }
+
+    /**
+     * Where a failed round is reported.
+     *
+     * <p>Given the failure rather than a message, because what to do with it depends on
+     * whether it has been seen before - and this class has no business deciding that. It is
+     * told null after a round that works, so a fault that has cleared can be shown again if
+     * it comes back.
+     */
+    public void setOnTrouble(Consumer<Throwable> handler) {
+        this.trouble = handler == null ? failure -> { } : handler;
     }
 
     /**
@@ -90,18 +105,30 @@ public final class AutoSyncService {
                 return;
             }
 
-            SyncRunner runner = new SyncRunner(workspace, config.client(), state, message -> { });
-            SyncRunner.Proposal proposal = runner.plan();
-            AutoSync.Decision decision = AutoSync.decide(proposal);
+            /*
+             * Counted from here, so the indicator covers the network round trip that asks
+             * what would change - which is the part slow enough to be wondered about. The
+             * indicator waits before appearing, so a round that finds nothing and finishes in
+             * a moment never draws anything.
+             */
+            String name = workspace.getFileName() == null
+                    ? "workspace" : workspace.getFileName().toString();
+            try (AutoCloseable ignored = SyncActivity.shared().begin("Syncing " + name)) {
+                SyncRunner runner =
+                        new SyncRunner(workspace, config.client(), state, message -> { });
+                SyncRunner.Proposal proposal = runner.plan();
+                AutoSync.Decision decision = AutoSync.decide(proposal);
 
-            if (!decision.apply()) {
-                if (!decision.reason().isEmpty()) {
-                    say.accept(decision.reason());
+                if (!decision.apply()) {
+                    if (!decision.reason().isEmpty()) {
+                        say.accept(decision.reason());
+                    }
+                    return;
                 }
-                return;
+                runner.apply(proposal);
+                say.accept(decision.reason());
+                trouble.accept(null);   // Whatever was wrong before is over.
             }
-            runner.apply(proposal);
-            say.accept(decision.reason());
 
         } catch (CloudSession.NotSignedIn e) {
             /*
@@ -109,9 +136,14 @@ public final class AutoSyncService {
              * in has not asked to be reminded of it on a schedule.
              */
         } catch (Exception e) {
-            // Also quiet. A cloud that cannot be reached is a normal condition on a laptop,
-            // and an alert every few minutes about it is an alert people learn to ignore.
+            /*
+             * Reported, but not on a timer. A laptop off the network fails this every five
+             * minutes and an alert each time is an alert people learn to dismiss without
+             * reading - so what is handed over is the failure itself, and the decision about
+             * whether this one has already been seen belongs to whoever shows it.
+             */
             System.err.println("MDViewer: automatic sync did not run - " + e.getMessage());
+            trouble.accept(e);
         } finally {
             running.set(false);
         }

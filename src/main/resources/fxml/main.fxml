@@ -132,7 +132,12 @@
     </center>
 
     <bottom>
-        <HBox spacing="20" styleClass="status-bar">
+        <!--
+            The mode label grows, so anything after it sits against the right edge. That is
+            where the sync indicator goes: it is the one thing here that is not always true,
+            and putting it among the three facts that are would make them look changeable too.
+        -->
+        <HBox fx:id="statusBar" spacing="20" styleClass="status-bar">
             <Label fx:id="statusLabel" text="File: Untitled | Encoding: N/A"/>
             <Label fx:id="wordCountLabel" text="Words: 0"/>
             <Label fx:id="modeLabel" text="Mode: SPLIT" HBox.hgrow="ALWAYS"/>

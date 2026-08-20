@@ -93,6 +93,15 @@ public class MainController {
     private Label modeLabel;
 
     @FXML
+    private javafx.scene.layout.HBox statusBar;
+
+    /** On while something is talking to the cloud. Added to the status bar at startup. */
+    private final com.mdviewer.ui.SyncIndicator syncIndicator = new com.mdviewer.ui.SyncIndicator();
+
+    /** The last background failure shown, so the same one is not shown every five minutes. */
+    private String lastAutoSyncTrouble;
+
+    @FXML
     private Button themeButton;
 
     @FXML
@@ -270,6 +279,14 @@ public class MainController {
         explorerHost.getChildren().add(fileTreePanel);
 
         /*
+         * The spinner goes last, after the label that grows, so it sits against the right
+         * edge and away from the three facts beside it - those are always true, and this one
+         * is only sometimes.
+         */
+        syncIndicator.watch(com.mdviewer.sync.SyncActivity.shared());
+        statusBar.getChildren().add(syncIndicator);
+
+        /*
          * Cloud auto-sync watches whichever workspace is open. It reports through the status
          * line rather than a dialog: this runs while somebody is writing, and a modal that
          * appears over their document every few minutes would be worse than no sync at all.
@@ -279,6 +296,8 @@ public class MainController {
 
         cloudAutoSync = new com.mdviewer.sync.AutoSyncService(
                 message -> javafx.application.Platform.runLater(() -> setTransientStatus(message)));
+        cloudAutoSync.setOnTrouble(failure ->
+                javafx.application.Platform.runLater(() -> reportAutoSyncTrouble(failure)));
 
         workspaceSync = new Timeline(
                 new KeyFrame(WORKSPACE_SYNC_INTERVAL, e -> syncWorkspaces(false)));
@@ -1308,18 +1327,26 @@ public class MainController {
             }
         }
 
-        setTransientStatus("Sending to " + config.client().host() + "...");
+        String name = target.getFileName() == null ? "This" : target.getFileName().toString();
+        String doing = "Sending " + name;
+        setTransientStatus(doing + " to " + config.client().host() + "...");
+
         Thread worker = new Thread(() -> {
             String said;
-            try {
+            Throwable failed = null;
+
+            /* try-with-resources, so the spinner stops however this ends. A spinner left
+               running by an early return makes the reader distrust everything else on the
+               bar. */
+            try (AutoCloseable ignored = com.mdviewer.sync.SyncActivity.shared().begin(doing)) {
                 com.mdviewer.sync.CloudClient cloud = config.client();
                 com.mdviewer.sync.SyncRunner runner =
                         new com.mdviewer.sync.SyncRunner(root, cloud, state, message -> { });
 
                 if (!state.isEnrolled()) {
-                    String name = root.getFileName() == null
+                    String workspaceName = root.getFileName() == null
                             ? "workspace" : root.getFileName().toString();
-                    runner.createAndLink(name);
+                    runner.createAndLink(workspaceName);
                 }
 
                 com.mdviewer.sync.WorkspaceScanner.Scan scan =
@@ -1338,14 +1365,48 @@ public class MainController {
                             + ". The workspace is now at revision " + push.revision() + ".";
                 }
             } catch (Exception e) {
-                said = "Nothing was sent. "
-                        + (e.getMessage() == null ? e.toString() : e.getMessage());
+                failed = e;
+                said = "Nothing was sent - " + com.mdviewer.ui.SyncErrorDialog.codeOf(e);
             }
+
             final String message = said;
-            javafx.application.Platform.runLater(() -> setTransientStatus(message));
+            final Throwable failure = failed;
+            javafx.application.Platform.runLater(() -> {
+                setTransientStatus(message);
+                if (failure != null) {
+                    /* This one was asked for, so its failure is answered in front of the
+                       reader rather than in a line they may never look at. */
+                    com.mdviewer.ui.SyncErrorDialog.show(primaryStage, doing, failure);
+                }
+            });
         }, "mdviewer-partial-sync");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * Shows what went wrong in the background - once per fault, not once per attempt.
+     *
+     * <p>Automatic sync runs every five minutes, so a laptop off the network fails it twelve
+     * times an hour. A dialog each time is a dialog people dismiss without reading, and then
+     * the one that matters is dismissed the same way. So the same failure is shown once, the
+     * status line carries it after that, and a fault that clears and returns is shown again.
+     */
+    private void reportAutoSyncTrouble(Throwable failure) {
+        if (failure == null) {
+            lastAutoSyncTrouble = null;   // Working again; the next fault is news.
+            return;
+        }
+
+        String signature = com.mdviewer.ui.SyncErrorDialog.codeOf(failure) + " / "
+                + (failure.getMessage() == null ? failure.toString() : failure.getMessage());
+        if (signature.equals(lastAutoSyncTrouble)) {
+            setTransientStatus("Automatic sync is still failing - "
+                    + com.mdviewer.ui.SyncErrorDialog.codeOf(failure));
+            return;
+        }
+        lastAutoSyncTrouble = signature;
+        com.mdviewer.ui.SyncErrorDialog.show(primaryStage, "Automatic sync", failure);
     }
 
     /** The open workspace this path belongs to, or null if it is outside all of them. */
@@ -1405,7 +1466,9 @@ public class MainController {
 
         Thread worker = new Thread(() -> {
             String summary;
-            try {
+            Throwable failed = null;
+            try (AutoCloseable ignored =
+                         com.mdviewer.sync.SyncActivity.shared().begin("Syncing settings")) {
                 com.mdviewer.sync.CloudClient cloud = config.client();
                 com.mdviewer.sync.SettingsSync settings = new com.mdviewer.sync.SettingsSync();
 
@@ -1435,12 +1498,19 @@ public class MainController {
                 }
                 summary = said.toString();
             } catch (Exception e) {
-                summary = "Settings were not synced."
-                        + System.lineSeparator() + System.lineSeparator()
-                        + (e.getMessage() == null ? e.toString() : e.getMessage());
+                failed = e;
+                summary = "Settings were not synced.";
             }
             final String message = summary;
+            final Throwable failure = failed;
             javafx.application.Platform.runLater(() -> {
+                if (failure != null) {
+                    // A failure gets the error dialog, which names the code and can be
+                    // copied - an INFORMATION box saying something went wrong is the
+                    // wrong shape for something that did.
+                    com.mdviewer.ui.SyncErrorDialog.show(primaryStage, "Syncing settings", failure);
+                    return;
+                }
                 Alert done = new Alert(Alert.AlertType.INFORMATION);
                 done.initOwner(primaryStage);
                 done.setTitle("Cloud settings");
