@@ -1049,6 +1049,20 @@ public class MainController {
 
                 String account = session.account();
                 message = "Signed in" + (account.isBlank() ? "" : " as " + account) + ".";
+
+                /*
+                 * Tell the cloud this machine is here. Nothing else would until the first
+                 * sync, so the machine list would not show the machine the reader just
+                 * signed in on - which looks like the sign-in failed.
+                 */
+                try {
+                    config.client().announce();
+                } catch (Exception e) {
+                    // Not worth failing a successful sign-in over. The machine registers on
+                    // the first sync instead, which is where it used to happen anyway.
+                    message += System.lineSeparator() + System.lineSeparator()
+                            + "This machine will appear in your machine list after the first sync.";
+                }
                 if (!missing.isBlank()) {
                     /*
                      * Authenticated but not entitled. Worth saying here rather than letting
