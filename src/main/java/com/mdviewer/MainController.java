@@ -1249,7 +1249,6 @@ public class MainController {
         }
     }
 
-    @FXML
     /**
      * Sends one file, or one folder, to the cloud - and nothing else.
      *
@@ -1363,6 +1362,7 @@ public class MainController {
         return null;
     }
 
+    @FXML
     private void handleCloudSync() {
         com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
         if (!config.isEnabled()) {
