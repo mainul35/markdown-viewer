@@ -820,3 +820,33 @@
     -fx-background-radius: 4;
     -fx-cursor: hand;
 }
+
+/* ------------------------------------------------------------ sync indicator
+
+   The spinner at the right of the status bar, on while something is talking to the
+   cloud. Small and in the muted text colour: it answers "is it working" for somebody
+   who glances down, and has no business drawing the eye of somebody who does not. */
+.sync-indicator {
+    -fx-padding: 0 2 0 0;
+}
+
+.sync-caption {
+    -fx-font-size: 11px;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+/* Modena draws the indeterminate spinner with a percentage label underneath and its own
+   idea of a size. Both are wrong in a 22px bar: the label has nowhere to go, and the
+   default diameter pushes the bar taller than the text in it. */
+.sync-spinner {
+    -fx-progress-color: -mdv-accent;
+}
+
+.sync-spinner > .percentage {
+    -fx-font-size: 0;
+}
+
+.sync-spinner .indicator {
+    -fx-padding: 0;
+    -fx-background-color: transparent;
+}
