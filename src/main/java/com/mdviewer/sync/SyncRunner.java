@@ -102,6 +102,139 @@ public final class SyncRunner {
         return id;
     }
 
+    /** What one deliberate push sent, and what it left alone. */
+    public record Push(long revision, int sent, int alreadyThere, List<String> paths) {
+
+        public int total() {
+            return sent + alreadyThere;
+        }
+    }
+
+    /**
+     * Sends one file, or everything under one folder, and touches nothing else.
+     *
+     * <p>Asked for from the file tree, where somebody points at a document and says put that
+     * in the cloud. It is not a sync: nothing is downloaded, nothing is deleted, and no
+     * conflict is settled. It adds or updates the paths named and leaves the rest of the
+     * workspace exactly as it was.
+     *
+     * <p><strong>Which is harder than it sounds, because a commit is read as the whole
+     * truth.</strong> The server soft-deletes every path missing from the list it is given,
+     * so committing "the two files I chose" would delete every other document in the
+     * workspace. The list sent here is therefore the workspace as the server currently
+     * describes it, with the chosen files laid over the top - a plan against an empty base
+     * is what asks for that description, since "what would I download if I had nothing" is
+     * exactly the list of what is up there.
+     *
+     * @param wanted paths relative to the workspace root, in the scanner's own form
+     */
+    public Push push(java.util.Set<String> wanted) throws IOException {
+        if (!state.isEnrolled()) {
+            throw new NotEnrolledException();
+        }
+
+        progress.accept("Reading the workspace...");
+        WorkspaceScanner.Scan scan = WorkspaceScanner.scan(root);
+        List<FileState> chosen = scan.files().stream()
+                .filter(file -> wanted.contains(file.path()))
+                .toList();
+
+        if (chosen.isEmpty()) {
+            throw new IOException("there is nothing here that can be synced");
+        }
+
+        /*
+         * What the server holds right now. Asked for as a plan with an empty base and no
+         * local files, which is not a trick: every remote document comes back as a download,
+         * and that list is what has to survive the commit.
+         */
+        progress.accept("Asking " + cloud.host() + " what it already has...");
+        CloudClient.Plan remote = cloud.plan(state.workspaceId(), 0, Map.of(), List.of());
+
+        Map<String, FileState> intended = whatTheServerHolds(remote);
+        Map<String, String> remoteHashes = new LinkedHashMap<>();
+        intended.forEach((path, file) -> remoteHashes.put(path, file.hash()));
+
+        int sent = 0;
+        int alreadyThere = 0;
+        for (FileState file : chosen) {
+            /*
+             * Content-addressed storage makes the skip safe: the same hash at the same path
+             * is the same bytes, so there is nothing to send. It is worth checking because
+             * "sync this folder" on a folder that is already synced is a common thing to do,
+             * and it should cost one request rather than fifty uploads.
+             */
+            if (file.hash().equals(remoteHashes.get(file.path()))) {
+                alreadyThere++;
+            } else {
+                progress.accept("Sending " + file.path());
+                cloud.putBlob(file.hash(), Files.readAllBytes(root.resolve(file.path())));
+                sent++;
+            }
+            intended.put(file.path(), file);
+        }
+
+        progress.accept("Committing...");
+        long revision = cloud.commit(state.workspaceId(), remote.revision(),
+                List.copyOf(intended.values()));
+
+        /*
+         * Only the chosen paths join the agreed base, never the whole intended list.
+         *
+         * The base is what this machine and the server have agreed about, and the next plan
+         * reads a path in the base that is missing from disk as "deleted here since we
+         * agreed". Recording agreement about documents this machine has never seen would
+         * therefore make the following full sync offer to delete every one of them - a
+         * partial push quietly arming a full delete.
+         */
+        state.agreed(revision, agreedAfterPush(state.base(), chosen));
+
+        return new Push(revision, sent, alreadyThere,
+                chosen.stream().map(FileState::path).toList());
+    }
+
+    /**
+     * The workspace as the server currently describes it.
+     *
+     * <p>Read from a plan asked with an empty base, where every remote document comes back
+     * as a download - "what would I take if I had nothing" being exactly the list of what is
+     * up there.
+     *
+     * <p>This is the half of a partial push that has to be right. A commit is read as the
+     * whole truth and every path missing from it is soft-deleted, so a push that sent only
+     * the chosen files would delete every other document in the workspace.
+     */
+    static Map<String, FileState> whatTheServerHolds(CloudClient.Plan remote) {
+        Map<String, FileState> holding = new LinkedHashMap<>();
+        for (CloudClient.Change change : remote.changes()) {
+            if ("DOWNLOAD".equals(change.action())
+                    && change.remoteHash() != null && !change.remoteHash().isBlank()) {
+                holding.put(change.path(),
+                        new FileState(change.path(), change.remoteHash(), change.bytes()));
+            }
+        }
+        return holding;
+    }
+
+    /**
+     * What this machine and the server have agreed about, after a push.
+     *
+     * <p>The chosen paths join what was already agreed, and nothing else does - in
+     * particular not the rest of the commit list.
+     *
+     * <p>The base is read by the next plan as "what we both had last time", so a path in it
+     * that is missing from disk means "deleted here since we agreed". Recording agreement
+     * about documents this machine has never seen would therefore make the following full
+     * sync offer to delete every one of them: a partial push quietly arming a full delete.
+     */
+    static Map<String, String> agreedAfterPush(Map<String, String> base, List<FileState> chosen) {
+        Map<String, String> agreed = new LinkedHashMap<>(base);
+        for (FileState file : chosen) {
+            agreed.put(file.path(), file.hash());
+        }
+        return agreed;
+    }
+
     /** The folder's own name, offered as the default when creating a workspace. */
     public String suggestedName() {
         return root.getFileName().toString();

@@ -266,6 +266,7 @@ public class MainController {
         fileTreePanel.setOnReveal(this::handleRevealInTree);
         fileTreePanel.setFileActions(new ExplorerFileActions());
         fileTreePanel.setOnRefreshRequested(this::handleRefreshWorkspaces);
+        fileTreePanel.setOnSyncRequested(this::handleSyncToCloud);
         explorerHost.getChildren().add(fileTreePanel);
 
         /*
@@ -1249,6 +1250,119 @@ public class MainController {
     }
 
     @FXML
+    /**
+     * Sends one file, or one folder, to the cloud - and nothing else.
+     *
+     * <p>Reached by right-clicking in the tree, which is where the decision belongs. Syncing
+     * a whole workspace is a commitment to everything in it, and somebody with one folder of
+     * notes worth keeping and a scratch directory beside it should be able to say so by
+     * pointing at the folder they mean.
+     *
+     * <p>A file keeps its path: {@code notes/2026/plan.md} arrives under that name, so the
+     * folders around it exist in the cloud too. A folder means everything the scanner finds
+     * beneath it, which is the same set a full sync of that folder would have carried.
+     *
+     * <p>Nothing is downloaded and nothing is deleted. This adds or updates what was named
+     * and leaves the rest of the workspace as it was, which is what makes it safe to reach
+     * for on a folder without first working out what a full sync would do.
+     */
+    private void handleSyncToCloud(Path target) {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        if (!config.isEnabled()) {
+            setTransientStatus("Sign in first - Settings > Sign In to Cloud.");
+            return;
+        }
+
+        Path root = workspaceRootFor(target);
+        if (root == null) {
+            setTransientStatus("That is not inside an open workspace.");
+            return;
+        }
+
+        final com.mdviewer.sync.SyncState state;
+        try {
+            state = com.mdviewer.sync.SyncState.forWorkspace(root);
+        } catch (IOException e) {
+            setTransientStatus("Could not read this workspace's sync state: " + e.getMessage());
+            return;
+        }
+
+        /*
+         * Linking, if it has not been done. This is the one question the sync code refuses to
+         * answer on somebody's behalf - a folder called "docs" might be the same one from
+         * another machine or an unrelated project that shares a name, and joining the wrong
+         * one merges two sets of documents that were never meant to meet. Asked here, once,
+         * with the name it would create.
+         */
+        if (!state.isEnrolled()) {
+            String name = root.getFileName() == null ? "workspace" : root.getFileName().toString();
+            Alert ask = new Alert(Alert.AlertType.CONFIRMATION);
+            ask.initOwner(primaryStage);
+            ask.setTitle("Sync to cloud");
+            ask.setHeaderText("This folder is not in the cloud yet.");
+            ask.getDialogPane().setMinWidth(460);
+            ask.setContentText("Create a cloud workspace called \"" + name + "\" and send it there?"
+                    + System.lineSeparator() + System.lineSeparator()
+                    + "To join one that already exists instead, use Settings > Cloud Sync.");
+            if (ask.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
+                return;
+            }
+        }
+
+        setTransientStatus("Sending to " + config.client().host() + "...");
+        Thread worker = new Thread(() -> {
+            String said;
+            try {
+                com.mdviewer.sync.CloudClient cloud = config.client();
+                com.mdviewer.sync.SyncRunner runner =
+                        new com.mdviewer.sync.SyncRunner(root, cloud, state, message -> { });
+
+                if (!state.isEnrolled()) {
+                    String name = root.getFileName() == null
+                            ? "workspace" : root.getFileName().toString();
+                    runner.createAndLink(name);
+                }
+
+                com.mdviewer.sync.WorkspaceScanner.Scan scan =
+                        com.mdviewer.sync.WorkspaceScanner.scan(root);
+                java.util.Set<String> wanted =
+                        com.mdviewer.sync.PartialSync.pathsUnder(root, target, scan);
+
+                if (wanted.isEmpty()) {
+                    said = "There is nothing here that syncs. Markdown documents and the "
+                            + "images they use are what a workspace carries.";
+                } else {
+                    com.mdviewer.sync.SyncRunner.Push push = runner.push(wanted);
+                    said = push.sent() + (push.sent() == 1 ? " document sent" : " documents sent")
+                            + (push.alreadyThere() > 0
+                                    ? ", " + push.alreadyThere() + " already there" : "")
+                            + ". The workspace is now at revision " + push.revision() + ".";
+                }
+            } catch (Exception e) {
+                said = "Nothing was sent. "
+                        + (e.getMessage() == null ? e.toString() : e.getMessage());
+            }
+            final String message = said;
+            javafx.application.Platform.runLater(() -> setTransientStatus(message));
+        }, "mdviewer-partial-sync");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /** The open workspace this path belongs to, or null if it is outside all of them. */
+    private Path workspaceRootFor(Path path) {
+        for (WorkspaceView workspace : workspaces) {
+            try {
+                if (com.mdviewer.sync.WorkspaceScanner.isInside(workspace.getRoot(), path)) {
+                    return workspace.getRoot();
+                }
+            } catch (IOException e) {
+                // A workspace whose root has gone is not the answer; keep looking.
+            }
+        }
+        return null;
+    }
+
     private void handleCloudSync() {
         com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
         if (!config.isEnabled()) {

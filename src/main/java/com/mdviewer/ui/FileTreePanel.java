@@ -34,6 +34,7 @@ public final class FileTreePanel extends VBox {
     private final TreeItem<Path> hiddenRoot = new TreeItem<>(null);
     private final Button revealButton = new Button();
     private final ContextMenu contextMenu = new ContextMenu();
+    private java.util.function.Consumer<Path> onSyncRequested;
 
     private Consumer<Path> onFileActivated = p -> { };
     private FileActions fileActions;
@@ -166,9 +167,7 @@ public final class FileTreePanel extends VBox {
                     item("New folder...", () -> fileActions.createFolder(parent)));
         }
         if (target != null) {
-            if (!contextMenu.getItems().isEmpty()) {
-                contextMenu.getItems().add(new SeparatorMenuItem());
-            }
+            separate();
             if (!isDirectory) {
                 contextMenu.getItems().add(item("Open", () -> onFileActivated.accept(target)));
             }
@@ -181,10 +180,17 @@ public final class FileTreePanel extends VBox {
                         item("Delete", () -> fileActions.delete(target)));
             }
         }
+        if (target != null && onSyncRequested != null) {
+            separate();
+            /* One label for both. Which of the two happens is decided by what was clicked,
+               and the row under the pointer already says which that is - naming it again in
+               the menu would be the same sentence twice. */
+            contextMenu.getItems().add(
+                    item(isDirectory ? "Sync Folder to Cloud" : "Sync to Cloud",
+                            () -> onSyncRequested.accept(target)));
+        }
         if (onRefreshRequested != null) {
-            if (!contextMenu.getItems().isEmpty()) {
-                contextMenu.getItems().add(new SeparatorMenuItem());
-            }
+            separate();
             // Offered on the empty-space menu too, which is the one a user reaches for
             // when the tree looks wrong and there is no particular row to blame.
             contextMenu.getItems().add(item("Refresh workspaces", onRefreshRequested));
@@ -196,6 +202,33 @@ public final class FileTreePanel extends VBox {
 
     public void setOnRefreshRequested(Runnable handler) {
         this.onRefreshRequested = handler;
+    }
+
+    /**
+     * What to do when somebody asks for a file or folder to go to the cloud.
+     *
+     * <p>Offered from the tree because that is where the decision is made. Syncing a whole
+     * workspace is a commitment to everything in it; pointing at one folder is how somebody
+     * says "this part, not my whole notes directory".
+     */
+    public void setOnSyncRequested(java.util.function.Consumer<Path> handler) {
+        this.onSyncRequested = handler;
+    }
+
+    /**
+     * Starts a new group in the menu, if there is anything to separate it from.
+     *
+     * <p>Not just "is the menu empty": a group can turn out to have no items at all - a
+     * workspace root offers neither Rename nor Delete - and the separator that opened it
+     * would then be left with nothing behind it, so the next group's separator drew a
+     * second rule immediately after the first.
+     */
+    private void separate() {
+        List<MenuItem> items = contextMenu.getItems();
+        if (items.isEmpty() || items.get(items.size() - 1) instanceof SeparatorMenuItem) {
+            return;
+        }
+        items.add(new SeparatorMenuItem());
     }
 
     private static MenuItem item(String label, Runnable action) {
