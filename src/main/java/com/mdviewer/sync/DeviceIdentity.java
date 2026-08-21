@@ -77,9 +77,18 @@ public final class DeviceIdentity {
     /**
      * Something the reader will recognise in a list of machines.
      *
-     * <p>The hostname and the operating system, which is what somebody deciding whether to
-     * revoke a machine actually needs. An identifier they have never seen tells them
-     * nothing, and a list of those makes the feature useless at the moment it matters.
+     * <p>The hostname, what kind of machine it is, and the operating system. An identifier
+     * somebody has never seen tells them nothing, and a list of those makes the feature
+     * useless at the moment it matters.
+     *
+     * <p>The model earns its place on an account with two Windows laptops, where a hostname
+     * and a system name are two rows saying the same thing. It is also the name the reader
+     * has already been shown by their own operating system, which is the shortest path
+     * between a row in this list and the machine on the desk.
+     *
+     * <p>Named as the desktop application rather than left to be inferred. The same account
+     * carries browsers, and "which of these is the app and which is a tab I left open"
+     * should not be a deduction from an operating system name.
      */
     public String label() {
         String host;
@@ -88,6 +97,10 @@ public final class DeviceIdentity {
         } catch (IOException e) {
             host = System.getProperty("user.name", "unknown");
         }
-        return host + " - " + System.getProperty("os.name", "unknown system");
+
+        String model = MachineModel.of();
+        String system = System.getProperty("os.name", "unknown system");
+        return host + (model.isEmpty() ? "" : " - " + model)
+                + " - MDViewer desktop on " + system;
     }
 }
