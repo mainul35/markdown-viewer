@@ -1003,3 +1003,95 @@
     -fx-padding: 0;
     -fx-background-color: transparent;
 }
+
+/* ------------------------------------------------------------ the account bar
+
+   Along the bottom of the explorer, under the tree. Quiet by construction: it is a
+   fact about the window rather than a control anybody came here to use, and it sits
+   directly above the status line, which is the other row on screen that only says
+   what is true. A rule along the top separates it from the tree so it does not read
+   as one more file. */
+.account-bar {
+    -fx-padding: 8 10 8 10;
+    -fx-border-color: -mdv-border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+    -fx-cursor: hand;
+}
+
+.account-bar:hover {
+    -fx-background-color: -mdv-surface-alt;
+}
+
+.account-name {
+    -fx-text-fill: -mdv-text;
+    -fx-font-size: 11.5px;
+}
+
+/* Signed out is an invitation, not a statement, so it wears the muted ink the rest
+   of the panel uses for things that are not yet true. */
+.account-bar-out .account-name {
+    -fx-text-fill: -mdv-text-muted;
+}
+
+.account-avatar-ring {
+    -fx-fill: transparent;
+    -fx-stroke: -mdv-text-muted;
+    -fx-stroke-width: 1.1;
+}
+
+.account-avatar-mark {
+    -fx-fill: -mdv-text-muted;
+}
+
+.account-caret {
+    -fx-fill: -mdv-text-muted;
+}
+
+/* -------------------------------------------------------- the menu above it
+
+   Stated rather than inherited, for the reason the recent-workspace rows are: a
+   Label inside a CustomMenuItem picks up modena's ".menu-item .label", which is
+   written for native menu rows - leaning on it leaves this text one selector away
+   from being invisible against the popup, with nothing on screen to explain the
+   blank row. */
+.account-menu-name {
+    -fx-text-fill: -mdv-text;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-padding: 4 0 4 0;
+}
+
+.account-menu-plan {
+    -fx-padding: 4 0 6 0;
+}
+
+/* The plan's name, as a badge. Small, upper case and boxed, so it reads as a label
+   on the account rather than as another line of prose. */
+.account-plan {
+    -fx-text-fill: -mdv-accent;
+    -fx-font-size: 9.5px;
+    -fx-padding: 1 6 1 6;
+    -fx-background-color: -mdv-accent-soft;
+    -fx-background-radius: 3;
+}
+
+.account-usage {
+    -fx-text-fill: -mdv-text-muted;
+    -fx-font-size: 10.5px;
+}
+
+/* Drawn from two regions rather than a ProgressBar: modena's progress bar brings its
+   own padding, border and animation, and every one of them has to be argued back out
+   again before it looks like a quota meter. */
+.account-meter {
+    -fx-min-height: 4;
+    -fx-pref-height: 4;
+    -fx-max-height: 4;
+    -fx-background-color: -mdv-border;
+    -fx-background-radius: 2;
+}
+
+.account-meter-fill {
+    -fx-background-color: -mdv-accent;
+    -fx-background-radius: 2;
+}

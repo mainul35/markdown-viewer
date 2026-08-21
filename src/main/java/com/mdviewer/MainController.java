@@ -82,6 +82,8 @@ public class MainController {
 
     @FXML
     private StackPane explorerHost;
+    /** Who is signed in, along the bottom of the explorer. */
+    private com.mdviewer.ui.AccountBar accountBar;
 
     @FXML
     private TabPane workspaceTabs;
@@ -274,13 +276,18 @@ public class MainController {
         editorPane = new VBox();
         editorPane.getStyleClass().add("editor-pane");
 
+        accountBar = new com.mdviewer.ui.AccountBar();
+        accountBar.setActions(new AccountActions());
+
         fileTreePanel = new FileTreePanel();
         fileTreePanel.setOnFileActivated(path -> openFile(path.toFile()));
         fileTreePanel.setOnReveal(this::handleRevealInTree);
         fileTreePanel.setFileActions(new ExplorerFileActions());
         fileTreePanel.setOnRefreshRequested(this::handleRefreshWorkspaces);
         fileTreePanel.setOnSyncRequested(this::handleSyncToCloud);
+        fileTreePanel.setFooter(accountBar);
         explorerHost.getChildren().add(fileTreePanel);
+        refreshAccountBar();
 
         /*
          * The spinner goes last, after the label that grows, so it sits against the right
@@ -1206,6 +1213,7 @@ public class MainController {
 
                 String account = session.account();
                 message = "Signed in" + (account.isBlank() ? "" : " as " + account) + ".";
+                com.mdviewer.ui.AccountBar.onUi(this::refreshAccountBar);
 
                 /*
                  * Tell the cloud this machine is here. Nothing else would until the first
@@ -1264,11 +1272,95 @@ public class MainController {
         com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
         try {
             config.session().signOut();
+            refreshAccountBar();
             setTransientStatus("Signed out on this machine. Documents already in the cloud "
                     + "are untouched.");
         } catch (Exception e) {
             setTransientStatus("Could not sign out - "
                     + (e.getMessage() == null ? e.toString() : e.getMessage()));
+        }
+    }
+
+    /**
+     * Puts the account bar in step with what is actually signed in.
+     *
+     * <p>Called after signing in or out, and once when the window is built. The bar is not
+     * asked to work it out for itself: whether there is a session is a question about
+     * configuration and stored tokens, and a control that answered it would be a second
+     * opinion about the thing the rest of this class already owns.
+     */
+    private void refreshAccountBar() {
+        if (accountBar == null) {
+            return;
+        }
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        if (!config.isEnabled() || !config.session().hasStoredSignIn()) {
+            accountBar.setSignedOut();
+            return;
+        }
+
+        /*
+         * Shown before the plan is known. The account name is in the stored token and the
+         * quota is a request to a server that may be slow or unreachable, so waiting for the
+         * second would leave the bar blank on a window that has just opened - and blank is
+         * what "signed out" looks like.
+         */
+        String account = config.session().account();
+        accountBar.setSignedIn(account, "", 0, 0);
+
+        Thread worker = new Thread(() -> {
+            try {
+                com.mdviewer.sync.CloudClient.Quota quota = config.client().quota();
+                /* The name too: reading the quota is what loads the tokens, so on a window
+                   that has just opened this is the first moment the account is known. */
+                String named = config.session().account();
+                com.mdviewer.ui.AccountBar.onUi(() -> {
+                    if (!named.isBlank()) {
+                        accountBar.setSignedIn(named, quota.tier(), quota.usedBytes(),
+                                quota.limitBytes());
+                    } else {
+                        accountBar.setPlan(quota.tier(), quota.usedBytes(), quota.limitBytes());
+                    }
+                });
+            } catch (Exception e) {
+                /*
+                 * Silent. Being unable to reach the server says nothing about whether
+                 * somebody is signed in, and a bar that reported every failed request would
+                 * be an error message on a laptop that is merely offline.
+                 */
+            }
+        }, "cloud-account");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /** What the account bar's menu does, which is what the Settings menu has always done. */
+    private final class AccountActions implements com.mdviewer.ui.AccountBar.Actions {
+
+        @Override
+        public void signIn() {
+            handleCloudSignIn();
+        }
+
+        @Override
+        public void signOut() {
+            handleCloudSignOut();
+        }
+
+        /**
+         * Opens the plan page in the browser.
+         *
+         * <p>Not a dialog here. What a plan costs and what it includes changes without this
+         * application being rebuilt, and a desktop app carrying its own copy of a price list
+         * is a desktop app that is eventually wrong about money.
+         */
+        @Override
+        public void upgrade() {
+            com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+            String endpoint = config.endpoint();
+            String site = endpoint.replaceFirst("/+$", "");
+            hostServices.showDocument(site + "/account/plan");
+            setTransientStatus("Opened your plan in the browser.");
         }
     }
 

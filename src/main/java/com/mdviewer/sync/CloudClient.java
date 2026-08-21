@@ -195,6 +195,21 @@ public final class CloudClient {
         send("GET", "/api/v1/account/quota", null, null);
     }
 
+    /** How much of the account is used, and on which plan. */
+    public record Quota(long usedBytes, long limitBytes, long remainingBytes, String tier) { }
+
+    /**
+     * The same request {@link #announce()} makes, with the answer kept.
+     *
+     * <p>Which means asking for it also announces this machine - the reason announce()
+     * exists is a side effect of any authenticated call, not of that path in particular.
+     */
+    public Quota quota() throws IOException {
+        String response = send("GET", "/api/v1/account/quota", null, null);
+        return new Quota(number(response, "usedBytes"), number(response, "limitBytes"),
+                number(response, "remainingBytes"), string(response, "tier"));
+    }
+
     public void putSettings(String json) throws IOException {
         send("PUT", "/api/v1/settings", json, "application/json");
     }
