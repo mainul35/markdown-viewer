@@ -99,6 +99,21 @@ public final class FileTreePanel extends VBox {
     }
 
     /**
+     * Puts something along the bottom of the panel, under the tree.
+     *
+     * <p>The panel does not know or care what it is. The account bar is the one thing that
+     * goes here today, and an explorer that had to know about sign-in state to lay itself
+     * out would be an explorer that changes whenever the account does.
+     */
+    public void setFooter(javafx.scene.Node footer) {
+        getChildren().removeIf(child -> Boolean.TRUE.equals(child.getProperties().get("footer")));
+        if (footer != null) {
+            footer.getProperties().put("footer", Boolean.TRUE);
+            getChildren().add(footer);
+        }
+    }
+
+    /**
      * A crosshair drawn from shapes rather than an icon font or emoji: JavaFX's text stack
      * renders symbol glyphs inconsistently across platforms, and shapes also pick up the
      * theme colour straight from CSS.
