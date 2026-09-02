@@ -17,6 +17,13 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <javafx.version>21</javafx.version>
+        <!--
+            Appended to the distribution jar's name. Empty by default, so a plain
+            `mvn package` still produces mdviewer-1.0.0.jar for whoever is working on
+            it. A release profile sets both this and javafx.platform together - see
+            the profiles at the end of this file.
+        -->
+        <dist.suffix></dist.suffix>
         <junit.version>5.11.4</junit.version>
     </properties>
 
@@ -133,7 +140,12 @@
                 Standalone distribution: bundles JavaFX (including its native libraries),
                 commonmark, PlantUML and the mermaid build into one runnable jar, so
                 `java -jar target/mdviewer-1.0.0.jar` needs nothing but a JRE 21.
-                The natives are platform specific - build on the OS you ship to.
+                The bundled natives are platform specific, and which ones get bundled is
+                decided by javafx.platform - which defaults to the machine doing the build.
+                That default is how release 1.0.0 shipped a Windows-only jar: on Linux it
+                failed with "Error initializing QuantumRenderer: no suitable pipeline found",
+                which names graphics pipelines and not the actual cause. Release builds must
+                pass -P<platform> so the choice is made on purpose rather than by accident.
             -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -147,6 +159,7 @@
                         </goals>
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <finalName>mdviewer-${project.version}${dist.suffix}</finalName>
                             <shadedArtifactAttached>false</shadedArtifactAttached>
                             <transformers>
                                 <transformer
@@ -177,4 +190,66 @@
             </plugin>
         </plugins>
     </build>
+
+    <!--
+        Which natives get bundled is decided by the javafx.platform property, and it has
+        to arrive as -D on the command line: the OpenJFX artifacts choose their classifier
+        through profile activation in their own pom, and that only ever sees system
+        properties. Setting javafx.platform in a profile here names the jar correctly and
+        packages the wrong libraries - a Linux-named jar full of DLLs, which fails at the
+        user rather than at the build.
+
+        So these profiles activate *from* that property and only supply the matching name.
+        One flag, and the name and the contents cannot disagree:
+
+            mvn clean package -DskipTests -Djavafx.platform=linux
+            mvn clean package -DskipTests -Djavafx.platform=win
+            mvn clean package -DskipTests -Djavafx.platform=mac-aarch64
+
+        Cross-building is fine - these are ordinary downloads, so every platform builds on
+        any machine. Each run overwrites target/, so copy the jar out between builds.
+
+        With no -D at all, nothing is appended and the jar is built for this machine, which
+        is what you want while working on it and is never what you want for a release.
+    -->
+    <profiles>
+        <profile>
+            <id>win</id>
+            <activation>
+                <property><name>javafx.platform</name><value>win</value></property>
+            </activation>
+            <properties><dist.suffix>-win</dist.suffix></properties>
+        </profile>
+        <profile>
+            <id>linux</id>
+            <activation>
+                <property><name>javafx.platform</name><value>linux</value></property>
+            </activation>
+            <properties><dist.suffix>-linux</dist.suffix></properties>
+        </profile>
+        <profile>
+            <!-- Raspberry Pi and other 64-bit ARM Linux. -->
+            <id>linux-aarch64</id>
+            <activation>
+                <property><name>javafx.platform</name><value>linux-aarch64</value></property>
+            </activation>
+            <properties><dist.suffix>-linux-aarch64</dist.suffix></properties>
+        </profile>
+        <profile>
+            <!-- Intel Macs. -->
+            <id>mac</id>
+            <activation>
+                <property><name>javafx.platform</name><value>mac</value></property>
+            </activation>
+            <properties><dist.suffix>-mac</dist.suffix></properties>
+        </profile>
+        <profile>
+            <!-- Apple silicon. -->
+            <id>mac-aarch64</id>
+            <activation>
+                <property><name>javafx.platform</name><value>mac-aarch64</value></property>
+            </activation>
+            <properties><dist.suffix>-mac-aarch64</dist.suffix></properties>
+        </profile>
+    </profiles>
 </project>
