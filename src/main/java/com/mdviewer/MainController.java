@@ -55,6 +55,7 @@ import com.mdviewer.ui.FindBar;
 import com.mdviewer.ui.MarkdownFiles;
 import com.mdviewer.ui.PathTreeItem;
 import com.mdviewer.ui.PreviewToolbar;
+import com.mdviewer.ui.TouchScroll;
 import com.mdviewer.ui.WelcomeView;
 import com.mdviewer.ui.WorkspaceView;
 
@@ -114,6 +115,9 @@ public class MainController {
 
     @FXML
     private MenuItem explorerMenuItem;
+
+    @FXML
+    private javafx.scene.control.CheckMenuItem touchScrollMenuItem;
 
     @FXML
     private MenuItem assistantMenuItem;
@@ -244,6 +248,9 @@ public class MainController {
 
     private boolean darkMode = false;
 
+    /** Drag to scroll instead of drag to select, for touchscreens. */
+    private final TouchScroll touchScroll = new TouchScroll();
+
     public enum EditorMode {
         RAW, SPLIT, FULL_PREVIEW
     }
@@ -252,6 +259,10 @@ public class MainController {
     public void initialize() {
         webView = new WebView();
         webView.setMinWidth(0);
+        touchScroll.install(webView);
+        if (touchScrollMenuItem != null) {
+            touchScrollMenuItem.setSelected(touchScroll.isEnabled());
+        }
 
         previewToolbar = new PreviewToolbar();
         previewToolbar.setOnAction(this::applyFormat);
@@ -571,6 +582,7 @@ public class MainController {
 
     private DocumentView createDocument(WorkspaceView workspace, Path path, String text) {
         DocumentView document = new DocumentView(path, "Untitled-" + (++untitledCounter));
+        touchScroll.install(document.getEditor());
 
         loadingDocument = true;
         document.getEditor().setText(text);
@@ -1703,6 +1715,18 @@ public class MainController {
     @FXML
     private void handleToggleExplorer() {
         showExplorer(!isExplorerVisible());
+    }
+
+    /**
+     * Turns drag-to-scroll on or off.
+     *
+     * <p>A touchscreen that the system reports as an ordinary pointer is indistinguishable
+     * from a mouse, so the app cannot decide this for you: the same drag is a selection to
+     * one person and a scroll to another. The tick is remembered between runs.
+     */
+    @FXML
+    private void handleToggleTouchScroll() {
+        touchScroll.setEnabled(touchScrollMenuItem.isSelected());
     }
 
     /**
