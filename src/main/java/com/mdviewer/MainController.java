@@ -241,6 +241,22 @@ public class MainController {
     /** Style class that enlarges every hit target; see the touch mode block in styles.css. */
     private static final String TOUCH_STYLE_CLASS = "touch";
 
+    /** Style class for a narrow window; see the compact layout block in styles.css. */
+    private static final String COMPACT_STYLE_CLASS = "compact";
+
+    /**
+     * Below this width the chrome is spending too much of the screen on itself.
+     *
+     * <p>Chosen from the shape of the window rather than the device: a tablet held in
+     * portrait and a half-screen window on a desktop have the same problem, and a tablet in
+     * landscape has neither. Asking the window also means the answer changes when it is
+     * resized or the device rotated, which asking the hardware once at startup would not.
+     */
+    private static final double COMPACT_WIDTH = 900;
+
+    /** Past this the file tree is taking space the document needs more. */
+    private static final double MAX_EXPLORER_WIDTH = 240;
+
     /**
      * Tab ceilings. Past these the strips stop being scannable, which is the whole point
      * of grouping files by workspace; opening more is refused with a status-bar message
@@ -267,6 +283,7 @@ public class MainController {
             touchScrollMenuItem.setSelected(touchScroll.isEnabled());
         }
         applyTouchMode();
+        installResponsiveLayout();
 
         previewToolbar = new PreviewToolbar();
         previewToolbar.setOnAction(this::applyFormat);
@@ -1742,6 +1759,66 @@ public class MainController {
      * style class on the root so the rules live in the stylesheet with everything else,
      * rather than as sizes set from code that the theme cannot then override.
      */
+    /**
+     * Keeps the layout matched to how much width there actually is.
+     *
+     * <p>Watches the scene rather than the screen, so rotating a tablet or dragging the
+     * window narrower is noticed. The scene does not exist while FXML is being built, hence
+     * the wait for it to arrive.
+     */
+    private void installResponsiveLayout() {
+        if (rootPane == null) {
+            return;
+        }
+        if (rootPane.getScene() != null) {
+            watchWidth(rootPane.getScene());
+        } else {
+            rootPane.sceneProperty().addListener((observable, had, scene) -> {
+                if (scene != null) {
+                    watchWidth(scene);
+                }
+            });
+        }
+    }
+
+    private void watchWidth(javafx.scene.Scene scene) {
+        applyWidth(scene.getWidth());
+        scene.widthProperty().addListener(
+                (observable, was, now) -> applyWidth(now.doubleValue()));
+    }
+
+    private void applyWidth(double width) {
+        if (width <= 0) {
+            return;
+        }
+        if (width < COMPACT_WIDTH) {
+            if (!rootPane.getStyleClass().contains(COMPACT_STYLE_CLASS)) {
+                rootPane.getStyleClass().add(COMPACT_STYLE_CLASS);
+            }
+        } else {
+            rootPane.getStyleClass().remove(COMPACT_STYLE_CLASS);
+        }
+        capExplorer(width);
+    }
+
+    /**
+     * Stops the file tree taking a third of a narrow window.
+     *
+     * <p>The divider is a fraction, so a sidebar that looks right at 1600px is half the
+     * document at 800. This only ever narrows it: a wide window is left alone, and so is a
+     * sidebar the reader has already dragged smaller than the cap.
+     */
+    private void capExplorer(double width) {
+        if (mainSplit == null || !isExplorerVisible() || mainSplit.getDividers().isEmpty()) {
+            return;
+        }
+        double cap = MAX_EXPLORER_WIDTH / width;
+        if (mainSplit.getDividerPositions()[0] > cap) {
+            mainSplit.setDividerPosition(0, cap);
+            explorerDivider = cap;
+        }
+    }
+
     private void applyTouchMode() {
         if (rootPane == null) {
             return;

@@ -56,6 +56,38 @@ public final class TouchScroll {
     private static final String EDITING =
             "!!(window.__mdEditingBlock || window.__mdEditingCell)";
 
+    /**
+     * Stops the page selecting text for as long as a scroll lasts.
+     *
+     * <p>A drag has to travel a few pixels before it counts as a scroll, and WebKit starts
+     * selecting on the first of them - so by the time scrolling begins there is already an
+     * anchor down. Worse, that anchor survives: as the page moves under it the selection
+     * extends to follow, so a short drag paints the whole document blue while it scrolls.
+     *
+     * <p>Clearing what is selected is therefore not enough on its own; selection has to be
+     * off while the finger is down. Both are done here, and undone on release.
+     */
+    private static final String NO_SELECT = """
+            (function () {
+              var b = document.body;
+              if (!b) { return; }
+              b.style.userSelect = 'none';
+              b.style.webkitUserSelect = 'none';
+              var s = window.getSelection();
+              if (s) { s.removeAllRanges(); }
+            })();
+            """;
+
+    /** Gives selection back, so a double tap into a block can still select inside it. */
+    private static final String SELECT_AGAIN = """
+            (function () {
+              var b = document.body;
+              if (!b) { return; }
+              b.style.userSelect = '';
+              b.style.webkitUserSelect = '';
+            })();
+            """;
+
     private final Path file;
     private boolean enabled;
 
@@ -208,21 +240,32 @@ public final class TouchScroll {
         });
 
         preview.addEventFilter(MouseEvent.MOUSE_DRAGGED, e -> {
+            boolean wasScrolling = gesture.scrolling;
             if (!gesture.shouldScroll(enabled, e.getSceneY())) {
                 return;
+            }
+            if (!wasScrolling) {
+                /* Once per gesture, at the moment it becomes a scroll. */
+                run(preview, NO_SELECT);
             }
             scrollTo(preview, Math.max(0, gesture.target(e.getSceneY())));
             e.consume();
         });
 
-        preview.addEventFilter(MouseEvent.MOUSE_RELEASED, gesture::endedScrolling);
+        preview.addEventFilter(MouseEvent.MOUSE_RELEASED, e -> {
+            if (gesture.scrolling) {
+                run(preview, NO_SELECT);      /* clear what the last moments selected */
+                run(preview, SELECT_AGAIN);
+            }
+            gesture.endedScrolling(e);
+        });
     }
 
     /** One press-drag-release, and what it turned out to mean. */
     private static final class Gesture {
         private double pressedAt;
         private double offsetAtPress;
-        private boolean scrolling;
+        boolean scrolling;
         boolean selecting;
 
         void begin(double sceneY, double offset) {
@@ -257,6 +300,14 @@ public final class TouchScroll {
                 scrolling = false;
                 e.consume();
             }
+        }
+    }
+
+    private static void run(WebView preview, String script) {
+        try {
+            preview.getEngine().executeScript(script);
+        } catch (RuntimeException pageNotReady) {
+            /* Nothing rendered yet - there is nothing to select either. */
         }
     }
 
