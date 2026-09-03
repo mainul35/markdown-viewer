@@ -39,6 +39,7 @@ import javafx.stage.Stage;
 import javafx.util.Duration;
 import com.mdviewer.service.DiagramService;
 import com.mdviewer.service.ImageRef;
+import com.mdviewer.service.ChartData;
 import com.mdviewer.service.MarkdownService;
 import com.mdviewer.service.SourceEdits;
 import com.mdviewer.service.TableSource;
@@ -48,6 +49,7 @@ import com.mdviewer.ai.AiPanel;
 import com.mdviewer.service.Trash;
 import com.mdviewer.ui.DocumentView;
 import com.mdviewer.ui.FileTreePanel;
+import com.mdviewer.ui.ChartDialog;
 import com.mdviewer.ui.CropDialog;
 import com.mdviewer.ui.FindBar;
 import com.mdviewer.ui.MarkdownFiles;
@@ -65,6 +67,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -79,6 +82,8 @@ public class MainController {
 
     @FXML
     private StackPane explorerHost;
+    /** Who is signed in, along the bottom of the explorer. */
+    private com.mdviewer.ui.AccountBar accountBar;
 
     @FXML
     private TabPane workspaceTabs;
@@ -91,6 +96,15 @@ public class MainController {
 
     @FXML
     private Label modeLabel;
+
+    @FXML
+    private javafx.scene.layout.HBox statusBar;
+
+    /** On while something is talking to the cloud. Added to the status bar at startup. */
+    private final com.mdviewer.ui.SyncIndicator syncIndicator = new com.mdviewer.ui.SyncIndicator();
+
+    /** The last background failure shown, so the same one is not shown every five minutes. */
+    private String lastAutoSyncTrouble;
 
     @FXML
     private Button themeButton;
@@ -116,6 +130,19 @@ public class MainController {
 
     @FXML
     private CheckMenuItem autoRefreshMenuItem;
+
+    @FXML
+    private CheckMenuItem cloudAutoSyncMenuItem;
+
+    private com.mdviewer.sync.AutoSyncService cloudAutoSync;
+
+    /**
+     * Carries the document being written to the cloud about once a minute.
+     *
+     * <p>Made when it is first needed rather than at startup: most sessions never touch the
+     * cloud, and an unused connection should cost nothing.
+     */
+    private com.mdviewer.sync.DraftLink draftLink;
 
     @FXML
     private Menu recentWorkspacesMenu;
@@ -182,6 +209,9 @@ public class MainController {
     /** Last rendered body HTML, re-applied whenever the shell page is (re)loaded. */
     private String currentPreviewHtml = "";
 
+    /** Sends what PlantUML drew to the cloud, so the browser can show the same picture. */
+    private final com.mdviewer.sync.DiagramUpload diagramUpload = new com.mdviewer.sync.DiagramUpload();
+
     /** Diagrams belonging to {@link #currentPreviewHtml}, re-pushed after a shell reload. */
     private List<MarkdownService.Diagram> currentDiagrams = List.of();
 
@@ -226,6 +256,7 @@ public class MainController {
         previewToolbar = new PreviewToolbar();
         previewToolbar.setOnAction(this::applyFormat);
         previewToolbar.setOnInsertTable(this::insertTable);
+        previewToolbar.setOnInsertChart(this::insertChart);
 
         // The preview column: formatting toolbar above the rendered document.
         previewPane = new VBox(previewToolbar, webView);
@@ -245,12 +276,39 @@ public class MainController {
         editorPane = new VBox();
         editorPane.getStyleClass().add("editor-pane");
 
+        accountBar = new com.mdviewer.ui.AccountBar();
+        accountBar.setActions(new AccountActions());
+
         fileTreePanel = new FileTreePanel();
         fileTreePanel.setOnFileActivated(path -> openFile(path.toFile()));
         fileTreePanel.setOnReveal(this::handleRevealInTree);
         fileTreePanel.setFileActions(new ExplorerFileActions());
         fileTreePanel.setOnRefreshRequested(this::handleRefreshWorkspaces);
+        fileTreePanel.setOnSyncRequested(this::handleSyncToCloud);
+        fileTreePanel.setFooter(accountBar);
         explorerHost.getChildren().add(fileTreePanel);
+        refreshAccountBar();
+
+        /*
+         * The spinner goes last, after the label that grows, so it sits against the right
+         * edge and away from the three facts beside it - those are always true, and this one
+         * is only sometimes.
+         */
+        syncIndicator.watch(com.mdviewer.sync.SyncActivity.shared());
+        statusBar.getChildren().add(syncIndicator);
+
+        /*
+         * Cloud auto-sync watches whichever workspace is open. It reports through the status
+         * line rather than a dialog: this runs while somebody is writing, and a modal that
+         * appears over their document every few minutes would be worse than no sync at all.
+         */
+        // The tick has to match the file, or the menu is a second opinion about the setting.
+        cloudAutoSyncMenuItem.setSelected(new com.mdviewer.sync.CloudConfig().autoSync());
+
+        cloudAutoSync = new com.mdviewer.sync.AutoSyncService(
+                message -> javafx.application.Platform.runLater(() -> setTransientStatus(message)));
+        cloudAutoSync.setOnTrouble(failure ->
+                javafx.application.Platform.runLater(() -> reportAutoSyncTrouble(failure)));
 
         workspaceSync = new Timeline(
                 new KeyFrame(WORKSPACE_SYNC_INTERVAL, e -> syncWorkspaces(false)));
@@ -291,7 +349,12 @@ public class MainController {
         previewDebounce.setOnFinished(e -> updatePreview());
 
         workspaceTabs.getSelectionModel().selectedItemProperty()
-                .addListener((obs, old, now) -> onActiveDocumentChanged());
+                .addListener((obs, old, now) -> {
+                    onActiveDocumentChanged();
+                    // The workspace in front of the reader is the one worth keeping in step.
+                    WorkspaceView workspace = activeWorkspace();
+                    cloudAutoSync.watch(workspace == null ? null : workspace.getRoot());
+                });
         workspaceTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.ALL_TABS);
 
         /* The editor area is mounted here, once, and never moved again.
@@ -482,6 +545,7 @@ public class MainController {
         updateWordCount();
         updateStatus();
         updateTitle();
+        protectActiveDocument();
         /* The assistant follows the document. One panel, but a conversation each: asking
            about a design note and then opening a specification used to carry the first
            document's questions into the second. Keyed by path so a file keeps its thread
@@ -1016,6 +1080,550 @@ public class MainController {
             aiPanel.refreshProviders();
             setTransientStatus("AI providers updated.");
         }
+    }
+
+    /**
+     * Syncs the active workspace folder, after showing what that would do.
+     *
+     * <p>Per workspace, never per document and never for everything open at once: a
+     * workspace is the unit someone decided to put in the cloud, and the folder currently
+     * in front of them is the only one they can be said to have asked about.
+     */
+    /**
+     * Signs in to the cloud, in the reader's own browser.
+     *
+     * <p>The browser rather than a window inside MDViewer, and that is the point: the
+     * password goes to the authorization server the reader can see the address of, and this
+     * application never has the chance to read it. A sign-in page drawn inside an
+     * application asks to be trusted; one in the browser can be checked.
+     */
+    /**
+     * Turns automatic cloud sync on or off, and remembers it.
+     *
+     * <p>Remembered in the same file as everything else about the cloud, so the answer
+     * survives a restart - a setting that quietly reverts is one nobody trusts twice.
+     */
+    /**
+     * Points the draft link at whatever is being written now.
+     *
+     * <p>Only the document in front of the reader is worth protecting: it is the only one
+     * whose unsaved state is not already on disk. Moving to another document sends the last
+     * of the first one on the way past, because release does that.
+     */
+    private void protectActiveDocument() {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        DocumentView document = activeDocument();
+        WorkspaceView workspace = activeWorkspace();
+
+        if (!config.isEnabled() || document == null || workspace == null
+                || document.getPath() == null) {
+            if (draftLink != null) {
+                draftLink.release();
+            }
+            return;
+        }
+
+        try {
+            com.mdviewer.sync.SyncState state =
+                    com.mdviewer.sync.SyncState.forWorkspace(workspace.getRoot());
+            if (!state.isEnrolled()) {
+                // Not linked to a cloud workspace, so there is nowhere to put a draft.
+                if (draftLink != null) {
+                    draftLink.release();
+                }
+                return;
+            }
+
+            if (draftLink == null) {
+                draftLink = new com.mdviewer.sync.DraftLink(config.endpoint(), config.session(),
+                        state1 -> javafx.application.Platform.runLater(() -> showDraftState(state1)));
+            }
+
+            String path = com.mdviewer.sync.WorkspaceScanner.relative(
+                    workspace.getRoot().toRealPath(), document.getPath());
+
+            /* The text is read on the draft link's own thread, so reading it has to be safe
+               from one - hence the hop back onto the UI thread for the value. */
+            draftLink.protect(state.workspaceId(), path, () -> {
+                final String[] held = new String[1];
+                final java.util.concurrent.CountDownLatch read = new java.util.concurrent.CountDownLatch(1);
+                javafx.application.Platform.runLater(() -> {
+                    try {
+                        DocumentView now = activeDocument();
+                        held[0] = now == null ? null : now.getEditor().getText();
+                    } finally {
+                        read.countDown();
+                    }
+                });
+                try {
+                    return read.await(5, java.util.concurrent.TimeUnit.SECONDS) ? held[0] : null;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return null;
+                }
+            });
+        } catch (Exception e) {
+            // Cloud drafts are a convenience. Nothing about editing depends on them, and a
+            // reader who cannot reach the cloud should not hear about it while typing.
+        }
+    }
+
+    /**
+     * Says whether what is being written is protected, quietly.
+     *
+     * <p>In the status line and nowhere else. This changes when a laptop leaves a network,
+     * which is often and is not news - a dialog for it would be an interruption every time
+     * somebody walked out of the office.
+     */
+    private void showDraftState(com.mdviewer.sync.DraftLink.State state) {
+        switch (state) {
+            case PROTECTED -> setTransientStatus("Unsaved changes are being kept in the cloud.");
+            case UNPROTECTED -> setTransientStatus("The cloud cannot be reached, so unsaved "
+                    + "changes are only on this machine.");
+            default -> { }
+        }
+    }
+
+    @FXML
+    private void handleToggleCloudAutoSync() {
+        try {
+            new com.mdviewer.sync.CloudConfig().setAutoSync(cloudAutoSyncMenuItem.isSelected());
+            setTransientStatus(cloudAutoSyncMenuItem.isSelected()
+                    ? "Workspaces will keep themselves in step with the cloud."
+                    : "Automatic sync is off. Use Settings > Cloud Sync when you want to sync.");
+        } catch (Exception e) {
+            setTransientStatus("Could not save that setting - "
+                    + (e.getMessage() == null ? e.toString() : e.getMessage()));
+        }
+    }
+
+    @FXML
+    private void handleCloudSignIn() {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        com.mdviewer.sync.CloudSession session = config.session();
+
+        setTransientStatus("Opening " + config.issuer() + " in your browser...");
+
+        Thread worker = new Thread(() -> {
+            String message;
+            try {
+                String missing = session.signIn(uri ->
+                        javafx.application.Platform.runLater(() ->
+                                hostServices.showDocument(uri.toString())));
+
+                String account = session.account();
+                message = "Signed in" + (account.isBlank() ? "" : " as " + account) + ".";
+                com.mdviewer.ui.AccountBar.onUi(this::refreshAccountBar);
+
+                /*
+                 * Tell the cloud this machine is here. Nothing else would until the first
+                 * sync, so the machine list would not show the machine the reader just
+                 * signed in on - which looks like the sign-in failed.
+                 */
+                try {
+                    config.client().announce();
+                } catch (Exception e) {
+                    // Not worth failing a successful sign-in over. The machine registers on
+                    // the first sync instead, which is where it used to happen anyway.
+                    message += System.lineSeparator() + System.lineSeparator()
+                            + "This machine will appear in your machine list after the first sync.";
+                }
+                if (!missing.isBlank()) {
+                    /*
+                     * Authenticated but not entitled. Worth saying here rather than letting
+                     * it surface as a 403 during a sync, where it looks like the sync is
+                     * broken rather than the grant being absent.
+                     */
+                    message += System.lineSeparator() + System.lineSeparator()
+                            + "This account did not receive: " + missing
+                            + System.lineSeparator()
+                            + "Sync will be refused until those are granted to the MDViewer "
+                            + "application in the authorization server.";
+                }
+            } catch (Exception e) {
+                message = "Not signed in."
+                        + System.lineSeparator() + System.lineSeparator()
+                        + (e.getMessage() == null ? e.toString() : e.getMessage());
+            }
+            final String said = message;
+            javafx.application.Platform.runLater(() -> {
+                Alert done = new Alert(Alert.AlertType.INFORMATION);
+                done.initOwner(primaryStage);
+                done.setTitle("Cloud sign-in");
+                done.setHeaderText(null);
+                done.getDialogPane().setMinWidth(460);
+                done.setContentText(said);
+                done.showAndWait();
+            });
+        }, "cloud-sign-in");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Forgets the sign-in on this machine.
+     *
+     * <p>Local only, and said so in the dialog. Other machines keep theirs, and anything
+     * already in the cloud stays there - signing out of a reader is not a way to withdraw
+     * documents, and it would be a poor thing to let someone believe it was.
+     */
+    @FXML
+    private void handleCloudSignOut() {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        try {
+            config.session().signOut();
+            refreshAccountBar();
+            setTransientStatus("Signed out on this machine. Documents already in the cloud "
+                    + "are untouched.");
+        } catch (Exception e) {
+            setTransientStatus("Could not sign out - "
+                    + (e.getMessage() == null ? e.toString() : e.getMessage()));
+        }
+    }
+
+    /**
+     * Puts the account bar in step with what is actually signed in.
+     *
+     * <p>Called after signing in or out, and once when the window is built. The bar is not
+     * asked to work it out for itself: whether there is a session is a question about
+     * configuration and stored tokens, and a control that answered it would be a second
+     * opinion about the thing the rest of this class already owns.
+     */
+    private void refreshAccountBar() {
+        if (accountBar == null) {
+            return;
+        }
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        if (!config.isEnabled() || !config.session().hasStoredSignIn()) {
+            accountBar.setSignedOut();
+            return;
+        }
+
+        /*
+         * Shown before the plan is known. The account name is in the stored token and the
+         * quota is a request to a server that may be slow or unreachable, so waiting for the
+         * second would leave the bar blank on a window that has just opened - and blank is
+         * what "signed out" looks like.
+         */
+        String account = config.session().account();
+        accountBar.setSignedIn(account, "", 0, 0);
+
+        Thread worker = new Thread(() -> {
+            try {
+                com.mdviewer.sync.CloudClient.Quota quota = config.client().quota();
+                /* The name too: reading the quota is what loads the tokens, so on a window
+                   that has just opened this is the first moment the account is known. */
+                String named = config.session().account();
+                com.mdviewer.ui.AccountBar.onUi(() -> {
+                    if (!named.isBlank()) {
+                        accountBar.setSignedIn(named, quota.tier(), quota.usedBytes(),
+                                quota.limitBytes());
+                    } else {
+                        accountBar.setPlan(quota.tier(), quota.usedBytes(), quota.limitBytes());
+                    }
+                });
+            } catch (Exception e) {
+                /*
+                 * Silent. Being unable to reach the server says nothing about whether
+                 * somebody is signed in, and a bar that reported every failed request would
+                 * be an error message on a laptop that is merely offline.
+                 */
+            }
+        }, "cloud-account");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /** What the account bar's menu does, which is what the Settings menu has always done. */
+    private final class AccountActions implements com.mdviewer.ui.AccountBar.Actions {
+
+        @Override
+        public void signIn() {
+            handleCloudSignIn();
+        }
+
+        @Override
+        public void signOut() {
+            handleCloudSignOut();
+        }
+
+        /**
+         * Opens the plan page in the browser.
+         *
+         * <p>Not a dialog here. What a plan costs and what it includes changes without this
+         * application being rebuilt, and a desktop app carrying its own copy of a price list
+         * is a desktop app that is eventually wrong about money.
+         */
+        @Override
+        public void upgrade() {
+            com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+            String endpoint = config.endpoint();
+            String site = endpoint.replaceFirst("/+$", "");
+            hostServices.showDocument(site + "/account/plan");
+            setTransientStatus("Opened your plan in the browser.");
+        }
+    }
+
+    /**
+     * Sends one file, or one folder, to the cloud - and nothing else.
+     *
+     * <p>Reached by right-clicking in the tree, which is where the decision belongs. Syncing
+     * a whole workspace is a commitment to everything in it, and somebody with one folder of
+     * notes worth keeping and a scratch directory beside it should be able to say so by
+     * pointing at the folder they mean.
+     *
+     * <p>A file keeps its path: {@code notes/2026/plan.md} arrives under that name, so the
+     * folders around it exist in the cloud too. A folder means everything the scanner finds
+     * beneath it, which is the same set a full sync of that folder would have carried.
+     *
+     * <p>Nothing is downloaded and nothing is deleted. This adds or updates what was named
+     * and leaves the rest of the workspace as it was, which is what makes it safe to reach
+     * for on a folder without first working out what a full sync would do.
+     */
+    private void handleSyncToCloud(Path target) {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        if (!config.isEnabled()) {
+            setTransientStatus("Sign in first - Settings > Sign In to Cloud.");
+            return;
+        }
+
+        Path root = workspaceRootFor(target);
+        if (root == null) {
+            setTransientStatus("That is not inside an open workspace.");
+            return;
+        }
+
+        final com.mdviewer.sync.SyncState state;
+        try {
+            state = com.mdviewer.sync.SyncState.forWorkspace(root);
+        } catch (IOException e) {
+            setTransientStatus("Could not read this workspace's sync state: " + e.getMessage());
+            return;
+        }
+
+        /*
+         * Linking, if it has not been done. This is the one question the sync code refuses to
+         * answer on somebody's behalf - a folder called "docs" might be the same one from
+         * another machine or an unrelated project that shares a name, and joining the wrong
+         * one merges two sets of documents that were never meant to meet. Asked here, once,
+         * with the name it would create.
+         */
+        if (!state.isEnrolled()) {
+            String name = root.getFileName() == null ? "workspace" : root.getFileName().toString();
+            Alert ask = new Alert(Alert.AlertType.CONFIRMATION);
+            ask.initOwner(primaryStage);
+            ask.setTitle("Sync to cloud");
+            ask.setHeaderText("This folder is not in the cloud yet.");
+            ask.getDialogPane().setMinWidth(460);
+            ask.setContentText("Create a cloud workspace called \"" + name + "\" and send it there?"
+                    + System.lineSeparator() + System.lineSeparator()
+                    + "To join one that already exists instead, use Settings > Cloud Sync.");
+            if (ask.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
+                return;
+            }
+        }
+
+        String name = target.getFileName() == null ? "This" : target.getFileName().toString();
+        String doing = "Sending " + name;
+        setTransientStatus(doing + " to " + config.client().host() + "...");
+
+        Thread worker = new Thread(() -> {
+            String said;
+            Throwable failed = null;
+
+            /* try-with-resources, so the spinner stops however this ends. A spinner left
+               running by an early return makes the reader distrust everything else on the
+               bar. */
+            try (AutoCloseable ignored = com.mdviewer.sync.SyncActivity.shared().begin(doing)) {
+                com.mdviewer.sync.CloudClient cloud = config.client();
+                com.mdviewer.sync.SyncRunner runner =
+                        new com.mdviewer.sync.SyncRunner(root, cloud, state, message -> { });
+
+                if (!state.isEnrolled()) {
+                    String workspaceName = root.getFileName() == null
+                            ? "workspace" : root.getFileName().toString();
+                    runner.createAndLink(workspaceName);
+                }
+
+                com.mdviewer.sync.WorkspaceScanner.Scan scan =
+                        com.mdviewer.sync.WorkspaceScanner.scan(root);
+                java.util.Set<String> wanted =
+                        com.mdviewer.sync.PartialSync.pathsUnder(root, target, scan);
+
+                if (wanted.isEmpty()) {
+                    said = "There is nothing here that syncs. Markdown documents and the "
+                            + "images they use are what a workspace carries.";
+                } else {
+                    com.mdviewer.sync.SyncRunner.Push push = runner.push(wanted);
+                    said = push.sent() + (push.sent() == 1 ? " document sent" : " documents sent")
+                            + (push.alreadyThere() > 0
+                                    ? ", " + push.alreadyThere() + " already there" : "")
+                            + ". The workspace is now at revision " + push.revision() + ".";
+                }
+            } catch (Exception e) {
+                failed = e;
+                said = "Nothing was sent - " + com.mdviewer.ui.SyncErrorDialog.codeOf(e);
+            }
+
+            final String message = said;
+            final Throwable failure = failed;
+            javafx.application.Platform.runLater(() -> {
+                setTransientStatus(message);
+                if (failure != null) {
+                    /* This one was asked for, so its failure is answered in front of the
+                       reader rather than in a line they may never look at. */
+                    com.mdviewer.ui.SyncErrorDialog.show(primaryStage, doing, failure);
+                }
+            });
+        }, "mdviewer-partial-sync");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Shows what went wrong in the background - once per fault, not once per attempt.
+     *
+     * <p>Automatic sync runs every five minutes, so a laptop off the network fails it twelve
+     * times an hour. A dialog each time is a dialog people dismiss without reading, and then
+     * the one that matters is dismissed the same way. So the same failure is shown once, the
+     * status line carries it after that, and a fault that clears and returns is shown again.
+     */
+    private void reportAutoSyncTrouble(Throwable failure) {
+        if (failure == null) {
+            lastAutoSyncTrouble = null;   // Working again; the next fault is news.
+            return;
+        }
+
+        String signature = com.mdviewer.ui.SyncErrorDialog.codeOf(failure) + " / "
+                + (failure.getMessage() == null ? failure.toString() : failure.getMessage());
+        if (signature.equals(lastAutoSyncTrouble)) {
+            setTransientStatus("Automatic sync is still failing - "
+                    + com.mdviewer.ui.SyncErrorDialog.codeOf(failure));
+            return;
+        }
+        lastAutoSyncTrouble = signature;
+        com.mdviewer.ui.SyncErrorDialog.show(primaryStage, "Automatic sync", failure);
+    }
+
+    /** The open workspace this path belongs to, or null if it is outside all of them. */
+    private Path workspaceRootFor(Path path) {
+        for (WorkspaceView workspace : workspaces) {
+            try {
+                if (com.mdviewer.sync.WorkspaceScanner.isInside(workspace.getRoot(), path)) {
+                    return workspace.getRoot();
+                }
+            } catch (IOException e) {
+                // A workspace whose root has gone is not the answer; keep looking.
+            }
+        }
+        return null;
+    }
+
+    @FXML
+    private void handleCloudSync() {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        if (!config.isEnabled()) {
+            setTransientStatus("Cloud sync is off. Turn it on in "
+                    + System.getProperty("user.home") + "\\.mdviewer\\cloud.properties");
+            return;
+        }
+        WorkspaceView workspace = activeWorkspace();
+        Path root = workspace == null ? null : workspace.getRoot();
+        if (root == null) {
+            setTransientStatus("Open a folder before syncing - a workspace is what syncs, "
+                    + "not a single document.");
+            return;
+        }
+        com.mdviewer.sync.CloudSyncDialog.open(primaryStage, root, config);
+        // A sync can add, change or remove files under the workspace, so the tree on screen
+        // is out of date by definition once it finishes.
+        handleRefreshWorkspaces();
+    }
+
+    /**
+     * Sends this machine's AI settings to the account, and takes back what is there.
+     *
+     * <p>Its own action rather than part of a workspace sync, because settings belong to
+     * the account and workspaces do not - folding them together would mean the reader's
+     * provider configuration changed as a side effect of syncing some documents.
+     *
+     * <p>Credentials are removed before anything is sent, and what was held back is named
+     * in the result: a decision the reader is told about rather than a surprise waiting on
+     * the other machine.
+     */
+    @FXML
+    private void handleCloudSettingsSync() {
+        com.mdviewer.sync.CloudConfig config = new com.mdviewer.sync.CloudConfig();
+        if (!config.isEnabled()) {
+            setTransientStatus("Cloud sync is off. Turn it on in "
+                    + System.getProperty("user.home") + "\\.mdviewer\\cloud.properties");
+            return;
+        }
+
+        Thread worker = new Thread(() -> {
+            String summary;
+            Throwable failed = null;
+            try (AutoCloseable ignored =
+                         com.mdviewer.sync.SyncActivity.shared().begin("Syncing settings")) {
+                com.mdviewer.sync.CloudClient cloud = config.client();
+                com.mdviewer.sync.SettingsSync settings = new com.mdviewer.sync.SettingsSync();
+
+                /* Down first, then up. Taking what is there before sending means another
+                   machine's additions survive; sending first would overwrite them with
+                   whatever this machine happened to hold. */
+                com.mdviewer.sync.SettingsSync.Incoming incoming =
+                        settings.apply(cloud.getSettings());
+                com.mdviewer.sync.SettingsSync.Outgoing outgoing = settings.outgoing();
+                cloud.putSettings(outgoing.json());
+
+                StringBuilder said = new StringBuilder();
+                said.append("Settings synced with ").append(cloud.host()).append(".")
+                        .append(System.lineSeparator()).append(System.lineSeparator());
+                said.append(incoming.added()).append(" added, ")
+                        .append(incoming.changed()).append(" changed on this machine.")
+                        .append(System.lineSeparator());
+                if (!outgoing.withheld().isEmpty()) {
+                    said.append(System.lineSeparator())
+                            .append("Kept on this machine, as always:")
+                            .append(System.lineSeparator());
+                    for (String name : outgoing.withheld()) {
+                        said.append("    ").append(name).append(System.lineSeparator());
+                    }
+                    said.append(System.lineSeparator())
+                            .append("Another machine will ask for these once.");
+                }
+                summary = said.toString();
+            } catch (Exception e) {
+                failed = e;
+                summary = "Settings were not synced.";
+            }
+            final String message = summary;
+            final Throwable failure = failed;
+            javafx.application.Platform.runLater(() -> {
+                if (failure != null) {
+                    // A failure gets the error dialog, which names the code and can be
+                    // copied - an INFORMATION box saying something went wrong is the
+                    // wrong shape for something that did.
+                    com.mdviewer.ui.SyncErrorDialog.show(primaryStage, "Syncing settings", failure);
+                    return;
+                }
+                Alert done = new Alert(Alert.AlertType.INFORMATION);
+                done.initOwner(primaryStage);
+                done.setTitle("Cloud settings");
+                done.setHeaderText(null);
+                done.getDialogPane().setMinWidth(460);
+                done.setContentText(message);
+                done.showAndWait();
+                // The assistant's picker is built from the config, so it has to be rebuilt
+                // when the config has changed underneath it.
+                if (aiPanel != null) {
+                    aiPanel.refreshProviders();
+                }
+            });
+        }, "cloud-settings-sync");
+        worker.setDaemon(true);
+        worker.start();
+        setTransientStatus("Syncing settings...");
     }
 
     @FXML
@@ -1667,15 +2275,27 @@ public class MainController {
         ContextMenu codeMenu = new ContextMenu(copyItem("Copy"), new SeparatorMenuItem(),
                 languages);
 
+        // A chart's menu is built per right-click rather than once, because which forms
+        // are on offer depends on the data in the chart under the pointer.
+        ContextMenu chartMenu = new ContextMenu();
+
         webView.setOnContextMenuRequested(event -> {
             textMenu.hide();
             imageMenu.hide();
             codeMenu.hide();
+            chartMenu.hide();
             // The page records what was under the pointer on mousedown, which fires
             // before this, so the choice of menu is already known.
             boolean onImage = !previewString("window.__mdImageInfo()").isEmpty();
             boolean onCode = !previewString("window.__mdCodeInfo()").isEmpty();
-            ContextMenu menu = onImage ? imageMenu : onCode ? codeMenu : textMenu;
+            String chart = previewString("window.__mdChartInfo()");
+            ContextMenu menu;
+            if (!chart.isEmpty()) {
+                fillChartMenu(chartMenu, chart);
+                menu = chartMenu;
+            } else {
+                menu = onImage ? imageMenu : onCode ? codeMenu : textMenu;
+            }
             menu.show(webView, event.getScreenX(), event.getScreenY());
             event.consume();
         });
@@ -1683,7 +2303,125 @@ public class MainController {
             textMenu.hide();
             imageMenu.hide();
             codeMenu.hide();
+            chartMenu.hide();
         });
+    }
+
+    /** Chart forms, in the order the picker offers them: fence value to display name. */
+    private static final String[][] CHART_FORMS = {
+            {"bar", "Bar"},
+            {"column", "Column"},
+            {"line", "Line"},
+            {"area", "Area"},
+            {"pie", "Pie"},
+            {"donut", "Donut"},
+            {"stat", "Stat"},
+    };
+
+    /**
+     * Rebuilds the chart menu for the chart that was just right-clicked.
+     *
+     * <p>Forms the data cannot take are shown disabled with the reason beside them rather
+     * than hidden. Hiding them would leave the reader to guess why a chart they have seen
+     * elsewhere is not on offer here, and the reason - "needs one value per row", "shows
+     * one number; this has 12" - is the part worth reading. The current form is disabled
+     * too, for the plainer reason that it is already what you have.
+     *
+     * @param info {@code start,end,describe-output} as recorded on mousedown
+     */
+    private void fillChartMenu(ContextMenu menu, String info) {
+        menu.getItems().clear();
+        String[] parts = info.split(",", 3);
+        Map<String, String> verdicts = new LinkedHashMap<>();
+        if (parts.length > 2) {
+            for (String line : parts[2].split("\n")) {
+                int equals = line.indexOf('=');
+                if (equals > 0) {
+                    verdicts.put(line.substring(0, equals).trim(), line.substring(equals + 1).trim());
+                }
+            }
+        }
+        String current = verdicts.getOrDefault("type", "");
+
+        Menu change = new Menu("Change chart to");
+        for (String[] form : CHART_FORMS) {
+            String verdict = verdicts.get(form[0]);
+            boolean isCurrent = form[0].equals(current);
+            boolean fits = "ok".equals(verdict);
+            MenuItem item = new MenuItem(isCurrent ? form[1] + "  (current)"
+                    : fits ? form[1]
+                    : form[1] + "  -  " + verdict);
+            item.setDisable(isCurrent || !fits);
+            item.setOnAction(e -> setChartType(form[0]));
+            change.getItems().add(item);
+        }
+
+        MenuItem edit = new MenuItem("Edit chart data...");
+        edit.setOnAction(e -> editChartFromMenu(info));
+
+        menu.getItems().addAll(change, new SeparatorMenuItem(), edit, copyItem("Copy"));
+    }
+
+    /** Opens the chart editor on whichever chart was right-clicked. */
+    private void editChartFromMenu(String info) {
+        String[] parts = info.split(",", 3);
+        int start;
+        int end;
+        try {
+            start = Integer.parseInt(parts[0]);
+            end = Integer.parseInt(parts[1]);
+        } catch (NumberFormatException e) {
+            return;
+        }
+        openChartEditor(start, end, previewString(
+                "(function(){var el=window.__mdChartElement;"
+                + "return el ? (el.getAttribute('data-mdc-src') || '') : '';})()"));
+    }
+
+    /**
+     * The chart editor: a form over the fence, rather than the fence as text.
+     *
+     * <p>The grid comes from the renderer's own reading of the source - there is one
+     * parser for this syntax and it is the one that draws the chart, so what the form
+     * shows can never disagree with the picture it was opened from.
+     *
+     * <p>The write-back is guarded the same way an in-place block edit is: the offsets
+     * came from a render, a render can be a moment behind the editor, and writing to a
+     * range that has moved would overwrite whatever is in it now.
+     */
+    private void openChartEditor(int start, int end, String source) {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            return;
+        }
+        String text = document.getEditor().getText();
+        if (start < 0 || end > text.length() || start >= end) {
+            setTransientStatus("That chart could not be located in the source.");
+            return;
+        }
+        String original = text.substring(start, end);
+        String model = previewString("MdChart.model("
+                + toJsStringLiteral(source == null ? "" : source) + ")");
+        if (model.isEmpty()) {
+            setTransientStatus("The chart could not be read for editing.");
+            return;
+        }
+
+        String fence = ChartDialog.edit(primaryStage, ChartData.fromModel(model));
+        if (fence == null) {
+            return; // Cancelled.
+        }
+
+        String now = document.getEditor().getText();
+        if (end > now.length() || !now.substring(start, end).equals(original)) {
+            setTransientStatus("The document changed while the chart was open; "
+                    + "the edit was not applied.");
+            updatePreview();
+            return;
+        }
+        applyEdit(document, new SourceEdits.Edit(
+                start, end, fence, start, start + fence.length()));
+        setTransientStatus("Chart updated.");
     }
 
     private MenuItem copyItem(String label) {
@@ -2054,9 +2792,43 @@ public class MainController {
             statusRestore.stop();
         }
 
-        webView.getEngine().print(job);
+        /* Charts are laid out in pixels for the pane they are in, which is not the width
+           of the paper. Letting the page scale them to fit would shrink their type along
+           with their geometry, so they are drawn again for the page the job is actually
+           going to - taken from the settings the dialog returned, since paper size and
+           orientation are both still the user's to change in there. */
+        prepareChartsForPrint(job.getJobSettings().getPageLayout());
+        try {
+            webView.getEngine().print(job);
+        } finally {
+            // In a finally block because a print that throws must not leave the reader
+            // looking at charts laid out for A4 and every table view forced open.
+            previewString("window.__mdChartsAfterPrint()");
+        }
         job.endJob();
         setTransientStatus("Sent " + jobName + " to " + job.getPrinter().getName() + ".");
+    }
+
+    /**
+     * Draws every chart again at the width of the page being printed, and opens the table
+     * views so the numbers are on the paper.
+     *
+     * <p>The printable width comes back from the page layout in points - a seventy-second
+     * of an inch - and CSS pixels are ninety-sixths of one, so the conversion is the ratio
+     * of those two. Without it a chart drawn for a 430-pixel pane prints at 430 pixels on
+     * a 720-pixel page, taking up three-fifths of the width it was given.
+     *
+     * <p>Undone by {@code __mdChartsAfterPrint} once the job has been handed over.
+     */
+    private void prepareChartsForPrint(PageLayout layout) {
+        if (layout == null) {
+            return;
+        }
+        int width = (int) Math.round(layout.getPrintableWidth() * 96.0 / 72.0);
+        if (width < 320) {
+            return; // Not a page anything readable fits on; leave the charts as they are.
+        }
+        previewString("window.__mdChartsForPrint(" + width + ")");
     }
 
     /**
@@ -2158,6 +2930,57 @@ public class MainController {
                 document.getEditor().getCaretPosition(), rows, columns));
         document.getEditor().requestFocus();
         setTransientStatus("Inserted a " + rows + " x " + columns + " table.");
+    }
+
+    /**
+     * Inserts a chart of the chosen form, with example data already in it.
+     *
+     * <p>The title is selected rather than the first number, because naming the chart is
+     * the one thing every chart needs and the numbers are easier to find once it draws.
+     */
+    private void insertChart(String type) {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            setTransientStatus("Open a document before inserting a chart.");
+            return;
+        }
+        applyEdit(document, SourceEdits.insertChart(
+                document.getEditor().getText(),
+                document.getEditor().getCaretPosition(), type));
+        document.getEditor().requestFocus();
+        setTransientStatus("Inserted a " + type + " chart - replace the example data.");
+    }
+
+    /**
+     * Changes the form of the chart that was right-clicked.
+     *
+     * <p>Only the {@code type:} line is rewritten, so the data survives the change intact -
+     * which is the whole point of offering this: seeing the same numbers as a column chart
+     * and as a line is how you find out which one they wanted to be.
+     */
+    private void setChartType(String type) {
+        DocumentView document = activeDocument();
+        String info = previewString("window.__mdChartInfo()");
+        if (document == null || info.isEmpty()) {
+            return;
+        }
+        String[] parts = info.split(",", 3);
+        int start;
+        int end;
+        try {
+            start = Integer.parseInt(parts[0]);
+            end = Integer.parseInt(parts[1]);
+        } catch (NumberFormatException e) {
+            return;
+        }
+        SourceEdits.Edit edit = SourceEdits.setChartType(
+                document.getEditor().getText(), start, end, type);
+        if (edit == null) {
+            setTransientStatus("That chart could not be located in the source.");
+            return;
+        }
+        applyEdit(document, edit);
+        setTransientStatus("Chart changed to " + type + ".");
     }
 
     /** Chooser plus copy-into-assets, shared by Insert image and Replace image. */
@@ -2324,6 +3147,7 @@ public class MainController {
         engine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
             if (newState == Worker.State.SUCCEEDED) {
                 injectMermaid();
+                injectCharts();
                 injectHighlighter();
                 installBridge();
                 previewReady = true;
@@ -2494,11 +3318,20 @@ public class MainController {
         for (MarkdownService.Diagram diagram : diagrams) {
             String cached = diagramService.cached(diagram.source());
             if (cached != null) {
+                // Offered again rather than only on the first render: the cache outlives a
+                // sign-in, so a diagram drawn before signing in would otherwise never go up.
+                diagramUpload.offer(diagram.source(), cached);
                 setDiagram(diagram.id(), cached, generation);
                 continue;
             }
-            diagramService.renderAsync(diagram.source()).thenAccept(svg ->
-                    Platform.runLater(() -> setDiagram(diagram.id(), svg, generation)));
+            diagramService.renderAsync(diagram.source()).thenAccept(svg -> {
+                /* Drawn once, here, on the machine that was going to draw it anyway. The
+                   browser cannot render PlantUML and the cloud server will not, so this is
+                   where the picture it shows comes from. Best-effort and silent: a failed
+                   upload costs a picture in the browser and nothing here. */
+                diagramUpload.offer(diagram.source(), svg);
+                Platform.runLater(() -> setDiagram(diagram.id(), svg, generation));
+            });
         }
     }
 
@@ -2625,6 +3458,21 @@ public class MainController {
             Platform.runLater(() -> updatePreview());
         }
 
+        /**
+         * Opens the chart editor on the fence at {@code [start, end)}.
+         *
+         * <p>The fence is taken apart by the renderer rather than here, so the form and
+         * the picture can never disagree about what the source says; {@code source} is
+         * the text the chart was compiled from, which the page already has.
+         *
+         * <p>Deferred like every other bridge call: this arrives inside a DOM event
+         * handler, and opening a modal dialog from there would block the page's own event
+         * loop while the reader fills it in.
+         */
+        public void editChart(int start, int end, String source) {
+            Platform.runLater(() -> openChartEditor(start, end, source));
+        }
+
         /** The Markdown a rendered block came from, for editing it in place. */
         public String blockSource(int start, int end) {
             DocumentView document = activeDocument();
@@ -2708,6 +3556,28 @@ public class MainController {
         return TableSource.parse(text) == null ? null : text;
     }
 
+    /**
+     * Loads the chart compiler into the preview page.
+     *
+     * <p>Like the highlighter and mermaid, it is evaluated into the shell once rather than
+     * linked, because the page has no base URL to resolve a script tag against. If it is
+     * missing the fence body stays on screen as text, which for a chart is a readable
+     * table of numbers - a better failure than a blank plate.
+     */
+    private void injectCharts() {
+        try (InputStream in = getClass().getResourceAsStream("/js/mdchart.js")) {
+            if (in == null) {
+                System.err.println("MDViewer: mdchart.js not on the classpath "
+                        + "- chart blocks will stay as plain text.");
+                return;
+            }
+            webView.getEngine().executeScript(
+                    new String(in.readAllBytes(), StandardCharsets.UTF_8));
+        } catch (IOException | RuntimeException e) {
+            System.err.println("MDViewer: mdchart unavailable - " + e);
+        }
+    }
+
     private void injectMermaid() {
         try (InputStream in = getClass().getResourceAsStream("/js/mermaid.min.js")) {
             if (in == null) {
@@ -2769,8 +3639,32 @@ public class MainController {
      * into one grey wall. Sharing the sheet means the assistant's prose looks like the
      * preview's, down to the theme, without a second set of rules to keep in step.
      */
+    /**
+     * The chart library's own stylesheet, read from the classpath.
+     *
+     * <p>Vendored from ../mdchart by sync-mdchart.ps1 rather than copied by hand. It used
+     * to be a block of rules inside the text block below, which meant two copies of the
+     * same design - one here and one in the library - with nothing keeping them in step.
+     *
+     * <p>It is placed before this app's own rules so the block further down can map
+     * MDViewer's palette onto the library's {@code --mdc-*} variables and win.
+     */
+    private static String chartCss() {
+        try (InputStream in = MainController.class.getResourceAsStream("/css/mdchart.css")) {
+            if (in == null) {
+                System.err.println("MDViewer: mdchart.css not on the classpath "
+                        + "- charts will render without colour.");
+                return "";
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException | RuntimeException e) {
+            System.err.println("MDViewer: chart stylesheet unavailable - " + e);
+            return "";
+        }
+    }
+
     public static String previewCss() {
-        return """
+        return chartCss() + """
             :root {
               --paper:#F6F8FA; --ink:#16202B; --ink-soft:#5A6875;
               --rule:#DFE5EC; --line:#C7D2DE;
@@ -2828,7 +3722,8 @@ public class MainController {
               margin-left:var(--gutter); margin-right:auto;
             }
             body > .mdv-code, body > table, body > .mdv-diagram,
-            body > pre.mermaid, body > .mdv-diagram-error, body > hr {
+            body > pre.mermaid, body > .mdv-diagram-error, body > hr,
+            body > .mdv-chart-out, body > pre.mdv-chart {
               width:var(--plate); max-width:none;
               margin-left:var(--gutter); margin-right:auto;
               /* border-box, or the plates' own padding and accent border would be
@@ -3001,6 +3896,9 @@ public class MainController {
             /* A heading's ::after draws an accent bar; under an open editor it reads as
                part of the text being edited. */
             h1.mdv-block-editing::after { display:none; }
+            /* A chart is double-clicked to open its editor, so it gets the pointer that
+               says "this opens something" rather than a text caret over a picture. */
+            .mdv-chart-out { cursor:default; }
             /* The editor inherits nothing from the block it replaces - a heading's
                display face at 2.3rem is not what raw Markdown should be typed in. */
             textarea.mdv-block-editor {
@@ -3050,6 +3948,32 @@ public class MainController {
             /* Diagrams share the plate family. The card keeps a light ground in both
                themes: PlantUML and mermaid bake dark strokes into the SVG, which would
                disappear on a dark panel. */
+            /* ---------------------------------------------------------- charts
+
+               The rules themselves are mdchart.css, loaded above from the library's own
+               repository. All that is left here is the join: MDViewer's palette mapped
+               onto the library's --mdc-* variables, so a chart takes the document's rule
+               colour, accent, plate shadow and typefaces and looks like it belongs on
+               the page rather than like something pasted onto it.
+
+               Declared on :root rather than on the figure, because the theme switch
+               redefines --rule and the rest there - so these follow it with no rule of
+               their own for dark mode. That is also why a chart repaints on a theme
+               switch with no re-render, which mermaid and PlantUML cannot do: they bake
+               their colours into the SVG and have to sit on a pinned white plate. */
+            :root {
+              --mdc-line:var(--rule);
+              --mdc-accent:var(--accent);
+              --mdc-shadow:var(--plate-shadow);
+              --mdc-font:var(--body);
+              --mdc-mono:var(--mono);
+              --mdc-mark:var(--mark);
+              --mdc-note-bg:var(--stripe);
+              --mdc-error-ink:var(--err-fg);
+              --mdc-error-bg:var(--err-bg);
+              --mdc-error-line:var(--err-line);
+            }
+
             .mdv-diagram, pre.mermaid {
               position:relative; margin-top:1.8em; margin-bottom:1.8em; padding:34px 16px 16px;
               background:#FFFFFF; color:#16202B;
@@ -3108,7 +4032,8 @@ public class MainController {
               body { padding:0; font-size:10.5pt; background:#FFFFFF; }
               body > * { width:100%; margin-left:0; }
               body > .mdv-code, body > table, body > .mdv-diagram,
-              body > pre.mermaid, body > .mdv-diagram-error, body > hr {
+              body > pre.mermaid, body > .mdv-diagram-error, body > hr,
+              body > .mdv-chart-out, body > pre.mdv-chart {
                 width:100%; margin-left:0;
               }
 
@@ -3117,6 +4042,17 @@ public class MainController {
               img, figure, .mdv-diagram, pre.mermaid, .mdv-diagram-error, .mdv-code {
                 page-break-inside:avoid; break-inside:avoid;
               }
+
+              /* Charts on paper are mdchart.css's own print block: kept whole, never
+                 split across a fold, nothing allowed to scroll off an edge that cannot
+                 be scrolled. Two things it cannot do from CSS are done in Java before
+                 the job starts - laying every chart out again at the printable width,
+                 and opening the table views - see __mdChartsForPrint.
+
+                 The plate stays tinted rather than going white. It is a light surface
+                 already, the palette was validated against it, and dropping it would put
+                 the four lighter series hues on bare paper below the contrast they were
+                 checked at. */
 
               /* Tables are the deliberate exception: a long table SHOULD run across
                  pages, and its header has to follow. display:table is restated rather
@@ -3221,7 +4157,62 @@ public class MainController {
               window.__mdEditingCell = null;
               window.__mdEditingBlock = null;
               window.__mdRunMermaid();
+              window.__mdRunCharts();
               window.__mdHighlight();
+            };
+            /* Charts compile synchronously into SVG, so unlike mermaid there is nothing
+               to await and no failure to swallow quietly - a bad fence renders its own
+               message in place, next to the source that caused it. */
+            window.__mdRunCharts = function () {
+              if (!window.MdChart) { return; }
+              try { MdChart.renderAll(document); } catch (e) {}
+            };
+
+            /* Charts, made ready for paper.
+
+               Two things are wrong at print time and neither is fixable in CSS. A chart
+               is laid out in pixels for the pane it is in, and letting the page scale
+               that to fit the paper takes the type down with it - the same bug that made
+               11px labels render at 7px on screen, except on paper there is no zooming
+               out of it. So every chart is drawn again at the printable width, which
+               only Java knows, and drawn back afterwards.
+
+               And the table view is a <details>, which prints exactly as it sits: closed.
+               The table is the guarantee that no value is reachable only by hovering, and
+               a printed page cannot hover at all, so on paper it is the only copy of the
+               numbers. Opened here and closed again after, so the screen is as it was. */
+            window.__mdChartsForPrint = function (width) {
+              /* Which table views the reader had open, remembered before the redraw
+                 rather than after: a redraw rebuilds every figure, so the details
+                 elements standing afterwards are not the ones on screen now. */
+              window.__mdcOpenTables = [];
+              var before = document.querySelectorAll('.mdc-table');
+              for (var i = 0; i < before.length; i++) {
+                window.__mdcOpenTables.push(before[i].hasAttribute('open'));
+              }
+              var drawn = 0;
+              if (window.MdChart) {
+                try { drawn = MdChart.redrawAll(width); } catch (e) { drawn = 0; }
+              }
+              var tables = document.querySelectorAll('.mdc-table');
+              for (var j = 0; j < tables.length; j++) {
+                tables[j].setAttribute('open', '');
+              }
+              return drawn;
+            };
+            window.__mdChartsAfterPrint = function () {
+              if (window.MdChart) {
+                try { MdChart.redrawAll(0); } catch (e) {}
+              }
+              var was = window.__mdcOpenTables || [];
+              var tables = document.querySelectorAll('.mdc-table');
+              for (var i = 0; i < tables.length; i++) {
+                if (was[i]) {
+                  tables[i].setAttribute('open', '');
+                } else {
+                  tables[i].removeAttribute('open');
+                }
+              }
             };
             window.__mdSetDiagram = function (id, svg) {
               var el = document.getElementById(id);
@@ -3335,6 +4326,34 @@ public class MainController {
             });
             window.__mdCodeInfo = function () { return window.__mdCodeBlock; };
 
+            /* The chart under the pointer, plus what its data could be drawn as.
+               Captured on mousedown like the others, and the verdicts are asked for here
+               rather than when the menu opens because the source is on this element and
+               the menu is built on the other side of the bridge. */
+            window.__mdChartBlock = '';
+            document.addEventListener('mousedown', function (event) {
+              var el = event.target;
+              while (el && el !== document.body
+                     && !(el.classList && el.classList.contains('mdv-chart-out'))) {
+                el = el.parentElement;
+              }
+              if (el && el.classList && el.classList.contains('mdv-chart-out')
+                  && el.getAttribute('data-md-start') && window.MdChart) {
+                var source = el.getAttribute('data-mdc-src') || '';
+                var verdicts = '';
+                try { verdicts = MdChart.describe(source); } catch (e) { verdicts = ''; }
+                window.__mdChartBlock = el.getAttribute('data-md-start') + ','
+                    + el.getAttribute('data-md-end') + ',' + verdicts;
+                /* Kept as well as its offsets, so "Edit chart data" can be handed the
+                   source without going back to the document to find it again. */
+                window.__mdChartElement = el;
+              } else {
+                window.__mdChartBlock = '';
+                window.__mdChartElement = null;
+              }
+            });
+            window.__mdChartInfo = function () { return window.__mdChartBlock; };
+
             /* ---- editing a table cell in place ----------------------------------
                Double-click, not single: a table is read far more often than it is
                edited, and a single click would put a caret in a cell every time
@@ -3399,6 +4418,21 @@ public class MainController {
             }
 
             document.addEventListener('dblclick', function (event) {
+              /* A chart claims the double-click before anything else sees it, and opens a
+                 form rather than its own source. Editing the fence as text worked and put
+                 the reader one keystroke from a fence that no longer parses - a misplaced
+                 pipe turns a chart into a paragraph, and the feedback for that is the
+                 chart vanishing. A form cannot produce a fence that does not parse. */
+              var chartHost = mdChartHost(event.target);
+              if (chartHost) {
+                if (window.mdvBridge) {
+                  window.mdvBridge.editChart(
+                      parseInt(chartHost.getAttribute('data-md-start'), 10),
+                      parseInt(chartHost.getAttribute('data-md-end'), 10),
+                      chartHost.getAttribute('data-mdc-src') || '');
+                }
+                return;
+              }
               var cell = event.target;
               while (cell && cell !== document.body
                      && cell.tagName !== 'TD' && cell.tagName !== 'TH') {
@@ -3410,6 +4444,19 @@ public class MainController {
               }
               mdBeginBlockEdit(event.target);
             });
+
+            /** The compiled chart {@code node} sits inside, if it is inside one. */
+            function mdChartHost(node) {
+              var el = node && node.nodeType === 1 ? node : (node ? node.parentElement : null);
+              while (el && el !== document.body) {
+                if (el.classList && el.classList.contains('mdv-chart-out')
+                    && el.getAttribute('data-md-start')) {
+                  return el;
+                }
+                el = el.parentElement;
+              }
+              return null;
+            }
 
             /* ---- editing any other block in place -------------------------------
                The same idea as a table cell, and simpler: every rendered block already
@@ -3427,6 +4474,23 @@ public class MainController {
 
             function mdEditableBlock(node) {
               var el = node && node.nodeType === 1 ? node : (node ? node.parentElement : null);
+
+              /* A chart is looked for first, and from anywhere inside it.
+
+                 It has to come first because a chart contains a table - its table view -
+                 and the rule below stops at the first table it meets, which would make
+                 double-clicking the numbers underneath a chart do nothing. That table is
+                 generated from the fence and is not in the document at all; the fence is,
+                 and the fence is what opens.
+
+                 An SVG has nothing to put a caret in, so unlike a paragraph there is no
+                 in-place alternative: showing the source is the only way to edit a chart
+                 from the preview, which is exactly what a code block already does. */
+              /* A chart is never edited as a block: it opens a form of its own, handled
+                 before this is ever reached. Refused here as well so that no other path
+                 into the block editor can put a fence in a textarea by accident. */
+              if (mdChartHost(el)) { return null; }
+
               while (el && el !== document.body) {
                 /* A table is edited cell by cell and a diagram is not text at all;
                    either would be destroyed by a whole-block replacement. */
@@ -3603,5 +4667,6 @@ public class MainController {
     /** Releases the background diagram renderer; called from {@link MainApp#stop()}. */
     public void dispose() {
         diagramService.shutdown();
+        diagramUpload.shutdown();
     }
 }

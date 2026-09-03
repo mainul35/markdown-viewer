@@ -24,6 +24,9 @@
        ordinary selection, and the two are on screen at the same time. */
     -mdv-search-hit: #FFC24B;
     -mdv-search-hit-text: #16202B;
+    /* For a field holding something that will not work - a chart value that is not a
+       number. Marks the field; never blocks on it. */
+    -mdv-danger: #C0392B;
 }
 
 .root.dark-theme {
@@ -38,6 +41,7 @@
     -mdv-scroll-thumb: #3d4f63;
     -mdv-search-hit: #C98A28;
     -mdv-search-hit-text: #10161D;
+    -mdv-danger: #E06C5B;
 
     /* Re-tint JavaFX's built-in control palette so menus, dialogs and the text editor
        follow the theme without needing a rule for each control. Note this block is dark-
@@ -225,6 +229,155 @@
 .table-picker-cell:on {
     -fx-background-color: -mdv-accent;
     -fx-border-color: -mdv-accent;
+}
+
+/* The chart picker is a menu of decisions rather than a measurement, so it is a list of
+   named forms with the sentence that distinguishes them - see ChartTypePicker. */
+.chart-picker {
+    -fx-background-color: -mdv-surface;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.28), 18, 0, 0, 6);
+}
+
+.chart-picker-heading {
+    -fx-font-size: 11px;
+    -fx-text-fill: -mdv-text-muted;
+    -fx-padding: 2 8 4 8;
+}
+
+.chart-picker-row {
+    -fx-background-radius: 5;
+}
+
+.chart-picker-row:on {
+    -fx-background-color: -mdv-surface-alt;
+}
+
+.chart-picker-name {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -mdv-text;
+}
+
+.chart-picker-purpose {
+    -fx-font-size: 11px;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+/* The glyph is a sketch of the chart, so it uses the marks' own colour rather than the
+   icon stroke: a chart's ink is data, not chrome. */
+.chart-picker-glyph .toolbar-icon-fill {
+    -fx-fill: -mdv-accent;
+}
+
+.chart-picker-glyph .toolbar-icon-stroke {
+    -fx-stroke: -mdv-accent;
+}
+
+/* The second series in a glyph: the same hue, stepped back, the way a real chart's
+   secondary series is. */
+.chart-picker-wash {
+    -fx-fill: -mdv-accent;
+    -fx-opacity: 0.32;
+}
+
+.chart-picker-arc {
+    -fx-stroke: -mdv-accent;
+}
+
+.chart-picker-arc-soft {
+    -fx-stroke: -mdv-accent;
+    -fx-opacity: 0.32;
+}
+
+/* ------------------------------------------------------------ chart editor
+
+   A chart is edited as a form rather than as its own source, so this is a grid of
+   ordinary fields - see ChartDialog. Every colour is a theme variable, which is what
+   makes the dialog light or dark with the window it opened from. */
+.chart-dialog {
+    -fx-background-color: -mdv-paper;
+}
+
+.chart-dialog .label {
+    -fx-text-fill: -mdv-text;
+}
+
+.chart-dialog-heading {
+    -fx-font-size: 11px;
+    -fx-text-fill: -mdv-text-muted;
+    -fx-padding: 0 0 0 4;
+}
+
+.chart-dialog-note {
+    -fx-font-size: 11px;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+.chart-dialog .text-field {
+    -fx-background-color: -mdv-surface;
+    -fx-text-fill: -mdv-text;
+    -fx-prompt-text-fill: -mdv-text-muted;
+    -fx-border-color: -mdv-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+    -fx-padding: 4 7 4 7;
+}
+
+.chart-dialog .text-field:focused {
+    -fx-border-color: -mdv-accent;
+}
+
+/* A column heading is a name, not a number: the same field, told apart by weight. */
+.chart-dialog-header {
+    -fx-font-weight: bold;
+}
+
+.chart-dialog-value {
+    -fx-alignment: center-right;
+}
+
+/* A value that is not a number. Pointed at rather than blocked on - a blank cell is a
+   real gap in a series, and a half-typed number is a normal thing to be looking at. */
+.chart-dialog-value:bad {
+    -fx-border-color: -mdv-danger;
+}
+
+.chart-dialog-remove {
+    -fx-background-color: transparent;
+    -fx-padding: 4 5 4 5;
+    -fx-background-radius: 4;
+    -fx-cursor: hand;
+}
+
+.chart-dialog-cross {
+    -fx-stroke: -mdv-text-muted;
+    -fx-stroke-width: 1.4;
+    -fx-stroke-line-cap: round;
+}
+
+.chart-dialog-remove:hover {
+    -fx-background-color: -mdv-surface-alt;
+}
+
+.chart-dialog-remove:hover .chart-dialog-cross {
+    -fx-stroke: -mdv-danger;
+}
+
+.chart-dialog-remove:disabled {
+    -fx-opacity: 0.3;
+}
+
+.chart-dialog-grid {
+    -fx-background-color: transparent;
+}
+
+.chart-dialog-grid > .viewport {
+    -fx-background-color: transparent;
 }
 
 /* --------------------------------------------------------------- scrollbars
@@ -819,4 +972,126 @@
     -fx-padding: 2 9 2 9;
     -fx-background-radius: 4;
     -fx-cursor: hand;
+}
+
+/* ------------------------------------------------------------ sync indicator
+
+   The spinner at the right of the status bar, on while something is talking to the
+   cloud. Small and in the muted text colour: it answers "is it working" for somebody
+   who glances down, and has no business drawing the eye of somebody who does not. */
+.sync-indicator {
+    -fx-padding: 0 2 0 0;
+}
+
+.sync-caption {
+    -fx-font-size: 11px;
+    -fx-text-fill: -mdv-text-muted;
+}
+
+/* Modena draws the indeterminate spinner with a percentage label underneath and its own
+   idea of a size. Both are wrong in a 22px bar: the label has nowhere to go, and the
+   default diameter pushes the bar taller than the text in it. */
+.sync-spinner {
+    -fx-progress-color: -mdv-accent;
+}
+
+.sync-spinner > .percentage {
+    -fx-font-size: 0;
+}
+
+.sync-spinner .indicator {
+    -fx-padding: 0;
+    -fx-background-color: transparent;
+}
+
+/* ------------------------------------------------------------ the account bar
+
+   Along the bottom of the explorer, under the tree. Quiet by construction: it is a
+   fact about the window rather than a control anybody came here to use, and it sits
+   directly above the status line, which is the other row on screen that only says
+   what is true. A rule along the top separates it from the tree so it does not read
+   as one more file. */
+.account-bar {
+    -fx-padding: 8 10 8 10;
+    -fx-border-color: -mdv-border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+    -fx-cursor: hand;
+}
+
+.account-bar:hover {
+    -fx-background-color: -mdv-surface-alt;
+}
+
+.account-name {
+    -fx-text-fill: -mdv-text;
+    -fx-font-size: 11.5px;
+}
+
+/* Signed out is an invitation, not a statement, so it wears the muted ink the rest
+   of the panel uses for things that are not yet true. */
+.account-bar-out .account-name {
+    -fx-text-fill: -mdv-text-muted;
+}
+
+.account-avatar-ring {
+    -fx-fill: transparent;
+    -fx-stroke: -mdv-text-muted;
+    -fx-stroke-width: 1.1;
+}
+
+.account-avatar-mark {
+    -fx-fill: -mdv-text-muted;
+}
+
+.account-caret {
+    -fx-fill: -mdv-text-muted;
+}
+
+/* -------------------------------------------------------- the menu above it
+
+   Stated rather than inherited, for the reason the recent-workspace rows are: a
+   Label inside a CustomMenuItem picks up modena's ".menu-item .label", which is
+   written for native menu rows - leaning on it leaves this text one selector away
+   from being invisible against the popup, with nothing on screen to explain the
+   blank row. */
+.account-menu-name {
+    -fx-text-fill: -mdv-text;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-padding: 4 0 4 0;
+}
+
+.account-menu-plan {
+    -fx-padding: 4 0 6 0;
+}
+
+/* The plan's name, as a badge. Small, upper case and boxed, so it reads as a label
+   on the account rather than as another line of prose. */
+.account-plan {
+    -fx-text-fill: -mdv-accent;
+    -fx-font-size: 9.5px;
+    -fx-padding: 1 6 1 6;
+    -fx-background-color: -mdv-accent-soft;
+    -fx-background-radius: 3;
+}
+
+.account-usage {
+    -fx-text-fill: -mdv-text-muted;
+    -fx-font-size: 10.5px;
+}
+
+/* Drawn from two regions rather than a ProgressBar: modena's progress bar brings its
+   own padding, border and animation, and every one of them has to be argued back out
+   again before it looks like a quota meter. */
+.account-meter {
+    -fx-min-height: 4;
+    -fx-pref-height: 4;
+    -fx-max-height: 4;
+    -fx-background-color: -mdv-border;
+    -fx-background-radius: 2;
+}
+
+.account-meter-fill {
+    -fx-background-color: -mdv-accent;
+    -fx-background-radius: 2;
 }

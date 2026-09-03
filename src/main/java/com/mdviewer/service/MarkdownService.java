@@ -52,6 +52,8 @@ public final class MarkdownService {
     public record Result(String html, List<Diagram> diagrams) {}
 
     private static final Set<String> MERMAID_TAGS = Set.of("mermaid");
+    /** Handed to the bundled mdchart.js, which compiles the fence body into inline SVG. */
+    private static final Set<String> CHART_TAGS = Set.of("chart", "mdchart");
     private static final Set<String> PLANTUML_TAGS = Set.of("plantuml", "puml", "uml", "plantuml-svg");
 
     /** Matches src=/href= in raw HTML that CommonMark passes through untouched. */
@@ -437,6 +439,31 @@ public final class MarkdownService {
             html.tag("/pre");
         }
 
+        /**
+         * The chart source, left in the page for mdchart.js to compile.
+         *
+         * <p>Emitted as text inside a {@code <pre>} for the same reason mermaid is: the
+         * renderer reads {@code textContent}, so ordinary escaping is exactly what it
+         * wants. If the script never loads, what stays on screen is the fence body -
+         * readable numbers rather than an empty plate.
+         *
+         * <p>The fence's own offsets ride along, and the renderer carries them onto the
+         * figure it puts in this element's place. Without them a chart is the one block in
+         * the document that can be read but never adjusted: a right-click on it would have
+         * no way to say which fence in the source it means.
+         */
+        private void emitChart(String chartSource, int[] span) {
+            Map<String, String> attrs = new LinkedHashMap<>();
+            attrs.put("class", "mdv-chart");
+            if (span != null) {
+                attrs.put("data-md-start", String.valueOf(span[0]));
+                attrs.put("data-md-end", String.valueOf(span[1]));
+            }
+            html.tag("pre", attrs);
+            html.text(chartSource);
+            html.tag("/pre");
+        }
+
         private void emitDiagramPlaceholder(String diagramSource) {
             String id = "mdv-uml-" + (diagrams.size() + 1);
             diagrams.add(new Diagram(id, diagramSource));
@@ -495,6 +522,13 @@ public final class MarkdownService {
             if (PLANTUML_TAGS.contains(tag)) {
                 html.line();
                 emitDiagramPlaceholder(literal);
+                html.line();
+                return;
+            }
+
+            if (CHART_TAGS.contains(tag)) {
+                html.line();
+                emitChart(literal, spanOf(fence));
                 html.line();
                 return;
             }

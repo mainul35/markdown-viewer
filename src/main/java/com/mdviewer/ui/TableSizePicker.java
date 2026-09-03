@@ -121,13 +121,7 @@ public final class TableSizePicker {
             popup.hide();
             return;
         }
-        // The stylesheets are on the scene, and a Popup gets its own; without this the
-        // picker renders in default JavaFX colours next to a themed toolbar.
-        if (anchor.getScene() != null) {
-            popup.getScene().getStylesheets().setAll(anchor.getScene().getStylesheets());
-            popup.getScene().getRoot().getStyleClass()
-                    .setAll(anchor.getScene().getRoot().getStyleClass());
-        }
+        PopupTheme.matchTo(popup, anchor);
         var bounds = anchor.localToScreen(anchor.getBoundsInLocal());
         if (bounds == null) {
             return;

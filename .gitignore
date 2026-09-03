@@ -8,3 +8,8 @@ Thumbs.db
 .idea/
 *.iml
 .vscode/
+
+# The cloud server writes its blob store here when one is run from this directory.
+# Documents, not source - they belong in nobody's repository.
+data/
+dist/
