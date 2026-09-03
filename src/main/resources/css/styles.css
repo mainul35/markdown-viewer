@@ -1095,3 +1095,98 @@
     -fx-background-color: -mdv-accent;
     -fx-background-radius: 2;
 }
+
+/* ==========================================================================
+   Touch mode
+
+   Added to the scene root alongside the drag-to-scroll gesture, because the two
+   problems arrive together: a machine driven by a finger also needs targets a
+   finger can hit. Nothing here changes on a desktop - the class is only present
+   when touch mode is on.
+
+   44px is the floor every platform's guidance settles on, and it is a floor
+   rather than a preference: below it the miss rate climbs sharply, and a missed
+   tap on a toolbar is a formatting change you did not ask for.
+
+   Sizes are set with -fx-min-height rather than padding wherever the control
+   allows it, so a bigger target does not also mean bigger text - the screen is
+   small and the space is worth more than the type is.
+   ========================================================================== */
+
+.touch .tool-bar {
+    -fx-padding: 8 10 8 10;
+}
+
+.touch .tool-bar .button,
+.touch .tool-bar .toggle-button,
+.touch .tool-bar .menu-button {
+    -fx-min-height: 44;
+    -fx-min-width: 44;
+    -fx-padding: 6 10 6 10;
+}
+
+/* The mode buttons - Raw, Split, Preview, Dark Mode - are text, so they need
+   width for the label and height for the finger. */
+.touch .mode-button {
+    -fx-min-height: 44;
+    -fx-padding: 8 16 8 16;
+}
+
+.touch .menu-bar {
+    -fx-padding: 4 2 4 2;
+}
+
+.touch .menu-bar > .container > .menu-button {
+    -fx-padding: 8 12 8 12;
+}
+
+.touch .menu-item {
+    -fx-padding: 10 12 10 12;
+}
+
+/* File tabs: the close cross is the smallest target in the window and the one
+   with the worst consequence for a miss. */
+.touch .tab-pane > .tab-header-area > .headers-region > .tab {
+    -fx-padding: 10 14 10 14;
+}
+
+.touch .tab-pane > .tab-header-area > .headers-region > .tab > .tab-container > .tab-close-button {
+    -fx-shape: "M 0,0 H1 L 4,3 7,0 H8 V1 L 5,4 8,7 V8 H7 L 4,5 1,8 H0 V7 L 3,4 0,1 Z";
+    -fx-scale-x: 1.5;
+    -fx-scale-y: 1.5;
+    -fx-translate-x: 4;
+}
+
+/* Workspace tree rows: tapping a file should not require aiming at one line. */
+.touch .tree-cell {
+    -fx-cell-size: 40;
+    -fx-padding: 4 6 4 6;
+}
+
+.touch .tree-cell > .tree-disclosure-node {
+    -fx-padding: 8 6 8 6;
+}
+
+/* Scrollbars wide enough to grab, for the cases a drag cannot cover - a table
+   that scrolls sideways inside the preview, say. */
+.touch .scroll-bar:vertical,
+.touch .scroll-bar:horizontal {
+    -fx-pref-width: 16;
+    -fx-pref-height: 16;
+}
+
+.touch .scroll-bar > .thumb {
+    -fx-background-radius: 8;
+}
+
+/* The assistant's stripe buttons sit at the window edge, where a finger arrives
+   at an angle and loses a few pixels to the bezel. */
+.touch .tool-stripe-button {
+    -fx-min-height: 48;
+    -fx-min-width: 40;
+}
+
+.touch .find-icon-button {
+    -fx-min-height: 40;
+    -fx-min-width: 40;
+}

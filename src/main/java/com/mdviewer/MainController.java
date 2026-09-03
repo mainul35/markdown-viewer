@@ -238,6 +238,9 @@ public class MainController {
     /** Style class toggled on the scene root; see styles.css. */
     private static final String DARK_STYLE_CLASS = "dark-theme";
 
+    /** Style class that enlarges every hit target; see the touch mode block in styles.css. */
+    private static final String TOUCH_STYLE_CLASS = "touch";
+
     /**
      * Tab ceilings. Past these the strips stop being scannable, which is the whole point
      * of grouping files by workspace; opening more is refused with a status-bar message
@@ -263,6 +266,7 @@ public class MainController {
         if (touchScrollMenuItem != null) {
             touchScrollMenuItem.setSelected(touchScroll.isEnabled());
         }
+        applyTouchMode();
 
         previewToolbar = new PreviewToolbar();
         previewToolbar.setOnAction(this::applyFormat);
@@ -1727,6 +1731,28 @@ public class MainController {
     @FXML
     private void handleToggleTouchScroll() {
         touchScroll.setEnabled(touchScrollMenuItem.isSelected());
+        applyTouchMode();
+    }
+
+    /**
+     * Grows every hit target while touch mode is on.
+     *
+     * <p>Shares the switch with drag-to-scroll because the two problems arrive together: a
+     * machine being driven by a finger also needs targets a finger can hit. Applied as a
+     * style class on the root so the rules live in the stylesheet with everything else,
+     * rather than as sizes set from code that the theme cannot then override.
+     */
+    private void applyTouchMode() {
+        if (rootPane == null) {
+            return;
+        }
+        if (touchScroll.isEnabled()) {
+            if (!rootPane.getStyleClass().contains(TOUCH_STYLE_CLASS)) {
+                rootPane.getStyleClass().add(TOUCH_STYLE_CLASS);
+            }
+        } else {
+            rootPane.getStyleClass().remove(TOUCH_STYLE_CLASS);
+        }
     }
 
     /**

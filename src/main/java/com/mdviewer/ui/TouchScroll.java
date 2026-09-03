@@ -71,10 +71,9 @@ public final class TouchScroll {
     /**
      * Whether drag-to-scroll is on.
      *
-     * <p>Defaults to what the toolkit reports about touch support, so a tablet starts in the
-     * mode it needs and a desktop keeps ordinary selection. That report is frequently wrong
-     * on Linux - which is the whole reason this class exists - so it is only a starting
-     * point, and the menu item settles it.
+     * <p>Defaults to whether the kernel lists a touchscreen, so a tablet starts in the mode
+     * it needs and a desktop keeps ordinary selection. The menu item settles it either way,
+     * and the choice is remembered.
      */
     public boolean isEnabled() {
         return enabled;
@@ -90,6 +89,43 @@ public final class TouchScroll {
         String stored = properties.getProperty("touchScroll");
         if (stored != null) {
             return Boolean.parseBoolean(stored);
+        }
+        return hasTouchscreen(Path.of("/proc/bus/input/devices"));
+    }
+
+    /**
+     * Whether this machine has a touchscreen, asked of the kernel rather than the toolkit.
+     *
+     * <p>The obvious question to ask is {@code Platform.isSupported(INPUT_TOUCH)}, and it is
+     * the wrong one. It reports whether <em>JavaFX</em> can see touch, and on Linux it
+     * frequently cannot - which is the exact situation this whole class exists to rescue. So
+     * the one machine that needs the mode on is the one that answers "no", and the default
+     * lands backwards on precisely the hardware it was meant to serve.
+     *
+     * <p>The kernel is not confused about it. Every input device is listed in
+     * {@code /proc/bus/input/devices} with a name, and a touchscreen says so. Touchpads are
+     * excluded by name: a laptop trackpad is a pointing device, and turning drag-to-scroll
+     * on for one would break selection for every laptop user.
+     *
+     * <p>Anywhere without that file - Windows, macOS - this falls back to asking the
+     * toolkit, where the answer is trustworthy.
+     */
+    static boolean hasTouchscreen(Path devices) {
+        try {
+            if (Files.isReadable(devices)) {
+                for (String line : Files.readAllLines(devices)) {
+                    if (!line.startsWith("N: Name=")) {
+                        continue;
+                    }
+                    String name = line.toLowerCase(java.util.Locale.ROOT);
+                    if (name.contains("touch") && !name.contains("touchpad")) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        } catch (IOException | RuntimeException cannotRead) {
+            /* Fall through to the toolkit rather than failing a launch over a default. */
         }
         try {
             return Platform.isSupported(ConditionalFeature.INPUT_TOUCH);
