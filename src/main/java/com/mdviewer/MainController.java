@@ -3194,7 +3194,18 @@ public class MainController {
          */
         boolean hasImage = clipboard.hasImage();
         Path pastedFile = firstImageFile(clipboard);
-        if (!hasImage && pastedFile == null) {
+
+        /*
+         * JavaFX and AWT reach the same X11 selection through different code, and on Linux
+         * they disagree: hasImage() regularly answers false for a screenshot AWT reads
+         * without complaint. Asked only after JavaFX has said no, so the ordinary path is
+         * untouched and this costs nothing when it is not needed.
+         */
+        byte[] viaAwt = hasImage || pastedFile != null
+                ? null
+                : com.mdviewer.ui.ClipboardImage.fromSystemClipboard();
+
+        if (!hasImage && pastedFile == null && viaAwt == null) {
             if (!loud && (clipboard.hasString() || clipboard.hasHtml())) {
                 return false;      // ordinary text: leave the paste alone
             }
@@ -3209,8 +3220,13 @@ public class MainController {
                             .map(Object::toString)
                             .reduce((a, b) -> a + ", " + b).orElse("nothing at all");
             if (loud) {
+                /* Both views of the same clipboard, because they disagree often enough
+                   that knowing which one saw what is the whole diagnosis. */
+                String viaSystem = com.mdviewer.ui.ClipboardImage.systemClipboardFormats();
                 showAlert("No image to paste",
-                        "The clipboard holds " + formats + ".\n\n"
+                        "JavaFX sees: " + formats + ".\n"
+                        + "The system clipboard offers: "
+                        + (viaSystem.isEmpty() ? "nothing at all" : viaSystem) + ".\n\n"
                         + "If you have just taken a screenshot, the tool may have copied "
                         + "its location rather than the picture, or the clipboard may not "
                         + "have survived being handed between the desktop and this "
@@ -3232,8 +3248,10 @@ public class MainController {
             Path assets = baseDir.resolve("assets");
             Files.createDirectories(assets);
             Path target;
-            if (hasImage) {
-                byte[] png = com.mdviewer.ui.ClipboardImage.png(clipboard.getImage());
+            if (hasImage || viaAwt != null) {
+                byte[] png = viaAwt != null
+                        ? viaAwt
+                        : com.mdviewer.ui.ClipboardImage.png(clipboard.getImage());
                 if (png == null) {
                     setTransientStatus("That image could not be read from the clipboard.");
                     return true;
