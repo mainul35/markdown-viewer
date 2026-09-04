@@ -1,0 +1,34 @@
+/*
+ * Menu popups at extra large size.
+ *
+ * A separate file, added to the scene's stylesheets, because a popup is its own
+ * window: it inherits the scene's stylesheets but not the root's style classes,
+ * so ".display-tablet .menu-item" can never match while plain ".menu-item" can.
+ * The evidence that inheritance works is already in this application - the recent
+ * workspaces rows are styled from the main stylesheet and they live in a popup.
+ *
+ * Nothing here is scoped to a class for that same reason. The file is added and
+ * removed as the display size changes, and that is what scopes it.
+ */
+
+.menu-item {
+    -fx-padding: 10 16 10 16;
+}
+
+.menu-item .label {
+    -fx-font-size: 18px;
+}
+
+.menu-bar .menu .label {
+    -fx-font-size: 18px;
+}
+
+.context-menu {
+    -fx-font-size: 18px;
+}
+
+.radio-menu-item > .left-container > .radio,
+.check-menu-item > .left-container > .check {
+    -fx-scale-x: 1.5;
+    -fx-scale-y: 1.5;
+}

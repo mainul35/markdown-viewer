@@ -1790,6 +1790,8 @@ public class MainController {
     }
 
     private void watchWidth(javafx.scene.Scene scene) {
+        // Menu stylesheets attach to the scene, which did not exist while FXML was built.
+        styleMenus();
         applyWidth(scene.getWidth());
         scene.widthProperty().addListener(
                 (observable, was, now) -> applyWidth(now.doubleValue()));
@@ -1844,38 +1846,36 @@ public class MainController {
     }
 
     /**
-     * Sizes the menu popups, which no stylesheet rule can reach.
+     * Sizes the menu popups, which the main stylesheet cannot reach on its own.
      *
-     * <p>A menu popup is its own window with its own scene, so it is not a descendant of
-     * the scene root and a selector keyed on a root style class never matches it. That is
-     * not a quirk to work around later - it is why the first attempt at sizing menu items
-     * in CSS silently did nothing.
+     * <p>A menu popup is its own window. It inherits the scene's <em>stylesheets</em> - the
+     * recent workspaces rows in this application are styled from the main file and they
+     * live in a popup - but not the root's <em>style classes</em>. So a rule written as
+     * {@code .display-tablet .menu-item} can never match, while a plain {@code .menu-item}
+     * always will. That is why the first attempt at this silently did nothing.
      *
-     * <p>So the size is set on the items themselves. Applied recursively because submenus
-     * are items too, and re-applied whenever a menu is rebuilt from data - the recent
-     * workspaces list replaces its items, and new ones would arrive unstyled.
+     * <p>The way to scope an unscopable rule is therefore to scope the file: one small
+     * stylesheet per size, added to the scene when that size is chosen and taken away when
+     * it is not.
      */
     private void styleMenus() {
-        if (menuBar == null) {
+        if (rootPane == null || rootPane.getScene() == null) {
             return;
         }
-        String style = switch (displaySize) {
-            case TABLET -> "-fx-font-size: 15px;";
-            case LARGE -> "-fx-font-size: 18px;";
-            case REGULAR -> "";
+        var sheets = rootPane.getScene().getStylesheets();
+        sheets.removeAll(menuSheet("menus-tablet"), menuSheet("menus-large"));
+        String wanted = switch (displaySize) {
+            case TABLET -> menuSheet("menus-tablet");
+            case LARGE -> menuSheet("menus-large");
+            case REGULAR -> null;
         };
-        for (javafx.scene.control.Menu menu : menuBar.getMenus()) {
-            styleMenuItem(menu, style);
+        if (wanted != null && !sheets.contains(wanted)) {
+            sheets.add(wanted);
         }
     }
 
-    private void styleMenuItem(javafx.scene.control.MenuItem item, String style) {
-        item.setStyle(style);
-        if (item instanceof javafx.scene.control.Menu submenu) {
-            for (javafx.scene.control.MenuItem child : submenu.getItems()) {
-                styleMenuItem(child, style);
-            }
-        }
+    private String menuSheet(String name) {
+        return MainController.class.getResource("/css/" + name + ".css").toExternalForm();
     }
 
     /** Settings > Display Size. */
@@ -3112,27 +3112,58 @@ public class MainController {
      */
     private boolean pasteImage(DocumentView document) {
         Clipboard clipboard = Clipboard.getSystemClipboard();
-        if (!clipboard.hasImage()) {
-            return false;
+
+        /*
+         * Three shapes, because a screenshot tool decides which one you get and they are
+         * not interchangeable. Spectacle's "copy image" puts pixels on the clipboard;
+         * "copy location" and a file manager put a file; some tools offer only a file URI
+         * as text. All three mean "the user wants this picture in the document".
+         */
+        boolean hasImage = clipboard.hasImage();
+        Path pastedFile = firstImageFile(clipboard);
+        if (!hasImage && pastedFile == null) {
+            if (clipboard.hasString() || clipboard.hasHtml()) {
+                return false;      // ordinary text: leave the paste alone
+            }
+            /*
+             * Nothing usable and nothing to type. Rather than the silence that made this
+             * look like a broken key, say what the clipboard actually holds - the answer
+             * is normally either "nothing" or a format worth adding here.
+             */
+            String formats = clipboard.getContentTypes().isEmpty()
+                    ? "nothing"
+                    : clipboard.getContentTypes().stream()
+                            .map(Object::toString)
+                            .reduce((a, b) -> a + ", " + b).orElse("nothing");
+            setTransientStatus("Nothing to paste. The clipboard holds: " + formats);
+            return true;
         }
+
         Path baseDir = document.getBaseDir();
         if (baseDir == null) {
             setTransientStatus("Save the document first so the pasted image can be stored "
                     + "beside it.");
             return true;
         }
-        byte[] png = com.mdviewer.ui.ClipboardImage.png(clipboard.getImage());
-        if (png == null) {
-            setTransientStatus("That image could not be read from the clipboard.");
-            return true;
-        }
+
         try {
             Path assets = baseDir.resolve("assets");
             Files.createDirectories(assets);
-            String stamp = java.time.LocalDateTime.now()
-                    .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
-            Path target = uniqueTarget(assets, "pasted-" + stamp + ".png");
-            Files.write(target, png);
+            Path target;
+            if (hasImage) {
+                byte[] png = com.mdviewer.ui.ClipboardImage.png(clipboard.getImage());
+                if (png == null) {
+                    setTransientStatus("That image could not be read from the clipboard.");
+                    return true;
+                }
+                String stamp = java.time.LocalDateTime.now().format(
+                        java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
+                target = uniqueTarget(assets, "pasted-" + stamp + ".png");
+                Files.write(target, png);
+            } else {
+                target = uniqueTarget(assets, pastedFile.getFileName().toString());
+                Files.copy(pastedFile, target);
+            }
 
             String alt = stripExtension(target.getFileName().toString());
             String snippet = new ImageRef(alt, relativeAsset(document, target)).toMarkup();
@@ -3147,6 +3178,33 @@ public class MainController {
             showAlert("Error", "Could not save the pasted image: " + e.getMessage());
         }
         return true;
+    }
+
+    /** An image the clipboard is offering as a file, either directly or as a file: URI. */
+    private static Path firstImageFile(Clipboard clipboard) {
+        if (clipboard.hasFiles()) {
+            for (File file : clipboard.getFiles()) {
+                if (looksLikeAnImage(file.getName())) {
+                    return file.toPath();
+                }
+            }
+        }
+        String url = clipboard.hasUrl() ? clipboard.getUrl()
+                : clipboard.hasString() ? clipboard.getString() : null;
+        if (url != null && url.startsWith("file:") && looksLikeAnImage(url)) {
+            try {
+                return Path.of(java.net.URI.create(url.trim()));
+            } catch (RuntimeException notAPath) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private static boolean looksLikeAnImage(String name) {
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        return lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg")
+                || lower.endsWith(".gif") || lower.endsWith(".webp") || lower.endsWith(".bmp");
     }
 
     private void insertImage(DocumentView document) {
