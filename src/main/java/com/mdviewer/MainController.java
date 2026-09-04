@@ -3205,7 +3205,18 @@ public class MainController {
                 ? null
                 : com.mdviewer.ui.ClipboardImage.fromSystemClipboard();
 
-        if (!hasImage && pastedFile == null && viaAwt == null) {
+        /*
+         * Last resort, and on a Wayland desktop the only one that works. The picture
+         * belongs to the compositor; X11 clients see only what XWayland bridges, and a
+         * screenshot is not among it - measured on this tablet, the X11 clipboard offers
+         * TARGETS, TIMESTAMP and a KDE marker, and no image format at all. Neither Java
+         * clipboard can read what is not there. wl-paste asks the compositor.
+         */
+        byte[] viaCommand = hasImage || pastedFile != null || viaAwt != null
+                ? null
+                : com.mdviewer.ui.ClipboardImage.fromCommand(clipboardImageCommand());
+
+        if (!hasImage && pastedFile == null && viaAwt == null && viaCommand == null) {
             if (!loud && (clipboard.hasString() || clipboard.hasHtml())) {
                 return false;      // ordinary text: leave the paste alone
             }
@@ -3223,14 +3234,19 @@ public class MainController {
                 /* Both views of the same clipboard, because they disagree often enough
                    that knowing which one saw what is the whole diagnosis. */
                 String viaSystem = com.mdviewer.ui.ClipboardImage.systemClipboardFormats();
+                String command = clipboardImageCommand();
                 showAlert("No image to paste",
                         "JavaFX sees: " + formats + ".\n"
                         + "The system clipboard offers: "
                         + (viaSystem.isEmpty() ? "nothing at all" : viaSystem) + ".\n\n"
-                        + "If you have just taken a screenshot, the tool may have copied "
-                        + "its location rather than the picture, or the clipboard may not "
-                        + "have survived being handed between the desktop and this "
-                        + "application.");
+                        + (command.isBlank()
+                                ? "If you have just taken a screenshot, the tool may have "
+                                  + "copied its location rather than the picture."
+                                : "On a Wayland desktop the picture belongs to the "
+                                  + "compositor, and X11 clients - which this is - are "
+                                  + "never shown it. Reading it needs a helper:\n\n"
+                                  + "    sudo apt install wl-clipboard\n\n"
+                                  + "This tried: " + command));
             } else {
                 setTransientStatus("Nothing to paste. The clipboard holds: " + formats);
             }
@@ -3248,9 +3264,9 @@ public class MainController {
             Path assets = baseDir.resolve("assets");
             Files.createDirectories(assets);
             Path target;
-            if (hasImage || viaAwt != null) {
-                byte[] png = viaAwt != null
-                        ? viaAwt
+            if (hasImage || viaAwt != null || viaCommand != null) {
+                byte[] png = viaAwt != null ? viaAwt
+                        : viaCommand != null ? viaCommand
                         : com.mdviewer.ui.ClipboardImage.png(clipboard.getImage());
                 if (png == null) {
                     setTransientStatus("That image could not be read from the clipboard.");
@@ -3278,6 +3294,22 @@ public class MainController {
             showAlert("Error", "Could not save the pasted image: " + e.getMessage());
         }
         return true;
+    }
+
+    /**
+     * The command asked for the clipboard's picture when no Java API can see it.
+     *
+     * <p>Configurable in {@code ~/.mdviewer/ui.properties} for the same reason the
+     * on-screen keyboard's command is: the right answer differs by desktop, and a line of
+     * configuration beats a build. Empty switches it off.
+     */
+    private String clipboardImageCommand() {
+        String stored = uiSettings.get("clipboardImageCommand");
+        if (stored != null) {
+            return stored.trim();
+        }
+        return System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT)
+                .contains("linux") ? "wl-paste --type image/png" : "";
     }
 
     /** An image the clipboard is offering as a file, either directly or as a file: URI. */

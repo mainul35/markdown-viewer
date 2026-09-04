@@ -80,6 +80,57 @@ public final class ClipboardImage {
         }
     }
 
+    /**
+     * The clipboard's picture read by running a command, for when no Java API can see it.
+     *
+     * <p>On a Wayland desktop the clipboard belongs to the compositor. X11 clients reach it
+     * only through what XWayland chooses to bridge, and a screenshot is one of the things it
+     * does not: with a picture copied on this tablet, the X11 clipboard advertises exactly
+     * three targets - TARGETS, TIMESTAMP and a KDE marker - and no image format whatsoever.
+     * That is not JavaFX being particular. There is no image on the X11 clipboard to read,
+     * so neither JavaFX nor AWT can produce one, and no amount of Java is going to help.
+     *
+     * <p>{@code wl-paste} asks the compositor directly, which is where the picture actually
+     * is. It is a separate package - wl-clipboard - and when it is missing this returns null
+     * and the caller explains rather than failing silently.
+     *
+     * @param command the command to run; its standard output is taken as image bytes
+     */
+    public static byte[] fromCommand(String command) {
+        if (command == null || command.isBlank()) {
+            return null;
+        }
+        Process process = null;
+        try {
+            process = new ProcessBuilder(command.trim().split("\\s+"))
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .start();
+            byte[] bytes;
+            try (var out = process.getInputStream()) {
+                bytes = out.readAllBytes();
+            }
+            /* A clipboard read that hangs must not hang the editor with it. */
+            if (!process.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return null;
+            }
+            if (bytes.length == 0) {
+                return null;
+            }
+            /*
+             * Checked rather than trusted: wl-paste prints an error to stdout in some
+             * versions when the type is unavailable, and an error message written into a
+             * document as a .png is worse than nothing happening.
+             */
+            return ImageIO.read(new java.io.ByteArrayInputStream(bytes)) == null ? null : bytes;
+        } catch (Throwable cannotRun) {
+            if (process != null) {
+                process.destroyForcibly();
+            }
+            return null;
+        }
+    }
+
     /** What AWT says is on the clipboard, for explaining why nothing could be pasted. */
     public static String systemClipboardFormats() {
         try {
