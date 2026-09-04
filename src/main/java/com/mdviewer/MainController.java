@@ -1797,6 +1797,15 @@ public class MainController {
         if (rootPane == null) {
             return;
         }
+        if (primaryStage != null) {
+            /* Switching to another application leaves the window short and the space it
+               gave up empty, since the keyboard goes with the focus. */
+            primaryStage.focusedProperty().addListener((observable, was, inFront) -> {
+                if (!inFront && windowMovedForKeyboard) {
+                    makeRoomForKeyboard(false);
+                }
+            });
+        }
         if (rootPane.getScene() != null) {
             watchWidth(rootPane.getScene());
         } else {
@@ -3140,6 +3149,22 @@ public class MainController {
                 makeRoomForKeyboard(true);
             } else {
                 keyboardHide.playFromStart();
+            }
+        });
+
+        /*
+         * Escape puts the window back without having to move the caret elsewhere.
+         *
+         * <p>The keyboard can also be dismissed by its own hide key, and nothing tells this
+         * application when that happens - it is another process with its own window. The
+         * window would then stay short with nothing covering the space. Escape is the
+         * conventional "I am done here" key and costs nothing to offer.
+         */
+        editor.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == javafx.scene.input.KeyCode.ESCAPE
+                    && windowMovedForKeyboard) {
+                virtualKeyboard.hide();
+                makeRoomForKeyboard(false);
             }
         });
     }

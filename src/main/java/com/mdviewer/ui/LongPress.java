@@ -96,5 +96,22 @@ public final class LongPress {
                 e.consume();
             }
         });
+
+        /*
+         * The press can end without a release ever arriving here. Tapping into the editor
+         * summons the on-screen keyboard, which resizes the window - and the control moves
+         * out from under the finger, so the release lands somewhere else or nowhere. The
+         * hold would then run to completion and open a context menu that nobody asked for,
+         * on a plain tap.
+         *
+         * Losing the pointer is the same thing as ending the press, whatever the reason:
+         * the finger is no longer where the gesture began, so the gesture is over.
+         */
+        node.addEventFilter(MouseEvent.MOUSE_EXITED, e -> hold.stop());
+        node.addEventFilter(MouseEvent.MOUSE_EXITED_TARGET, e -> hold.stop());
+
+        /* A window that moves or resizes under a press ends it for the same reason. */
+        node.sceneProperty().addListener((observable, had, scene) -> hold.stop());
+        node.layoutBoundsProperty().addListener((observable, was, now) -> hold.stop());
     }
 }
