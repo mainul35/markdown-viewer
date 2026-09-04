@@ -4081,6 +4081,33 @@ public class MainController {
         }
 
         /** The Markdown a rendered block came from, for editing it in place. */
+        /**
+         * A block in the preview has been opened for editing.
+         *
+         * <p>The keyboard is summoned from the raw editor by watching its focus. There is
+         * no equivalent here: the thing taking focus is a textarea inside the page, which
+         * JavaFX cannot see - as far as it is concerned the WebView already had focus and
+         * nothing changed. So the page says so itself.
+         */
+        public void editingStarted() {
+            if (!touchScroll.isEnabled()) {
+                return;
+            }
+            javafx.application.Platform.runLater(() -> {
+                keyboardHide.stop();
+                virtualKeyboard.show();
+                makeRoomForKeyboard(true);
+            });
+        }
+
+        /** That block has been committed or abandoned. */
+        public void editingEnded() {
+            if (!touchScroll.isEnabled()) {
+                return;
+            }
+            javafx.application.Platform.runLater(keyboardHide::playFromStart);
+        }
+
         public String blockSource(int start, int end) {
             DocumentView document = activeDocument();
             if (document == null) {
@@ -4998,6 +5025,8 @@ public class MainController {
               cell.classList.add('mdv-cell-editing');
               window.__mdEditingCell = cell;
               cell.focus();
+              /* Same as a block: focus inside the page is invisible from outside it. */
+              if (window.mdvBridge) { window.mdvBridge.editingStarted(); }
               var range = document.createRange();
               range.selectNodeContents(cell);
               var sel = window.getSelection();
@@ -5007,6 +5036,7 @@ public class MainController {
 
             function mdEndCellEdit(cell, commit) {
               if (window.__mdEditingCell !== cell) { return; }
+              if (window.mdvBridge) { window.mdvBridge.editingEnded(); }
               window.__mdEditingCell = null;
               cell.removeAttribute('contenteditable');
               cell.classList.remove('mdv-cell-editing');
@@ -5168,10 +5198,14 @@ public class MainController {
 
               mdAutosize(area);
               area.focus();
+              /* The application cannot see focus inside the page, and an on-screen
+                 keyboard has to be asked for from outside it. */
+              if (window.mdvBridge) { window.mdvBridge.editingStarted(); }
               area.select();
             }
 
             function mdEndBlockEdit(block, commit) {
+              if (window.mdvBridge) { window.mdvBridge.editingEnded(); }
               if (window.__mdEditingBlock !== block) { return; }
               window.__mdEditingBlock = null;
               block.classList.remove('mdv-block-editing');
