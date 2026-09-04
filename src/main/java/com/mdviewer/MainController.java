@@ -3144,7 +3144,7 @@ public class MainController {
         javafx.scene.input.KeyCombination paste = new javafx.scene.input.KeyCodeCombination(
                 javafx.scene.input.KeyCode.V, javafx.scene.input.KeyCombination.SHORTCUT_DOWN);
         document.getEditor().addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
-            if (paste.match(event) && pasteImage(document)) {
+            if (paste.match(event) && pasteImage(document, false)) {
                 event.consume();
             }
         });
@@ -3155,7 +3155,35 @@ public class MainController {
      *         cases where it could not, since falling through to a text paste after
      *         refusing an image would put something unexpected in the document
      */
-    private boolean pasteImage(DocumentView document) {
+    /**
+     * Edit &gt; Paste Image.
+     *
+     * <p>The same work as Ctrl+V, reachable when the keystroke is not. A context menu's
+     * Paste goes straight to the control's skin and cannot be intercepted from here, and on
+     * a tablet the keystroke arrives from an on-screen keyboard that may or may not deliver
+     * it - so the one route that is always available is a menu item.
+     *
+     * <p>Asked explicitly, it answers explicitly: if there is no picture to paste it says
+     * what the clipboard does hold, in a dialog rather than the status bar. Somebody who
+     * has just chosen "Paste Image" is owed a reason, and a line in the status bar is easy
+     * to miss on a small screen.
+     */
+    @FXML
+    private void handlePasteImage() {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            setTransientStatus("Open a document before pasting an image.");
+            return;
+        }
+        document.getEditor().requestFocus();
+        pasteImage(document, true);
+    }
+
+    /**
+     * @param loud whether to explain in a dialog when there is nothing to paste, rather
+     *             than falling through quietly to let an ordinary text paste happen
+     */
+    private boolean pasteImage(DocumentView document, boolean loud) {
         Clipboard clipboard = Clipboard.getSystemClipboard();
 
         /*
@@ -3167,7 +3195,7 @@ public class MainController {
         boolean hasImage = clipboard.hasImage();
         Path pastedFile = firstImageFile(clipboard);
         if (!hasImage && pastedFile == null) {
-            if (clipboard.hasString() || clipboard.hasHtml()) {
+            if (!loud && (clipboard.hasString() || clipboard.hasHtml())) {
                 return false;      // ordinary text: leave the paste alone
             }
             /*
@@ -3176,11 +3204,20 @@ public class MainController {
              * is normally either "nothing" or a format worth adding here.
              */
             String formats = clipboard.getContentTypes().isEmpty()
-                    ? "nothing"
+                    ? "nothing at all"
                     : clipboard.getContentTypes().stream()
                             .map(Object::toString)
-                            .reduce((a, b) -> a + ", " + b).orElse("nothing");
-            setTransientStatus("Nothing to paste. The clipboard holds: " + formats);
+                            .reduce((a, b) -> a + ", " + b).orElse("nothing at all");
+            if (loud) {
+                showAlert("No image to paste",
+                        "The clipboard holds " + formats + ".\n\n"
+                        + "If you have just taken a screenshot, the tool may have copied "
+                        + "its location rather than the picture, or the clipboard may not "
+                        + "have survived being handed between the desktop and this "
+                        + "application.");
+            } else {
+                setTransientStatus("Nothing to paste. The clipboard holds: " + formats);
+            }
             return true;
         }
 
