@@ -3341,7 +3341,14 @@ public class MainController {
     private String clipboardImageCommand() {
         String stored = uiSettings.get("clipboardImageCommand");
         if (stored != null) {
-            return stored.trim();
+            String trimmed = stored.trim();
+            /* Empty means "unset", not "off" - see VirtualKeyboard for why that matters. */
+            if (trimmed.equalsIgnoreCase("off") || trimmed.equalsIgnoreCase("none")) {
+                return "";
+            }
+            if (!trimmed.isEmpty()) {
+                return trimmed;
+            }
         }
         return System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT)
                 .contains("linux") ? "wl-paste --type image/png" : "";

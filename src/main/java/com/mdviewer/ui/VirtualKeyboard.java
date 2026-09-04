@@ -67,10 +67,25 @@ public final class VirtualKeyboard {
         return command(HIDE_KEY, "vkbd --hide");
     }
 
+    /**
+     * A missing setting means "use the default"; so does an empty one.
+     *
+     * <p>Treating empty as "switched off" is the tidier reading and it is a trap. A key
+     * left with nothing after the equals sign is what a half-finished edit looks like, and
+     * what an appended line looks like when the value was meant to come later - and the
+     * result is a feature that vanishes with no error anywhere. Turning it off is spelled
+     * {@code off}, which nobody types by accident.
+     */
     private String command(String key, String fallback) {
         String stored = settings.get(key);
         if (stored != null) {
-            return stored.trim();
+            String trimmed = stored.trim();
+            if (trimmed.equalsIgnoreCase("off") || trimmed.equalsIgnoreCase("none")) {
+                return "";
+            }
+            if (!trimmed.isEmpty()) {
+                return trimmed;
+            }
         }
         return LINUX ? fallback : "";
     }
