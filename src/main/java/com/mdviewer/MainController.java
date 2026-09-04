@@ -121,6 +121,9 @@ public class MainController {
     private javafx.scene.control.CheckMenuItem touchScrollMenuItem;
 
     @FXML
+    private javafx.scene.control.MenuBar menuBar;
+
+    @FXML
     private javafx.scene.control.RadioMenuItem displayTabletItem;
 
     @FXML
@@ -1832,6 +1835,42 @@ public class MainController {
             displayRegularItem.setSelected(displaySize == DisplaySize.REGULAR);
             displayLargeItem.setSelected(displaySize == DisplaySize.LARGE);
         }
+        styleMenus();
+    }
+
+    /**
+     * Sizes the menu popups, which no stylesheet rule can reach.
+     *
+     * <p>A menu popup is its own window with its own scene, so it is not a descendant of
+     * the scene root and a selector keyed on a root style class never matches it. That is
+     * not a quirk to work around later - it is why the first attempt at sizing menu items
+     * in CSS silently did nothing.
+     *
+     * <p>So the size is set on the items themselves. Applied recursively because submenus
+     * are items too, and re-applied whenever a menu is rebuilt from data - the recent
+     * workspaces list replaces its items, and new ones would arrive unstyled.
+     */
+    private void styleMenus() {
+        if (menuBar == null) {
+            return;
+        }
+        String style = switch (displaySize) {
+            case TABLET -> "-fx-font-size: 15px;";
+            case LARGE -> "-fx-font-size: 18px;";
+            case REGULAR -> "";
+        };
+        for (javafx.scene.control.Menu menu : menuBar.getMenus()) {
+            styleMenuItem(menu, style);
+        }
+    }
+
+    private void styleMenuItem(javafx.scene.control.MenuItem item, String style) {
+        item.setStyle(style);
+        if (item instanceof javafx.scene.control.Menu submenu) {
+            for (javafx.scene.control.MenuItem child : submenu.getItems()) {
+                styleMenuItem(child, style);
+            }
+        }
     }
 
     /** Settings > Display Size. */
@@ -1858,11 +1897,14 @@ public class MainController {
      */
     private void rebuildRecentWorkspaces() {
         recentWorkspacesMenu.getItems().clear();
+        // Items added below are new objects, so they carry none of the sizing applied
+        // earlier; styleMenus() runs again at the end of this method.
         List<Path> recent = workspaceHistory.list();
         if (recent.isEmpty()) {
             MenuItem empty = new MenuItem("No recent workspaces");
             empty.setDisable(true);
             recentWorkspacesMenu.getItems().add(empty);
+            styleMenus();
             return;
         }
         for (Path root : recent) {
@@ -1877,6 +1919,7 @@ public class MainController {
             setTransientStatus("Recent workspaces cleared.");
         });
         recentWorkspacesMenu.getItems().addAll(new SeparatorMenuItem(), clear);
+        styleMenus();
     }
 
     /**

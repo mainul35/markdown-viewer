@@ -8,7 +8,7 @@
             fx:controller="com.mdviewer.MainController">
     <top>
         <VBox>
-            <MenuBar>
+            <MenuBar fx:id="menuBar">
             <!--
                 "shortcut" rather than "control" so the accelerator is Ctrl on Windows and
                 Linux and Cmd on macOS, which is what each platform's users press.
