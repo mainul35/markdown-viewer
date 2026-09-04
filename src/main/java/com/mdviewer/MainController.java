@@ -56,6 +56,7 @@ import com.mdviewer.ui.MarkdownFiles;
 import com.mdviewer.ui.PathTreeItem;
 import com.mdviewer.ui.DisplaySize;
 import com.mdviewer.ui.PreviewToolbar;
+import com.mdviewer.ui.VirtualKeyboard;
 import com.mdviewer.ui.TouchScroll;
 import com.mdviewer.ui.WelcomeView;
 import com.mdviewer.ui.WorkspaceView;
@@ -269,6 +270,19 @@ public class MainController {
 
     /** Settings file shared with {@link TouchScroll}. */
     private final com.mdviewer.ui.UiSettings uiSettings = new com.mdviewer.ui.UiSettings();
+
+    /** Asks the desktop's on-screen keyboard to appear; see {@link VirtualKeyboard}. */
+    private final VirtualKeyboard virtualKeyboard = new VirtualKeyboard(uiSettings);
+
+    /**
+     * Delays hiding the keyboard, so moving between two text fields does not flash it.
+     *
+     * <p>Focus leaves the editor before it arrives anywhere else, so a hide on focus lost
+     * and a show on focus gained would fire in that order every time - the keyboard would
+     * drop and come back for a click from the editor into the find bar.
+     */
+    private final javafx.animation.PauseTransition keyboardHide =
+            new javafx.animation.PauseTransition(javafx.util.Duration.millis(250));
 
     /** How much room the interface gives itself. Chosen in Settings, not measured. */
     private DisplaySize displaySize = DisplaySize.REGULAR;
@@ -610,6 +624,7 @@ public class MainController {
         DocumentView document = new DocumentView(path, "Untitled-" + (++untitledCounter));
         touchScroll.install(document.getEditor());
         installImagePaste(document);
+        installKeyboardSummon(document.getEditor());
 
         loadingDocument = true;
         document.getEditor().setText(text);
@@ -3095,6 +3110,32 @@ public class MainController {
      * <p>This covers the keystroke, not the context menu's Paste item - that goes straight
      * to the skin and cannot be intercepted here.
      */
+    /**
+     * Brings the on-screen keyboard up when the caret lands in this editor.
+     *
+     * <p>Tied to touch mode, because that is the switch that says a finger is driving. On a
+     * desktop the keyboard is already under your hands and summoning one would be an
+     * interruption.
+     *
+     * <p>JavaFX cannot do this the ordinary way - it takes no part in the input-method
+     * protocol, so the compositor never learns that a text field has focus. See
+     * {@link VirtualKeyboard}.
+     */
+    private void installKeyboardSummon(TextArea editor) {
+        keyboardHide.setOnFinished(e -> virtualKeyboard.hide());
+        editor.focusedProperty().addListener((observable, was, focused) -> {
+            if (!touchScroll.isEnabled()) {
+                return;
+            }
+            if (focused) {
+                keyboardHide.stop();
+                virtualKeyboard.show();
+            } else {
+                keyboardHide.playFromStart();
+            }
+        });
+    }
+
     private void installImagePaste(DocumentView document) {
         javafx.scene.input.KeyCombination paste = new javafx.scene.input.KeyCodeCombination(
                 javafx.scene.input.KeyCode.V, javafx.scene.input.KeyCombination.SHORTCUT_DOWN);
