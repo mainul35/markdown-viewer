@@ -248,9 +248,6 @@ public class MainController {
     /** Style class toggled on the scene root; see styles.css. */
     private static final String DARK_STYLE_CLASS = "dark-theme";
 
-    /** Style class that enlarges every hit target; see the touch mode block in styles.css. */
-    private static final String TOUCH_STYLE_CLASS = "touch";
-
     /** Past this the file tree is taking space the document needs more. */
     private static final double MAX_EXPLORER_WIDTH = 240;
 
@@ -285,7 +282,6 @@ public class MainController {
         if (touchScrollMenuItem != null) {
             touchScrollMenuItem.setSelected(touchScroll.isEnabled());
         }
-        applyTouchMode();
         displaySize = DisplaySize.load(uiSettings);
         applyDisplaySize();
         installResponsiveLayout();
@@ -1753,7 +1749,6 @@ public class MainController {
     @FXML
     private void handleToggleTouchScroll() {
         touchScroll.setEnabled(touchScrollMenuItem.isSelected());
-        applyTouchMode();
     }
 
     /**
@@ -1852,19 +1847,6 @@ public class MainController {
         displaySize.save(uiSettings);
         applyDisplaySize();
         setTransientStatus("Display size: " + displaySize.label());
-    }
-
-    private void applyTouchMode() {
-        if (rootPane == null) {
-            return;
-        }
-        if (touchScroll.isEnabled()) {
-            if (!rootPane.getStyleClass().contains(TOUCH_STYLE_CLASS)) {
-                rootPane.getStyleClass().add(TOUCH_STYLE_CLASS);
-            }
-        } else {
-            rootPane.getStyleClass().remove(TOUCH_STYLE_CLASS);
-        }
     }
 
     /**

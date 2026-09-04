@@ -18,13 +18,13 @@ import java.nio.file.Path;
  */
 public enum DisplaySize {
 
-    /** Small screen, held in the hands. Tighter spacing, and targets sized for a finger. */
+    /** Held in the hands. Larger text, and every target at 44px - the floor for a finger. */
     TABLET("tablet", "Tablet", "display-tablet"),
 
     /** A desktop or laptop at a normal viewing distance. The baseline; adds nothing. */
     REGULAR("regular", "Regular Display", null),
 
-    /** A large or high-density screen, or eyes that would rather not squint. */
+    /** Larger again: a dense panel, or eyes that would rather not squint. 52px targets. */
     LARGE("large", "Extra Large Display", "display-large");
 
     private static final String KEY = "displaySize";
