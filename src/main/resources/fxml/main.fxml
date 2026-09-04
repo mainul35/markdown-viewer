@@ -73,8 +73,6 @@
                     <SeparatorMenuItem/>
                     <MenuItem fx:id="explorerMenuItem" text="Hide Explorer" onAction="#handleToggleExplorer"/>
                     <MenuItem text="Reveal Current File" onAction="#handleRevealInTree"/>
-                    <CheckMenuItem fx:id="touchScrollMenuItem" text="Touch Mode"
-                                   onAction="#handleToggleTouchScroll"/>
                     <MenuItem fx:id="assistantMenuItem" text="Show Assistant" onAction="#handleToggleAssistant">
                         <accelerator><KeyCodeCombination alt="UP" code="A" control="UP" meta="UP" shift="DOWN" shortcut="DOWN"/></accelerator>
                     </MenuItem>
@@ -100,6 +98,16 @@
                     <CheckMenuItem fx:id="cloudAutoSyncMenuItem" text="Sync Workspaces Automatically" selected="true" onAction="#handleToggleCloudAutoSync"/>
                     <SeparatorMenuItem/>
                     <CheckMenuItem fx:id="autoRefreshMenuItem" text="Auto-refresh Workspaces (5 min)" selected="true" onAction="#handleToggleAutoRefresh"/>
+                    <SeparatorMenuItem/>
+                    <Menu text="Display Size">
+                        <RadioMenuItem fx:id="displayTabletItem" text="Tablet" onAction="#handleDisplaySize">
+                            <toggleGroup><ToggleGroup fx:id="displaySizeGroup"/></toggleGroup>
+                        </RadioMenuItem>
+                        <RadioMenuItem fx:id="displayRegularItem" text="Regular Display" onAction="#handleDisplaySize" toggleGroup="$displaySizeGroup"/>
+                        <RadioMenuItem fx:id="displayLargeItem" text="Extra Large Display" onAction="#handleDisplaySize" toggleGroup="$displaySizeGroup"/>
+                    </Menu>
+                    <CheckMenuItem fx:id="touchScrollMenuItem" text="Touch Mode (drag to scroll)"
+                                   onAction="#handleToggleTouchScroll"/>
                 </Menu>
                 <Menu text="Help">
                     <MenuItem text="About" onAction="#handleAbout"/>

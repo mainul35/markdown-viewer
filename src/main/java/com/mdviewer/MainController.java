@@ -54,6 +54,7 @@ import com.mdviewer.ui.CropDialog;
 import com.mdviewer.ui.FindBar;
 import com.mdviewer.ui.MarkdownFiles;
 import com.mdviewer.ui.PathTreeItem;
+import com.mdviewer.ui.DisplaySize;
 import com.mdviewer.ui.PreviewToolbar;
 import com.mdviewer.ui.TouchScroll;
 import com.mdviewer.ui.WelcomeView;
@@ -118,6 +119,15 @@ public class MainController {
 
     @FXML
     private javafx.scene.control.CheckMenuItem touchScrollMenuItem;
+
+    @FXML
+    private javafx.scene.control.RadioMenuItem displayTabletItem;
+
+    @FXML
+    private javafx.scene.control.RadioMenuItem displayRegularItem;
+
+    @FXML
+    private javafx.scene.control.RadioMenuItem displayLargeItem;
 
     @FXML
     private MenuItem assistantMenuItem;
@@ -241,19 +251,6 @@ public class MainController {
     /** Style class that enlarges every hit target; see the touch mode block in styles.css. */
     private static final String TOUCH_STYLE_CLASS = "touch";
 
-    /** Style class for a narrow window; see the compact layout block in styles.css. */
-    private static final String COMPACT_STYLE_CLASS = "compact";
-
-    /**
-     * Below this width the chrome is spending too much of the screen on itself.
-     *
-     * <p>Chosen from the shape of the window rather than the device: a tablet held in
-     * portrait and a half-screen window on a desktop have the same problem, and a tablet in
-     * landscape has neither. Asking the window also means the answer changes when it is
-     * resized or the device rotated, which asking the hardware once at startup would not.
-     */
-    private static final double COMPACT_WIDTH = 900;
-
     /** Past this the file tree is taking space the document needs more. */
     private static final double MAX_EXPLORER_WIDTH = 240;
 
@@ -270,6 +267,12 @@ public class MainController {
     /** Drag to scroll instead of drag to select, for touchscreens. */
     private final TouchScroll touchScroll = new TouchScroll();
 
+    /** Settings file shared with {@link TouchScroll}. */
+    private final com.mdviewer.ui.UiSettings uiSettings = new com.mdviewer.ui.UiSettings();
+
+    /** How much room the interface gives itself. Chosen in Settings, not measured. */
+    private DisplaySize displaySize = DisplaySize.REGULAR;
+
     public enum EditorMode {
         RAW, SPLIT, FULL_PREVIEW
     }
@@ -283,6 +286,8 @@ public class MainController {
             touchScrollMenuItem.setSelected(touchScroll.isEnabled());
         }
         applyTouchMode();
+        displaySize = DisplaySize.load(uiSettings);
+        applyDisplaySize();
         installResponsiveLayout();
 
         previewToolbar = new PreviewToolbar();
@@ -1788,17 +1793,9 @@ public class MainController {
     }
 
     private void applyWidth(double width) {
-        if (width <= 0) {
-            return;
+        if (width > 0) {
+            capExplorer(width);
         }
-        if (width < COMPACT_WIDTH) {
-            if (!rootPane.getStyleClass().contains(COMPACT_STYLE_CLASS)) {
-                rootPane.getStyleClass().add(COMPACT_STYLE_CLASS);
-            }
-        } else {
-            rootPane.getStyleClass().remove(COMPACT_STYLE_CLASS);
-        }
-        capExplorer(width);
     }
 
     /**
@@ -1817,6 +1814,44 @@ public class MainController {
             mainSplit.setDividerPosition(0, cap);
             explorerDivider = cap;
         }
+    }
+
+    /**
+     * Applies the chosen display size, and ticks the menu item that matches it.
+     *
+     * <p>Regular adds no class at all. Styling the baseline would mean every rule in the
+     * stylesheet needing a counterpart, and a theme that forgets one silently stops
+     * applying at whichever size nobody tested.
+     */
+    private void applyDisplaySize() {
+        if (rootPane == null) {
+            return;
+        }
+        rootPane.getStyleClass().removeAll(DisplaySize.allStyleClasses());
+        String wanted = displaySize.styleClass();
+        if (wanted != null && !rootPane.getStyleClass().contains(wanted)) {
+            rootPane.getStyleClass().add(wanted);
+        }
+        if (displayTabletItem != null) {
+            displayTabletItem.setSelected(displaySize == DisplaySize.TABLET);
+            displayRegularItem.setSelected(displaySize == DisplaySize.REGULAR);
+            displayLargeItem.setSelected(displaySize == DisplaySize.LARGE);
+        }
+    }
+
+    /** Settings > Display Size. */
+    @FXML
+    private void handleDisplaySize() {
+        if (displayTabletItem != null && displayTabletItem.isSelected()) {
+            displaySize = DisplaySize.TABLET;
+        } else if (displayLargeItem != null && displayLargeItem.isSelected()) {
+            displaySize = DisplaySize.LARGE;
+        } else {
+            displaySize = DisplaySize.REGULAR;
+        }
+        displaySize.save(uiSettings);
+        applyDisplaySize();
+        setTransientStatus("Display size: " + displaySize.label());
     }
 
     private void applyTouchMode() {
