@@ -407,24 +407,13 @@ public final class AiPanel extends VBox {
             setStatus("The clipboard does not hold an image.");
             return;
         }
-        try {
-            int width = (int) image.getWidth();
-            int height = (int) image.getHeight();
-            java.awt.image.BufferedImage buffered = new java.awt.image.BufferedImage(
-                    width, height, java.awt.image.BufferedImage.TYPE_INT_ARGB);
-            javafx.scene.image.PixelReader pixels = image.getPixelReader();
-            for (int y = 0; y < height; y++) {
-                for (int x = 0; x < width; x++) {
-                    buffered.setRGB(x, y, pixels.getArgb(x, y));
-                }
-            }
-            java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
-            javax.imageio.ImageIO.write(buffered, "png", png);
-            setAttachedImage(java.util.Base64.getEncoder().encodeToString(png.toByteArray()),
-                    width, height);
-        } catch (Exception e) {
+        byte[] png = com.mdviewer.ui.ClipboardImage.png(image);
+        if (png == null) {
             setStatus("Could not read that image from the clipboard.");
+            return;
         }
+        setAttachedImage(java.util.Base64.getEncoder().encodeToString(png),
+                (int) image.getWidth(), (int) image.getHeight());
     }
 
     private void setAttachedImage(String base64, int width, int height) {

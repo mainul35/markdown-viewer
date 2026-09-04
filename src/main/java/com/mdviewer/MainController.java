@@ -609,6 +609,7 @@ public class MainController {
     private DocumentView createDocument(WorkspaceView workspace, Path path, String text) {
         DocumentView document = new DocumentView(path, "Untitled-" + (++untitledCounter));
         touchScroll.install(document.getEditor());
+        installImagePaste(document);
 
         loadingDocument = true;
         document.getEditor().setText(text);
@@ -3078,6 +3079,76 @@ public class MainController {
      * reference to a file elsewhere on this machine breaks the moment the folder is shared
      * or moved.
      */
+    /**
+     * Ctrl+V with a picture on the clipboard writes the picture, not nothing.
+     *
+     * <p>A TextArea pastes text. Given an image it finds no text flavour and inserts
+     * nothing at all - no error, no character, which reads as the paste key having failed.
+     * Taking a screenshot and putting it in a document is one of the main things a markdown
+     * editor is for, so the same thing that happens through <em>Insert image</em> happens
+     * here: the bytes are written into assets/ beside the document and a reference to them
+     * is inserted at the caret.
+     *
+     * <p>An event filter, so it runs before the control's own paste. Only images are taken;
+     * text falls through untouched, which is the common case and must stay ordinary.
+     *
+     * <p>This covers the keystroke, not the context menu's Paste item - that goes straight
+     * to the skin and cannot be intercepted here.
+     */
+    private void installImagePaste(DocumentView document) {
+        javafx.scene.input.KeyCombination paste = new javafx.scene.input.KeyCodeCombination(
+                javafx.scene.input.KeyCode.V, javafx.scene.input.KeyCombination.SHORTCUT_DOWN);
+        document.getEditor().addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
+            if (paste.match(event) && pasteImage(document)) {
+                event.consume();
+            }
+        });
+    }
+
+    /**
+     * @return true when the clipboard held an image and this handled it - including the
+     *         cases where it could not, since falling through to a text paste after
+     *         refusing an image would put something unexpected in the document
+     */
+    private boolean pasteImage(DocumentView document) {
+        Clipboard clipboard = Clipboard.getSystemClipboard();
+        if (!clipboard.hasImage()) {
+            return false;
+        }
+        Path baseDir = document.getBaseDir();
+        if (baseDir == null) {
+            setTransientStatus("Save the document first so the pasted image can be stored "
+                    + "beside it.");
+            return true;
+        }
+        byte[] png = com.mdviewer.ui.ClipboardImage.png(clipboard.getImage());
+        if (png == null) {
+            setTransientStatus("That image could not be read from the clipboard.");
+            return true;
+        }
+        try {
+            Path assets = baseDir.resolve("assets");
+            Files.createDirectories(assets);
+            String stamp = java.time.LocalDateTime.now()
+                    .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
+            Path target = uniqueTarget(assets, "pasted-" + stamp + ".png");
+            Files.write(target, png);
+
+            String alt = stripExtension(target.getFileName().toString());
+            String snippet = new ImageRef(alt, relativeAsset(document, target)).toMarkup();
+            TextArea editor = document.getEditor();
+            int caret = editor.getCaretPosition();
+            editor.insertText(caret, snippet);
+            editor.selectRange(caret + 2, caret + 2 + alt.length());
+            previewDebounce.stop();
+            updatePreview();
+            setTransientStatus("Pasted into assets/" + target.getFileName());
+        } catch (IOException e) {
+            showAlert("Error", "Could not save the pasted image: " + e.getMessage());
+        }
+        return true;
+    }
+
     private void insertImage(DocumentView document) {
         Path baseDir = document.getBaseDir();
         if (baseDir == null) {
