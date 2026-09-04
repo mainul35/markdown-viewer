@@ -1,6 +1,8 @@
 package com.mdviewer.ui;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Locale;
 
 /**
@@ -117,6 +119,132 @@ public final class VirtualKeyboard {
             }
         }
         return 0.42;
+    }
+
+    /**
+     * Whether this machine should be summoning a keyboard at all.
+     *
+     * <p>Two conditions, and both matter. A touchscreen, because there is otherwise nothing
+     * to type with on screen and no reason to want one. And <em>no</em> physical keyboard,
+     * because a tablet in a keyboard case is a laptop: throwing a keyboard over half the
+     * screen when there is a real one under your hands is worse than doing nothing.
+     *
+     * <p>Re-read rather than decided once at startup - a keyboard case gets attached and
+     * detached, and the answer changes with it. The file is a few kilobytes of text and
+     * this is asked when focus moves, not in a loop.
+     *
+     * <p>{@code keyboardSummon} in the settings overrides both: {@code always} or
+     * {@code never}, for the cases this guesses wrong.
+     */
+    private long lastAsked;
+    private boolean lastAnswer;
+
+    public boolean isWanted() {
+        /*
+         * Cached for a second. This is asked every time focus moves, which during ordinary
+         * use is often - tabbing through a dialog asks it once per field - and each answer
+         * costs reading and parsing a file. A second is short enough that plugging a
+         * keyboard in is noticed while you are still reaching for it.
+         */
+        long now = System.currentTimeMillis();
+        if (now - lastAsked < 1000) {
+            return lastAnswer;
+        }
+        lastAsked = now;
+        lastAnswer = decideIfWanted();
+        return lastAnswer;
+    }
+
+    private boolean decideIfWanted() {
+        String override = settings.get("keyboardSummon");
+        if (override != null) {
+            String choice = override.trim().toLowerCase(Locale.ROOT);
+            if (choice.equals("always")) {
+                return true;
+            }
+            if (choice.equals("never")) {
+                return false;
+            }
+        }
+        Path devices = Path.of("/proc/bus/input/devices");
+        return TouchScroll.hasTouchscreen(devices) && !hasPhysicalKeyboard(devices);
+    }
+
+    /**
+     * Whether a real keyboard is attached, told apart from everything else claiming to be one.
+     *
+     * <p>Half the devices on a machine register as keyboards: a power button, a lid switch,
+     * the volume keys on a tablet's case, and - importantly here - the on-screen keyboard
+     * itself, which types by creating a virtual keyboard through {@code /dev/uinput}.
+     * Counting anything with a {@code kbd} handler would find one on every machine and this
+     * would never summon anything.
+     *
+     * <p>What separates a keyboard you can type on is that it has letters. The capability
+     * bitmask in {@code /proc/bus/input/devices} says so exactly: A to Z are key codes 30 to
+     * 44, which live in the last 64-bit word of the {@code B: KEY=} line. A power button's
+     * last word is zero. So the question "can this thing type an A" is answered by one bit,
+     * rather than by guessing from names.
+     */
+    static boolean hasPhysicalKeyboard(Path devices) {
+        try {
+            if (!Files.isReadable(devices)) {
+                return false;
+            }
+            String name = "";
+            boolean isKeyboardHandler = false;
+            for (String line : Files.readAllLines(devices)) {
+                if (line.startsWith("N: Name=")) {
+                    name = line.toLowerCase(Locale.ROOT);
+                    isKeyboardHandler = false;
+                } else if (line.startsWith("H: Handlers=")) {
+                    isKeyboardHandler = line.contains("kbd");
+                } else if (line.startsWith("B: KEY=") && isKeyboardHandler) {
+                    /*
+                     * Two things here type through /dev/uinput and are indistinguishable
+                     * from hardware at this level, and neither is a keyboard anybody is
+                     * typing on:
+                     *
+                     *   vkbd - the on-screen keyboard itself. Counting it would mean the
+                     *   moment it appeared, the application would decide a real keyboard
+                     *   had arrived and stop summoning it.
+                     *
+                     *   keyd - a key remapper, which publishes a virtual keyboard whether
+                     *   or not any hardware is attached. On this tablet it is present with
+                     *   no keyboard plugged in at all.
+                     */
+                    if (name.contains("vkbd") || name.contains("keyd")
+                            || name.contains("virtual")) {
+                        continue;
+                    }
+                    if (hasLetterKeys(line.substring("B: KEY=".length()))) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        } catch (IOException | RuntimeException cannotRead) {
+            /* Assume a keyboard rather than throwing one over the screen unasked. */
+            return true;
+        }
+    }
+
+    /** True when the bitmask has the A-Z key codes, 30 to 44, set. */
+    private static boolean hasLetterKeys(String bitmask) {
+        String[] words = bitmask.trim().split("\\s+");
+        if (words.length == 0) {
+            return false;
+        }
+        try {
+            long lowest = Long.parseUnsignedLong(words[words.length - 1], 16);
+            for (int code = 30; code <= 44; code++) {
+                if ((lowest & (1L << code)) == 0) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (NumberFormatException notHex) {
+            return false;
+        }
     }
 
     /** The smallest window worth typing into; below this, move it up instead of squeezing. */

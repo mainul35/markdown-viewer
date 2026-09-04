@@ -301,6 +301,7 @@ public class MainController {
         if (touchScrollMenuItem != null) {
             touchScrollMenuItem.setSelected(touchScroll.isEnabled());
         }
+        installKeyboardSummon();
         displaySize = DisplaySize.load(uiSettings);
         applyDisplaySize();
         installResponsiveLayout();
@@ -627,7 +628,6 @@ public class MainController {
         DocumentView document = new DocumentView(path, "Untitled-" + (++untitledCounter));
         touchScroll.install(document.getEditor());
         installImagePaste(document);
-        installKeyboardSummon(document.getEditor());
         LongPress.install(document.getEditor(), touchScroll::isEnabled);
 
         loadingDocument = true;
@@ -3123,46 +3123,78 @@ public class MainController {
      * <p>This covers the keystroke, not the context menu's Paste item - that goes straight
      * to the skin and cannot be intercepted here.
      */
+    /** Scenes already being watched, so a window shown twice is not wired twice. */
+    private final java.util.Set<javafx.scene.Scene> watchedScenes =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
     /**
-     * Brings the on-screen keyboard up when the caret lands in this editor.
+     * Brings the on-screen keyboard up whenever anything typeable takes focus.
      *
-     * <p>Tied to touch mode, because that is the switch that says a finger is driving. On a
-     * desktop the keyboard is already under your hands and summoning one would be an
-     * interruption.
+     * <p>Written against the scene rather than against a control. The first version wired
+     * the document's editor as each document opened, which worked there and nowhere else -
+     * the find bar, the assistant's question box, every field in every dialog stayed
+     * silent, and each would have needed remembering separately. Watching the focus owner
+     * covers all of them, including ones added later, because the question is not "is this
+     * the editor" but "can you type into whatever just took focus".
      *
-     * <p>JavaFX cannot do this the ordinary way - it takes no part in the input-method
-     * protocol, so the compositor never learns that a text field has focus. See
-     * {@link VirtualKeyboard}.
+     * <p>Every window gets its own scene, so dialogs are watched as they appear rather than
+     * only the main one.
      */
-    private void installKeyboardSummon(TextArea editor) {
-        keyboardHide.setOnFinished(e -> {
-            virtualKeyboard.hide();
-            makeRoomForKeyboard(false);
+    private void installKeyboardSummon() {
+        for (javafx.stage.Window window : javafx.stage.Window.getWindows()) {
+            watchForTyping(window);
+        }
+        javafx.stage.Window.getWindows().addListener(
+                (javafx.collections.ListChangeListener<javafx.stage.Window>) change -> {
+                    while (change.next()) {
+                        change.getAddedSubList().forEach(this::watchForTyping);
+                    }
+                });
+    }
+
+    private void watchForTyping(javafx.stage.Window window) {
+        if (window.getScene() != null) {
+            watchScene(window.getScene());
+        }
+        window.sceneProperty().addListener((observable, was, scene) -> {
+            if (scene != null) {
+                watchScene(scene);
+            }
         });
-        editor.focusedProperty().addListener((observable, was, focused) -> {
-            if (!touchScroll.isEnabled()) {
+    }
+
+    private void watchScene(javafx.scene.Scene scene) {
+        if (!watchedScenes.add(scene)) {
+            return;
+        }
+        scene.focusOwnerProperty().addListener((observable, lost, gained) -> {
+            if (!virtualKeyboard.isWanted()) {
                 return;
             }
-            if (focused) {
+            /*
+             * TextInputControl is the common parent of TextField, TextArea and
+             * PasswordField, and an editable ComboBox's editor is a TextField - so this one
+             * test covers every place in the application where typing is possible.
+             */
+            if (gained instanceof javafx.scene.control.TextInputControl) {
                 keyboardHide.stop();
                 virtualKeyboard.show();
-                makeRoomForKeyboard(true);
+                /* Only the main window steps aside. A dialog is small, already centred,
+                   and moving it about while somebody is filling it in is worse than the
+                   keyboard overlapping its lower edge. */
+                if (primaryStage != null && scene == primaryStage.getScene()) {
+                    makeRoomForKeyboard(true);
+                }
             } else {
                 keyboardHide.playFromStart();
             }
         });
 
-        /*
-         * Escape puts the window back without having to move the caret elsewhere.
-         *
-         * <p>The keyboard can also be dismissed by its own hide key, and nothing tells this
-         * application when that happens - it is another process with its own window. The
-         * window would then stay short with nothing covering the space. Escape is the
-         * conventional "I am done here" key and costs nothing to offer.
-         */
-        editor.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
-            if (event.getCode() == javafx.scene.input.KeyCode.ESCAPE
-                    && windowMovedForKeyboard) {
+        /* Escape gives the window back without having to move the caret elsewhere. The
+           keyboard can also be dismissed by its own hide key, and nothing tells this
+           application when that happens. */
+        scene.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == javafx.scene.input.KeyCode.ESCAPE && windowMovedForKeyboard) {
                 virtualKeyboard.hide();
                 makeRoomForKeyboard(false);
             }
@@ -4090,7 +4122,7 @@ public class MainController {
          * nothing changed. So the page says so itself.
          */
         public void editingStarted() {
-            if (!touchScroll.isEnabled()) {
+            if (!virtualKeyboard.isWanted()) {
                 return;
             }
             javafx.application.Platform.runLater(() -> {
@@ -4102,7 +4134,7 @@ public class MainController {
 
         /** That block has been committed or abandoned. */
         public void editingEnded() {
-            if (!touchScroll.isEnabled()) {
+            if (!virtualKeyboard.isWanted()) {
                 return;
             }
             javafx.application.Platform.runLater(keyboardHide::playFromStart);

@@ -145,16 +145,29 @@ public final class TouchScroll {
     static boolean hasTouchscreen(Path devices) {
         try {
             if (Files.isReadable(devices)) {
+                String name = "";
                 for (String line : Files.readAllLines(devices)) {
-                    if (!line.startsWith("N: Name=")) {
-                        continue;
-                    }
-                    String name = line.toLowerCase(java.util.Locale.ROOT);
-                    if (name.contains("touch") && !name.contains("touchpad")) {
-                        return true;
+                    if (line.startsWith("N: Name=")) {
+                        name = line.toLowerCase(java.util.Locale.ROOT);
+                    } else if (line.startsWith("B: PROP=")) {
+                        /*
+                         * INPUT_PROP_DIRECT - bit 1 - is the kernel saying you touch this
+                         * device where the thing you are touching is drawn. That is the
+                         * definition of a touchscreen, and it separates one from a touchpad
+                         * without any guessing: a touchpad is INPUT_PROP_POINTER, bit 0.
+                         */
+                        if ((word(line.substring("B: PROP=".length())) & 0x2L) != 0) {
+                            return true;
+                        }
                     }
                 }
-                return false;
+                /*
+                 * Nothing declared itself direct. Fall back to the name, which is where this
+                 * started and is not good enough on its own - this tablet's touchscreen is
+                 * called "ELAN9010:00 04F3:25C5", with no "touch" anywhere in it, so name
+                 * matching answered no on the one machine that needed a yes.
+                 */
+                return name.contains("touchscreen");
             }
         } catch (IOException | RuntimeException cannotRead) {
             /* Fall through to the toolkit rather than failing a launch over a default. */
@@ -163,6 +176,16 @@ public final class TouchScroll {
             return Platform.isSupported(ConditionalFeature.INPUT_TOUCH);
         } catch (RuntimeException noToolkitYet) {
             return false;
+        }
+    }
+
+    /** The first hex word of a capability line, or zero if it will not parse. */
+    static long word(String hex) {
+        String[] words = hex.trim().split("\\s+");
+        try {
+            return words.length == 0 ? 0 : Long.parseUnsignedLong(words[0], 16);
+        } catch (NumberFormatException notHex) {
+            return 0;
         }
     }
 
