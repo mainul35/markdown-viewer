@@ -3144,6 +3144,24 @@ public class MainController {
         });
     }
 
+    /**
+     * Sets the window's height, restating the width so the change is not thrown away.
+     *
+     * <p>Setting only the height does nothing on GTK. JavaFX passes a width of zero to
+     * {@code gtk_window_resize}, which refuses the whole call - "assertion 'width > 0'
+     * failed" on the console, the height unchanged, and no exception anywhere. Measured on
+     * the tablet: setHeight(400) left an 842px window at 842, and the same call with the
+     * width restated to the value it already had resized it correctly.
+     *
+     * <p>Assigning a property the value it already holds looks like a line that does
+     * nothing, which is exactly why it needs the comment: it is what makes the next line
+     * work.
+     */
+    private void resizeHeight(double height) {
+        primaryStage.setWidth(primaryStage.getWidth());
+        primaryStage.setHeight(height);
+    }
+
     /** Where the window was before it got out of the keyboard's way. */
     private double windowY;
     private double windowHeight;
@@ -3195,7 +3213,7 @@ public class MainController {
                     primaryStage.getY(), fraction);
             if (fitted != null) {
                 primaryStage.setY(fitted[0]);
-                primaryStage.setHeight(fitted[1]);
+                resizeHeight(fitted[1]);
                 windowMovedForKeyboard = true;
             } else if (windowWasMaximised) {
                 primaryStage.setMaximized(true);   // nothing to do; leave it as it was
@@ -3203,7 +3221,7 @@ public class MainController {
         } else if (windowMovedForKeyboard) {
             windowMovedForKeyboard = false;
             primaryStage.setY(windowY);
-            primaryStage.setHeight(windowHeight);
+            resizeHeight(windowHeight);
             if (windowWasMaximised) {
                 primaryStage.setMaximized(true);
             }
