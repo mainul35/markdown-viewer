@@ -83,16 +83,20 @@ public final class ClipboardImage {
     /**
      * The clipboard's picture read by running a command, for when no Java API can see it.
      *
-     * <p>On a Wayland desktop the clipboard belongs to the compositor. X11 clients reach it
-     * only through what XWayland chooses to bridge, and a screenshot is one of the things it
-     * does not: with a picture copied on this tablet, the X11 clipboard advertises exactly
-     * three targets - TARGETS, TIMESTAMP and a KDE marker - and no image format whatsoever.
-     * That is not JavaFX being particular. There is no image on the X11 clipboard to read,
-     * so neither JavaFX nor AWT can produce one, and no amount of Java is going to help.
+     * <p>On a Wayland desktop the clipboard belongs to the compositor, and X11 clients see
+     * only what XWayland bridges. KDE bridges pictures properly - measured on a Plasma
+     * tablet, a copied screenshot arrives on the X11 clipboard in forty formats including
+     * image/png - so on that desktop this is never reached, and it should stay that way.
      *
-     * <p>{@code wl-paste} asks the compositor directly, which is where the picture actually
-     * is. It is a separate package - wl-clipboard - and when it is missing this returns null
+     * <p>It exists for the compositors that do not. {@code wl-paste} asks the compositor
+     * directly, which is where the picture always is regardless of what was bridged. It
+     * comes from the separate wl-clipboard package; when that is absent this returns null
      * and the caller explains rather than failing silently.
+     *
+     * <p>Deliberately last. An earlier version of this file claimed the X11 clipboard never
+     * carries the image at all, which was measured against a clipboard that turned out to
+     * be empty - the screenshot tool had been invoked over ssh and captured nothing. The
+     * ordinary paths work; this is a backstop, not the mechanism.
      *
      * @param command the command to run; its standard output is taken as image bytes
      */

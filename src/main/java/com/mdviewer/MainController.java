@@ -3206,11 +3206,10 @@ public class MainController {
                 : com.mdviewer.ui.ClipboardImage.fromSystemClipboard();
 
         /*
-         * Last resort, and on a Wayland desktop the only one that works. The picture
-         * belongs to the compositor; X11 clients see only what XWayland bridges, and a
-         * screenshot is not among it - measured on this tablet, the X11 clipboard offers
-         * TARGETS, TIMESTAMP and a KDE marker, and no image format at all. Neither Java
-         * clipboard can read what is not there. wl-paste asks the compositor.
+         * A backstop for compositors that do not bridge pictures to X11. KDE does - a
+         * copied screenshot arrives on the X11 clipboard in forty formats, image/png among
+         * them - so on that desktop neither this nor the AWT read above is ever reached,
+         * and that is the intended shape: the ordinary path stays the ordinary path.
          */
         byte[] viaCommand = hasImage || pastedFile != null || viaAwt != null
                 ? null
@@ -3242,9 +3241,9 @@ public class MainController {
                         + (command.isBlank()
                                 ? "If you have just taken a screenshot, the tool may have "
                                   + "copied its location rather than the picture."
-                                : "On a Wayland desktop the picture belongs to the "
-                                  + "compositor, and X11 clients - which this is - are "
-                                  + "never shown it. Reading it needs a helper:\n\n"
+                                : "No picture reached this application. If this desktop "
+                                  + "does not share pictures with X11 programs, a helper "
+                                  + "can read the clipboard directly:\n\n"
                                   + "    sudo apt install wl-clipboard\n\n"
                                   + "This tried: " + command));
             } else {
@@ -3255,9 +3254,23 @@ public class MainController {
 
         Path baseDir = document.getBaseDir();
         if (baseDir == null) {
-            setTransientStatus("Save the document first so the pasted image can be stored "
-                    + "beside it.");
-            return true;
+            /*
+             * The image has to live somewhere, and it belongs beside the document rather
+             * than in a temporary folder that a moved file would lose. An unsaved document
+             * has no beside yet.
+             *
+             * This used to be a line in the status bar, which is how it stayed a mystery:
+             * pasting text worked, pasting a picture did nothing visible, and the sentence
+             * explaining why sat in eleven point grey at the bottom of the window. Ask
+             * instead, and then do the thing that was asked for.
+             */
+            if (!askToSaveBeforePasting(document)) {
+                return true;
+            }
+            baseDir = document.getBaseDir();
+            if (baseDir == null) {
+                return true;      // the save was cancelled or failed; it has said so
+            }
         }
 
         try {
@@ -3294,6 +3307,28 @@ public class MainController {
             showAlert("Error", "Could not save the pasted image: " + e.getMessage());
         }
         return true;
+    }
+
+    /**
+     * Offers to save an untitled document, so a pasted image has somewhere to go.
+     *
+     * @return whether the document now has a home on disk
+     */
+    private boolean askToSaveBeforePasting(DocumentView document) {
+        Alert ask = new Alert(Alert.AlertType.CONFIRMATION,
+                "This document has not been saved yet, so there is nowhere to put the "
+                + "image.\n\nSave it now, and the picture will be stored in an assets "
+                + "folder beside it.",
+                ButtonType.CANCEL, ButtonType.OK);
+        ask.setTitle("Save before pasting");
+        ask.setHeaderText("Save this document first?");
+        ask.initOwner(primaryStage);
+        ask.getDialogPane().getStylesheets().setAll(primaryStage.getScene().getStylesheets());
+        if (ask.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
+            return false;
+        }
+        handleSaveAs();
+        return document.getBaseDir() != null;
     }
 
     /**
