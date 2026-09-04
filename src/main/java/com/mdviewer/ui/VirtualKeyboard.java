@@ -90,6 +90,35 @@ public final class VirtualKeyboard {
         return LINUX ? fallback : "";
     }
 
+    /**
+     * How much of the screen the keyboard covers, as a fraction of its height.
+     *
+     * <p>Needed because nothing tells the application. A compositor moves a window out of
+     * the keyboard's way when the application takes part in the input-method protocol, and
+     * this one cannot - so the keyboard is drawn over the window and the bottom of the
+     * document is simply hidden behind it, caret included.
+     *
+     * <p>Asking the keyboard how tall it is would be better and there is nowhere to ask: it
+     * is another process with its own window, and its height is its own business. So it is
+     * configured, defaulting to the same 0.42 that vkbd itself defaults to.
+     *
+     * <p>Zero switches the whole reflow off, for a keyboard that floats rather than docks,
+     * or a compositor that does move the window.
+     */
+    public double heightFraction() {
+        String stored = settings.get("keyboardHeightFraction");
+        if (stored != null && !stored.isBlank()) {
+            try {
+                double asked = Double.parseDouble(stored.trim());
+                /* Past two thirds there is no document left to type into. */
+                return Math.max(0, Math.min(0.66, asked));
+            } catch (NumberFormatException notANumber) {
+                /* Fall through to the default rather than refusing to make room at all. */
+            }
+        }
+        return 0.42;
+    }
+
     /** Asks for the keyboard. Silent and non-blocking whether or not anything answers. */
     public void show() {
         run(showCommand());

@@ -3126,7 +3126,10 @@ public class MainController {
      * {@link VirtualKeyboard}.
      */
     private void installKeyboardSummon(TextArea editor) {
-        keyboardHide.setOnFinished(e -> virtualKeyboard.hide());
+        keyboardHide.setOnFinished(e -> {
+            virtualKeyboard.hide();
+            makeRoomForKeyboard(false);
+        });
         editor.focusedProperty().addListener((observable, was, focused) -> {
             if (!touchScroll.isEnabled()) {
                 return;
@@ -3134,10 +3137,41 @@ public class MainController {
             if (focused) {
                 keyboardHide.stop();
                 virtualKeyboard.show();
+                makeRoomForKeyboard(true);
             } else {
                 keyboardHide.playFromStart();
             }
         });
+    }
+
+    /**
+     * Shortens the window's contents so the keyboard is not covering them.
+     *
+     * <p>A compositor moves a window out of the keyboard's way when the application takes
+     * part in the input-method protocol. This one cannot, so the keyboard is drawn on top
+     * and the bottom of the document - usually including the caret you were about to type
+     * at - is behind it.
+     *
+     * <p>Padding rather than resizing the window. A maximised window ignores a height set
+     * on it, and un-maximising to make room is a visible lurch that has to be undone
+     * afterwards; padding works whatever state the window is in and needs nothing put back.
+     * The area that opens up is exactly where the keyboard is drawn, so nothing shows
+     * through.
+     */
+    private void makeRoomForKeyboard(boolean roomNeeded) {
+        if (rootPane == null) {
+            return;
+        }
+        double fraction = virtualKeyboard.heightFraction();
+        if (fraction <= 0) {
+            return;
+        }
+        double height = rootPane.getScene() != null && rootPane.getScene().getWindow() != null
+                ? rootPane.getScene().getWindow().getHeight()
+                : javafx.stage.Screen.getPrimary().getVisualBounds().getHeight();
+        rootPane.setPadding(roomNeeded
+                ? new javafx.geometry.Insets(0, 0, height * fraction, 0)
+                : javafx.geometry.Insets.EMPTY);
     }
 
     private void installImagePaste(DocumentView document) {
