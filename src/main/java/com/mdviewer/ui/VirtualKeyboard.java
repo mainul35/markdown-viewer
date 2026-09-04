@@ -119,6 +119,38 @@ public final class VirtualKeyboard {
         return 0.42;
     }
 
+    /** The smallest window worth typing into; below this, move it up instead of squeezing. */
+    private static final double MINIMUM_USEFUL_HEIGHT = 240;
+
+    /**
+     * Where a window should sit so the keyboard is not on top of it.
+     *
+     * <p>Separated from the window handling because it is the part that can be wrong in a
+     * way nobody notices: a window one pixel too tall still looks right and still hides the
+     * caret. Given numbers it returns numbers, and those can be checked.
+     *
+     * @param screenTop    top of the usable screen area
+     * @param screenBottom bottom of it
+     * @param windowTop    where the window is now
+     * @param fraction     how much of the screen height the keyboard covers
+     * @return {@code {top, height}} for the window, or null if it should be left alone
+     */
+    public static double[] fitAbove(double screenTop, double screenBottom,
+                                    double windowTop, double fraction) {
+        if (fraction <= 0 || screenBottom <= screenTop) {
+            return null;
+        }
+        double keyboardTop = screenBottom - (screenBottom - screenTop) * fraction;
+        double top = windowTop;
+        if (keyboardTop - top < MINIMUM_USEFUL_HEIGHT) {
+            /* Not enough room below where the window starts - move it up to make some,
+               stopping at the top of the screen rather than going off it. */
+            top = Math.max(screenTop, keyboardTop - MINIMUM_USEFUL_HEIGHT);
+        }
+        double height = keyboardTop - top;
+        return height > 0 ? new double[] {top, height} : null;
+    }
+
     /** Asks for the keyboard. Silent and non-blocking whether or not anything answers. */
     public void show() {
         run(showCommand());

@@ -3144,34 +3144,70 @@ public class MainController {
         });
     }
 
+    /** Where the window was before it got out of the keyboard's way. */
+    private double windowY;
+    private double windowHeight;
+    private boolean windowWasMaximised;
+    private boolean windowMovedForKeyboard;
+
     /**
-     * Shortens the window's contents so the keyboard is not covering them.
+     * Shrinks the window so its bottom edge sits above the keyboard.
      *
-     * <p>A compositor moves a window out of the keyboard's way when the application takes
-     * part in the input-method protocol. This one cannot, so the keyboard is drawn on top
-     * and the bottom of the document - usually including the caret you were about to type
-     * at - is behind it.
+     * <p>A compositor resizes a window when the application takes part in the input-method
+     * protocol. This one cannot - the same gap that meant the keyboard had to be summoned
+     * by hand - so the window has to move itself or be typed at through a keyboard sitting
+     * on top of it.
      *
-     * <p>Padding rather than resizing the window. A maximised window ignores a height set
-     * on it, and un-maximising to make room is a visible lurch that has to be undone
-     * afterwards; padding works whatever state the window is in and needs nothing put back.
-     * The area that opens up is exactly where the keyboard is drawn, so nothing shows
-     * through.
+     * <p>An earlier version padded the contents instead, which leaves the frame where it is
+     * and shrinks what is drawn inside it. That is wrong twice over: the window still
+     * covers the screen it is no longer using, and when the keyboard is not exactly where
+     * the padding assumed, the gap is visible as an empty band. Moving the window is what
+     * was actually wanted, and it is honest - the window really is smaller.
+     *
+     * <p>A maximised window ignores a height, so it is un-maximised first and put back
+     * afterwards. That is a visible step, and the alternative is a keyboard covering the
+     * document, which is worse.
      */
     private void makeRoomForKeyboard(boolean roomNeeded) {
-        if (rootPane == null) {
+        if (primaryStage == null) {
             return;
         }
         double fraction = virtualKeyboard.heightFraction();
         if (fraction <= 0) {
             return;
         }
-        double height = rootPane.getScene() != null && rootPane.getScene().getWindow() != null
-                ? rootPane.getScene().getWindow().getHeight()
-                : javafx.stage.Screen.getPrimary().getVisualBounds().getHeight();
-        rootPane.setPadding(roomNeeded
-                ? new javafx.geometry.Insets(0, 0, height * fraction, 0)
-                : javafx.geometry.Insets.EMPTY);
+        javafx.geometry.Rectangle2D screen = javafx.stage.Screen.getPrimary().getVisualBounds();
+
+        if (roomNeeded) {
+            if (windowMovedForKeyboard) {
+                return;      // already out of the way
+            }
+            windowWasMaximised = primaryStage.isMaximized();
+            windowY = primaryStage.getY();
+            windowHeight = primaryStage.getHeight();
+            if (windowWasMaximised) {
+                /* A maximised window ignores a height, so it has to come out of that
+                   state first - and be put back afterwards. Visible, and better than a
+                   keyboard sitting on the document. */
+                primaryStage.setMaximized(false);
+            }
+            double[] fitted = VirtualKeyboard.fitAbove(screen.getMinY(), screen.getMaxY(),
+                    primaryStage.getY(), fraction);
+            if (fitted != null) {
+                primaryStage.setY(fitted[0]);
+                primaryStage.setHeight(fitted[1]);
+                windowMovedForKeyboard = true;
+            } else if (windowWasMaximised) {
+                primaryStage.setMaximized(true);   // nothing to do; leave it as it was
+            }
+        } else if (windowMovedForKeyboard) {
+            windowMovedForKeyboard = false;
+            primaryStage.setY(windowY);
+            primaryStage.setHeight(windowHeight);
+            if (windowWasMaximised) {
+                primaryStage.setMaximized(true);
+            }
+        }
     }
 
     private void installImagePaste(DocumentView document) {
