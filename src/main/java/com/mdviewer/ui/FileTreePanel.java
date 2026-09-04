@@ -37,6 +37,18 @@ public final class FileTreePanel extends VBox {
     private java.util.function.Consumer<Path> onSyncRequested;
 
     private Consumer<Path> onFileActivated = p -> { };
+
+    /**
+     * Whether one tap opens a file, rather than two.
+     *
+     * <p>A double click is the desktop convention and it does not survive a finger. Two
+     * taps only count as one double click if they land within a few pixels of each other
+     * and inside the system's interval; a fingertip drifts on both counts, so the second
+     * tap is read as another first tap and nothing opens. Pressing harder does not help,
+     * which is what makes it feel like a hardware fault rather than a gesture that cannot
+     * be performed.
+     */
+    private boolean openOnSingleClick;
     private FileActions fileActions;
     private Runnable onRefreshRequested;
 
@@ -86,7 +98,7 @@ public final class FileTreePanel extends VBox {
         });
 
         treeView.setOnMouseClicked(event -> {
-            if (event.getClickCount() == 2) {
+            if (event.getClickCount() >= (openOnSingleClick ? 1 : 2)) {
                 TreeItem<Path> selected = treeView.getSelectionModel().getSelectedItem();
                 if (selected instanceof PathTreeItem item && !item.isDirectory()) {
                     onFileActivated.accept(item.getValue());
@@ -96,6 +108,16 @@ public final class FileTreePanel extends VBox {
 
         getChildren().addAll(header, treeView);
         setMinWidth(0);
+    }
+
+    /**
+     * One tap opens a file instead of two. See {@link #openOnSingleClick}.
+     *
+     * <p>Driven by touch mode rather than by display size: this is about how the machine is
+     * being pointed at, not how much room it has.
+     */
+    public void setOpenOnSingleClick(boolean openOnSingleClick) {
+        this.openOnSingleClick = openOnSingleClick;
     }
 
     /**

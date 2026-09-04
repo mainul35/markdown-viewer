@@ -316,6 +316,7 @@ public class MainController {
         accountBar.setActions(new AccountActions());
 
         fileTreePanel = new FileTreePanel();
+        fileTreePanel.setOpenOnSingleClick(touchScroll.isEnabled());
         fileTreePanel.setOnFileActivated(path -> openFile(path.toFile()));
         fileTreePanel.setOnReveal(this::handleRevealInTree);
         fileTreePanel.setFileActions(new ExplorerFileActions());
@@ -1752,6 +1753,9 @@ public class MainController {
     @FXML
     private void handleToggleTouchScroll() {
         touchScroll.setEnabled(touchScrollMenuItem.isSelected());
+        if (fileTreePanel != null) {
+            fileTreePanel.setOpenOnSingleClick(touchScroll.isEnabled());
+        }
     }
 
     /**
