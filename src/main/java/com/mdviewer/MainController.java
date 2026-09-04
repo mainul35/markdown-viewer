@@ -56,6 +56,7 @@ import com.mdviewer.ui.MarkdownFiles;
 import com.mdviewer.ui.PathTreeItem;
 import com.mdviewer.ui.DisplaySize;
 import com.mdviewer.ui.PreviewToolbar;
+import com.mdviewer.ui.LongPress;
 import com.mdviewer.ui.VirtualKeyboard;
 import com.mdviewer.ui.TouchScroll;
 import com.mdviewer.ui.WelcomeView;
@@ -296,6 +297,7 @@ public class MainController {
         webView = new WebView();
         webView.setMinWidth(0);
         touchScroll.install(webView);
+        LongPress.install(webView, touchScroll::isEnabled);
         if (touchScrollMenuItem != null) {
             touchScrollMenuItem.setSelected(touchScroll.isEnabled());
         }
@@ -331,6 +333,7 @@ public class MainController {
 
         fileTreePanel = new FileTreePanel();
         fileTreePanel.setOpenOnSingleClick(touchScroll.isEnabled());
+        LongPress.install(fileTreePanel.getTreeView(), touchScroll::isEnabled);
         fileTreePanel.setOnFileActivated(path -> openFile(path.toFile()));
         fileTreePanel.setOnReveal(this::handleRevealInTree);
         fileTreePanel.setFileActions(new ExplorerFileActions());
@@ -625,6 +628,7 @@ public class MainController {
         touchScroll.install(document.getEditor());
         installImagePaste(document);
         installKeyboardSummon(document.getEditor());
+        LongPress.install(document.getEditor(), touchScroll::isEnabled);
 
         loadingDocument = true;
         document.getEditor().setText(text);
