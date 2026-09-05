@@ -1503,3 +1503,37 @@
     -fx-pref-height: 26;
     -fx-opacity: 0.55;
 }
+
+/* A divider that answers when you touch it.
+ *
+ * A wide divider is a target you can hit and still says nothing about what it is
+ * for. On a desktop the cursor changes to a resize arrow and that is the whole
+ * signal; a finger has no cursor, so the divider itself has to be the feedback -
+ * it colours under the finger, which is the moment somebody needs to know that
+ * holding on and moving will do something.
+ *
+ * Hover is included for the mouse, where it costs nothing and gives the same
+ * signal a moment earlier.
+ */
+
+.split-pane > .split-pane-divider:hover {
+    -fx-background-color: -mdv-accent-soft;
+}
+
+.split-pane > .split-pane-divider:pressed {
+    -fx-background-color: -mdv-accent;
+}
+
+.split-pane > .split-pane-divider:pressed > .vertical-grabber,
+.split-pane > .split-pane-divider:pressed > .horizontal-grabber {
+    -fx-background-color: white;
+    -fx-opacity: 0.9;
+}
+
+/* The grip grows a little under the finger as well - a colour change alone is
+   easy to miss when a fingertip is covering most of what changed. */
+.display-tablet .split-pane > .split-pane-divider:pressed > .vertical-grabber,
+.display-large .split-pane > .split-pane-divider:pressed > .vertical-grabber {
+    -fx-pref-width: 4;
+    -fx-pref-height: 34;
+}
