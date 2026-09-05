@@ -49,7 +49,17 @@ public final class LongPress {
         boolean[] fired = new boolean[1];
 
         hold.setOnFinished(e -> {
-            if (target[0] == null) {
+            /*
+             * The finger has to still be down. Cancelling on release, on the pointer
+             * leaving and on the bounds changing covers the cases that were known about,
+             * and a menu opening on a plain tap says one of them was missed - the release
+             * went to a popup that had grabbed the mouse, or somewhere else entirely.
+             *
+             * isPressed is JavaFX's own record of whether a button is down on this node.
+             * It does not depend on this class seeing every event, which is exactly the
+             * assumption that keeps turning out to be wrong.
+             */
+            if (target[0] == null || !node.isPressed()) {
                 return;
             }
             fired[0] = true;
@@ -61,6 +71,15 @@ public final class LongPress {
         node.addEventFilter(MouseEvent.MOUSE_PRESSED, e -> {
             fired[0] = false;
             if (!enabled.getAsBoolean() || e.isSecondaryButtonDown()) {
+                return;
+            }
+            /*
+             * A second tap held down means "select from here", the gesture every phone
+             * uses: double tap and hold, then drag to take several lines. Starting a menu
+             * timer on it would open a context menu over the selection being made.
+             */
+            if (e.getClickCount() >= 2) {
+                hold.stop();
                 return;
             }
             origin[0] = e.getSceneX();
