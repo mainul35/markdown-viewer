@@ -1416,3 +1416,56 @@
 .display-large .menu-bar > .container > .menu-button {
     -fx-padding: 10 14 10 14;
 }
+
+/* --- Toolbar at each size ------------------------------------------------
+
+   The buttons were already 44px, and the icons inside them were not. A bigger
+   button with the same small glyph is a bigger place to tap and no easier to
+   read, which is half the job.
+
+   The icons are drawn shapes rather than a font, so they do not follow
+   -fx-font-size the way the lettered buttons do. Scaling the graphic is what
+   moves them, and the stroke is thickened with it - a 1.5px line scaled up stays
+   1.5px on screen and looks spindly next to type that grew.
+   -------------------------------------------------------------------------- */
+
+/* .tool-bar .button does not match here: the formatting toolbar is an HBox, not a
+   ToolBar, and its buttons carry .toolbar-button. An earlier rule aimed at the
+   first selector was styling nothing at all. */
+.display-tablet .toolbar-button {
+    -fx-font-size: 15px;
+    -fx-padding: 6 9 6 9;
+    -fx-min-height: 44;
+}
+
+.display-tablet .toolbar-heading { -fx-font-size: 14px; }
+.display-tablet .toolbar-width { -fx-font-size: 13px; }
+.display-tablet .toolbar-icon-button { -fx-min-width: 44; }
+
+.display-tablet .toolbar-icon {
+    -fx-scale-x: 1.35;
+    -fx-scale-y: 1.35;
+}
+
+.display-tablet .toolbar-icon-stroke {
+    -fx-stroke-width: 1.8;
+}
+
+.display-large .toolbar-button {
+    -fx-font-size: 18px;
+    -fx-padding: 8 11 8 11;
+    -fx-min-height: 52;
+}
+
+.display-large .toolbar-heading { -fx-font-size: 17px; }
+.display-large .toolbar-width { -fx-font-size: 15px; }
+.display-large .toolbar-icon-button { -fx-min-width: 52; }
+
+.display-large .toolbar-icon {
+    -fx-scale-x: 1.6;
+    -fx-scale-y: 1.6;
+}
+
+.display-large .toolbar-icon-stroke {
+    -fx-stroke-width: 2;
+}
