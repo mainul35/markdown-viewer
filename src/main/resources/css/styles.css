@@ -1152,12 +1152,26 @@
 }
 
 .display-tablet .tree-view {
-    -fx-fixed-cell-size: 44;
+    -fx-fixed-cell-size: -1;
+}
+
+/* The disclosure arrow is drawn for a 24px row and pinned to the top of a taller
+   one - on a 44px row it sat 24px above centre, which is what made the folder
+   arrows look unrelated to their names. Centring it is the fix; scaling it is
+   because an arrow sized for a mouse is a poor target for a finger. */
+.display-tablet .tree-cell > .tree-disclosure-node {
+    -fx-alignment: center;
+    -fx-padding: 8 6 8 6;
+}
+
+.display-tablet .tree-cell > .tree-disclosure-node > .arrow {
+    -fx-scale-x: 1.25;
+    -fx-scale-y: 1.25;
 }
 
 .display-tablet .tree-cell {
     -fx-font-size: 18px;
-    -fx-padding: 0 6 0 6;
+    -fx-padding: 10 6 10 6;
 }
 
 .display-tablet .tab-pane > .tab-header-area > .headers-region > .tab {
@@ -1226,12 +1240,26 @@
 }
 
 .display-large .tree-view {
-    -fx-fixed-cell-size: 52;
+    -fx-fixed-cell-size: -1;
+}
+
+/* The disclosure arrow is drawn for a 24px row and pinned to the top of a taller
+   one - on a 44px row it sat 24px above centre, which is what made the folder
+   arrows look unrelated to their names. Centring it is the fix; scaling it is
+   because an arrow sized for a mouse is a poor target for a finger. */
+.display-large .tree-cell > .tree-disclosure-node {
+    -fx-alignment: center;
+    -fx-padding: 9 8 9 8;
+}
+
+.display-large .tree-cell > .tree-disclosure-node > .arrow {
+    -fx-scale-x: 1.4;
+    -fx-scale-y: 1.4;
 }
 
 .display-large .tree-cell {
     -fx-font-size: 21px;
-    -fx-padding: 0 8 0 8;
+    -fx-padding: 13 8 13 8;
 }
 
 .display-large .tab-pane > .tab-header-area > .headers-region > .tab {
