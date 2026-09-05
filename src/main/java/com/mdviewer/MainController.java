@@ -3337,14 +3337,30 @@ public class MainController {
         }
         javafx.geometry.Rectangle2D screen = javafx.stage.Screen.getPrimary().getVisualBounds();
 
+        double keyboardTop = screen.getMaxY() - screen.getHeight() * fraction;
+
         if (roomNeeded) {
-            if (windowMovedForKeyboard) {
-                return;      // already out of the way
+            /*
+             * Asked of the window rather than of a flag. The previous version returned
+             * early when it believed it had already moved the window, and that belief
+             * survives things it knows nothing about - the window being maximised or
+             * resized by hand while the flag was set. It was then convinced the window
+             * was clear of a keyboard sitting on top of it, and every later focus did
+             * nothing at all.
+             *
+             * A window's own bottom edge cannot drift out of step with the window.
+             */
+            if (primaryStage.getY() + primaryStage.getHeight() <= keyboardTop + 1) {
+                return;      // genuinely clear already
             }
-            windowWasMaximised = primaryStage.isMaximized();
-            windowY = primaryStage.getY();
-            windowHeight = primaryStage.getHeight();
-            if (windowWasMaximised) {
+            if (!windowMovedForKeyboard) {
+                /* Only the first move records where to go back to; a second would record
+                   the already-shortened window as the thing to restore. */
+                windowWasMaximised = primaryStage.isMaximized();
+                windowY = primaryStage.getY();
+                windowHeight = primaryStage.getHeight();
+            }
+            if (primaryStage.isMaximized()) {
                 /* A maximised window ignores a height, so it has to come out of that
                    state first - and be put back afterwards. Visible, and better than a
                    keyboard sitting on the document. */
