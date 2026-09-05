@@ -16,15 +16,15 @@
 }
 
 .menu-item .label {
-    -fx-font-size: 15px;
+    -fx-font-size: 17px;
 }
 
 .menu-bar .menu .label {
-    -fx-font-size: 15px;
+    -fx-font-size: 17px;
 }
 
 .context-menu {
-    -fx-font-size: 15px;
+    -fx-font-size: 17px;
 }
 
 .radio-menu-item > .left-container > .radio,

@@ -304,6 +304,7 @@ public class MainController {
         installKeyboardSummon();
         displaySize = DisplaySize.load(uiSettings);
         applyDisplaySize();
+        applyPreviewFontSize();
         installResponsiveLayout();
 
         previewToolbar = new PreviewToolbar();
@@ -1918,6 +1919,7 @@ public class MainController {
         }
         displaySize.save(uiSettings);
         applyDisplaySize();
+        applyPreviewFontSize();
         setTransientStatus("Display size: " + displaySize.label());
     }
 
@@ -2238,6 +2240,35 @@ public class MainController {
                     "window.__mdSetTheme(" + toJsStringLiteral(darkMode ? "dark" : "light") + ");");
         } catch (RuntimeException e) {
             // Preview page not in a usable state; the shell reload path re-applies it.
+        }
+        applyPreviewFontSize();
+    }
+
+    /**
+     * Scales the rendered document with the rest of the interface.
+     *
+     * <p>The preview is a web page, so none of the display size reached it - the chrome grew
+     * and the document it exists to show stayed where it was, which is the wrong way round.
+     * Its headings are in rem, so one number on the root element scales everything, and the
+     * body is relative now rather than a fixed 16px that ignored it.
+     *
+     * <p>Applied here, alongside the theme, because both have to be re-sent whenever the
+     * page is rebuilt - a preview that reloads and comes back at the wrong size is worse
+     * than one that was never scaled.
+     */
+    private void applyPreviewFontSize() {
+        if (!previewReady) {
+            return;
+        }
+        int size = switch (displaySize) {
+            case TABLET -> 19;
+            case LARGE -> 22;
+            case REGULAR -> 16;
+        };
+        try {
+            webView.getEngine().executeScript("window.__mdSetFontSize(" + size + ");");
+        } catch (RuntimeException pageNotReady) {
+            // Re-applied when the shell reloads.
         }
     }
 
@@ -4356,7 +4387,7 @@ public class MainController {
             body {
               margin:0; padding:40px 44px 120px;
               background:var(--paper); color:var(--ink);
-              font-family:var(--body); font-size:16px; line-height:1.68;
+              font-family:var(--body); font-size:1rem; line-height:1.68;
               -webkit-font-smoothing:antialiased; word-wrap:break-word;
             }
 
@@ -4762,6 +4793,13 @@ public class MainController {
         String css = previewCss();
 
         String js = """
+            /* The rendered document is a web page and followed none of the
+               application's display size. Headings are already in rem, so setting the
+               root size scales the whole document from one number - and body is now
+               relative too, rather than a fixed 16px that ignored it. */
+            window.__mdSetFontSize = function (px) {
+              document.documentElement.style.fontSize = px + 'px';
+            };
             window.__mdSetTheme = function (theme) {
               document.documentElement.setAttribute('data-theme', theme);
             };
