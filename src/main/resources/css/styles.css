@@ -1567,3 +1567,97 @@
     -fx-scale-x: 1.3;
     -fx-scale-y: 1.3;
 }
+
+/* --- Dialogs at each size ------------------------------------------------
+
+   A dialog is its own window, so it takes the size class from WindowStyling
+   rather than from the main root. Everything below is scoped to .dialog-pane so
+   that a blanket ".button" rule does not also inflate the toolbar's icon buttons,
+   which set their own sizes for their own reasons.
+
+   The buttons get a width as well as a height. OK and Cancel side by side are the
+   two most-tapped targets in the application and the easiest pair to confuse a
+   finger between.
+   -------------------------------------------------------------------------- */
+
+.display-tablet.dialog-pane ,
+.display-tablet .dialog-pane {
+    -fx-font-size: 16px;
+}
+
+.display-tablet.dialog-pane .label,
+.display-tablet .dialog-pane .label,
+.display-tablet.dialog-pane .check-box,
+.display-tablet .dialog-pane .check-box,
+.display-tablet.dialog-pane .hyperlink ,
+.display-tablet .dialog-pane .hyperlink {
+    -fx-font-size: 16px;
+}
+
+/* Height from padding, because neither a minimum nor a preferred size reaches
+   here: a dialog's buttons live in a ButtonBar whose skin sets their sizes in
+   code, and code beats a stylesheet. -fx-min-height: 44 measured 37, and
+   -fx-pref-height: 44 measured 37 as well. Padding is the one lever that works,
+   so the numbers below are chosen to add up to the target rather than to state
+   it. */
+.display-tablet.dialog-pane .button ,
+.display-tablet .dialog-pane .button {
+    -fx-font-size: 16px;
+    -fx-padding: 12 20 12 20;
+}
+
+.display-tablet.dialog-pane .text-field,
+.display-tablet .dialog-pane .text-field,
+.display-tablet.dialog-pane .password-field,
+.display-tablet .dialog-pane .password-field,
+.display-tablet.dialog-pane .text-area,
+.display-tablet .dialog-pane .text-area,
+.display-tablet.dialog-pane .combo-box ,
+.display-tablet .dialog-pane .combo-box {
+    -fx-font-size: 16px;
+    -fx-min-height: 44;
+}
+
+.display-tablet.dialog-pane .check-box > .box ,
+.display-tablet .dialog-pane .check-box > .box {
+    -fx-scale-x: 1.3;
+    -fx-scale-y: 1.3;
+}
+
+.display-large.dialog-pane ,
+.display-large .dialog-pane {
+    -fx-font-size: 19px;
+}
+
+.display-large.dialog-pane .label,
+.display-large .dialog-pane .label,
+.display-large.dialog-pane .check-box,
+.display-large .dialog-pane .check-box,
+.display-large.dialog-pane .hyperlink ,
+.display-large .dialog-pane .hyperlink {
+    -fx-font-size: 19px;
+}
+
+.display-large.dialog-pane .button ,
+.display-large .dialog-pane .button {
+    -fx-font-size: 19px;
+    -fx-padding: 14 24 14 24;
+}
+
+.display-large.dialog-pane .text-field,
+.display-large .dialog-pane .text-field,
+.display-large.dialog-pane .password-field,
+.display-large .dialog-pane .password-field,
+.display-large.dialog-pane .text-area,
+.display-large .dialog-pane .text-area,
+.display-large.dialog-pane .combo-box ,
+.display-large .dialog-pane .combo-box {
+    -fx-font-size: 19px;
+    -fx-min-height: 52;
+}
+
+.display-large.dialog-pane .check-box > .box ,
+.display-large .dialog-pane .check-box > .box {
+    -fx-scale-x: 1.5;
+    -fx-scale-y: 1.5;
+}

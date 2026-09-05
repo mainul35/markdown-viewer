@@ -1894,6 +1894,11 @@ public class MainController {
         if (wanted != null && !rootPane.getStyleClass().contains(wanted)) {
             rootPane.getStyleClass().add(wanted);
         }
+        for (javafx.stage.Window window : javafx.stage.Window.getWindows()) {
+            if (window != primaryStage) {
+                dressWindow(window);
+            }
+        }
         if (displayTabletItem != null) {
             displayTabletItem.setSelected(displaySize == DisplaySize.TABLET);
             displayRegularItem.setSelected(displaySize == DisplaySize.REGULAR);
@@ -3214,12 +3219,32 @@ public class MainController {
     private void watchForTyping(javafx.stage.Window window) {
         if (window.getScene() != null) {
             watchScene(window.getScene());
+            dressWindow(window);
         }
         window.sceneProperty().addListener((observable, was, scene) -> {
             if (scene != null) {
                 watchScene(scene);
+                dressWindow(window);
             }
         });
+    }
+
+    /**
+     * Gives a window the application's stylesheet and its display size.
+     *
+     * <p>A dialog is its own window with its own scene, so neither reaches it from the main
+     * one. Without the class it is the right theme at desktop sizes - small type and small
+     * buttons in front of an application that has neither, which is what a tablet showed.
+     *
+     * <p>Done as windows appear rather than at each call site, because dialogs are built in
+     * a dozen places here and one of them will always be the one nobody remembered.
+     */
+    private void dressWindow(javafx.stage.Window window) {
+        com.mdviewer.ui.WindowStyling.apply(window, appStylesheet(), displaySize.styleClass());
+    }
+
+    private String appStylesheet() {
+        return MainController.class.getResource("/css/styles.css").toExternalForm();
     }
 
     private void watchScene(javafx.scene.Scene scene) {
