@@ -352,7 +352,19 @@ public final class AiPanel extends VBox {
 
         Region footerSpacer = new Region();
         HBox.setHgrow(footerSpacer, Priority.ALWAYS);
+        /*
+         * Icons as well as words. At tablet size the stylesheet switches these to
+         * graphic-only - four labelled buttons across a narrow panel ellipsise to "..."
+         * apiece, which tells you nothing at all, where a symbol still says something.
+         * The text stays on the button for every other size and for the tooltip, so
+         * nothing is lost by having it there.
+         */
+        decorate(clear, clearIcon(), "Clear this conversation");
+        decorate(key, keyIcon(), "API key");
+        decorate(test, plugIcon(), "Test connection");
+        decorate(send, sendIcon(), "Send");
         HBox buttons = new HBox(6, clear, key, test, footerSpacer, send);
+        buttons.getStyleClass().add("ai-buttons");
         buttons.setAlignment(Pos.CENTER_RIGHT);
         // Never let Send be the control that gets clipped: it is the one that must be
         // readable, and it is last in the row.
@@ -401,6 +413,55 @@ public final class AiPanel extends VBox {
      * failure - an image too large, an unreadable clipboard - happens while there is still
      * somewhere sensible to report it.
      */
+    /** A button that can show either its words or its symbol, and says which either way. */
+    private static void decorate(Button button, javafx.scene.Node icon, String tip) {
+        button.setGraphic(icon);
+        button.setTooltip(new javafx.scene.control.Tooltip(tip));
+        button.getStyleClass().add("ai-button");
+    }
+
+    /*
+     * Drawn rather than lettered, for the same reason the formatting toolbar is: a font
+     * glyph renders differently on every platform and takes its colour from the text
+     * fill, while a shape takes it from CSS and looks the same everywhere.
+     */
+
+    private static javafx.scene.Group aiIcon(javafx.scene.Node... parts) {
+        javafx.scene.Group group = new javafx.scene.Group(parts);
+        group.getStyleClass().add("ai-icon");
+        return group;
+    }
+
+    private static javafx.scene.shape.Line aiStroke(double x1, double y1, double x2, double y2) {
+        javafx.scene.shape.Line line = new javafx.scene.shape.Line(x1, y1, x2, y2);
+        line.getStyleClass().add("toolbar-icon-stroke");
+        return line;
+    }
+
+    /** A cross. */
+    private static javafx.scene.Group clearIcon() {
+        return aiIcon(aiStroke(0, 0, 11, 11), aiStroke(11, 0, 0, 11));
+    }
+
+    /** A key: a ring and a shaft with two teeth. */
+    private static javafx.scene.Group keyIcon() {
+        javafx.scene.shape.Circle ring = new javafx.scene.shape.Circle(3.5, 3.5, 3.5);
+        ring.getStyleClass().add("toolbar-icon-stroke");
+        return aiIcon(ring, aiStroke(6, 6, 12, 12), aiStroke(9, 9, 7, 11),
+                aiStroke(11, 11, 9, 13));
+    }
+
+    /** A plug: two pins into a body. */
+    private static javafx.scene.Group plugIcon() {
+        return aiIcon(aiStroke(3, 0, 3, 4), aiStroke(8, 0, 8, 4),
+                aiStroke(0, 4, 11, 4), aiStroke(5.5, 4, 5.5, 12));
+    }
+
+    /** An arrow, pointing the way the message goes. */
+    private static javafx.scene.Group sendIcon() {
+        return aiIcon(aiStroke(0, 6, 12, 6), aiStroke(7, 1, 12, 6), aiStroke(7, 11, 12, 6));
+    }
+
     private void pasteImage() {
         Image image = Clipboard.getSystemClipboard().getImage();
         if (image == null) {

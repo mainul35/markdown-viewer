@@ -1718,6 +1718,33 @@ public class MainController {
         return mainSplit.getItems().contains(aiPanel);
     }
 
+    /**
+     * Where to put the divider so the assistant is wide enough to use.
+     *
+     * <p>The remembered position is a fraction, and a fraction that was comfortable on a
+     * wide window is a column of ellipses on a narrow one - four labelled buttons across
+     * 200px show "..." apiece. So the fraction is treated as a preference and a width in
+     * pixels as the requirement: whichever leaves more room wins.
+     *
+     * <p>The minimum grows with the display size, because the same panel holds larger type
+     * at tablet size and needs the room to show it. It is capped at half the window - an
+     * assistant that has crowded out the document it is answering about has stopped being
+     * useful.
+     */
+    private double assistantOpeningPosition() {
+        double width = mainSplit.getWidth();
+        if (width <= 0) {
+            return assistantDivider;
+        }
+        double wanted = switch (displaySize) {
+            case TABLET -> 460;
+            case LARGE -> 520;
+            case REGULAR -> 360;
+        };
+        double atMostHalf = Math.min(wanted, width / 2);
+        return Math.min(assistantDivider, 1 - atMostHalf / width);
+    }
+
     private void showAssistant(boolean visible) {
         if (visible == isAssistantVisible()) {
             return;
@@ -1727,8 +1754,9 @@ public class MainController {
             int divider = mainSplit.getItems().size() - 2;
             // Twice: a divider cannot be positioned until the new item has been laid out,
             // the same two-pass dance the split's own mode switching needs.
-            mainSplit.setDividerPosition(divider, assistantDivider);
-            Platform.runLater(() -> mainSplit.setDividerPosition(divider, assistantDivider));
+            double opened = assistantOpeningPosition();
+            mainSplit.setDividerPosition(divider, opened);
+            Platform.runLater(() -> mainSplit.setDividerPosition(divider, opened));
             /* Three columns is one too many. With the tree, the editor, the preview and
                the assistant all sharing the width, none of them is wide enough to work in
                - and the assistant is for reading about the document, which is what the

@@ -1537,3 +1537,33 @@
     -fx-pref-width: 4;
     -fx-pref-height: 34;
 }
+
+/* --- The assistant's buttons ---------------------------------------------
+
+   Four labelled buttons across a narrow panel ellipsise to "..." apiece, which
+   is worse than no label: it takes the space and says nothing. At the sizes
+   meant for a finger they show their symbol instead, with the words kept as the
+   tooltip, so the meaning is still reachable.
+   -------------------------------------------------------------------------- */
+
+.ai-icon {
+    -fx-opacity: 0.9;
+}
+
+.display-tablet .ai-buttons .ai-button,
+.display-large .ai-buttons .ai-button {
+    -fx-content-display: graphic-only;
+    -fx-min-width: 44;
+    -fx-min-height: 44;
+}
+
+.display-large .ai-buttons .ai-button {
+    -fx-min-width: 52;
+    -fx-min-height: 52;
+}
+
+.display-tablet .ai-buttons .ai-icon,
+.display-large .ai-buttons .ai-icon {
+    -fx-scale-x: 1.3;
+    -fx-scale-y: 1.3;
+}
