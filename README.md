@@ -10,16 +10,40 @@ Professional Markdown desktop application built with JavaFX.
 
 ## Download
 
-**Latest Release:** [MDViewer 1.0.0](https://github.com/mainul35/markdown-viewer/releases/latest) (`1.0.0-release`)
+**Latest release:** [MDViewer 1.1.0](https://github.com/mainul35/markdown-viewer/releases/latest)
 
-1. Download the release archive from the Releases page
-2. Extract it
-3. Run: `java -jar mdviewer-1.0.0.jar`
+There is one download per platform. Each bundles JavaFX, which ships compiled libraries
+per operating system and architecture, so they are **not interchangeable**.
 
-> **Note:** Requires JDK 21 or higher. See installation instructions below.
+| Your machine | Download |
+|---|---|
+| Windows | `mdviewer-1.1.0-win.zip` |
+| Linux, Intel or AMD 64-bit | `mdviewer-1.1.0-linux.zip` |
+| Linux on ARM (Raspberry Pi) | `mdviewer-1.1.0-linux-aarch64.zip` |
+| macOS, Apple silicon (M1 and later) | `mdviewer-1.1.0-mac-aarch64.zip` |
+| macOS, Intel | `mdviewer-1.1.0-mac.zip` |
 
-Earlier tags — `1.0.0-EA` and `1.0.0-beta-1` — are kept for reference. `1.0.0-release`
-adds the assistant, the welcome screen and recent workspaces on top of `1.0.0-beta-1`.
+Unzip it and run the launcher inside:
+
+```bash
+./run.sh          # Linux and macOS
+run.bat           # Windows
+```
+
+The launcher is the recommended way in. It selects the X11 backend on Linux — JavaFX has
+no Wayland backend and may otherwise never show a window — and quiets two JVM warnings
+that come from JavaFX rather than from this application. `java -jar mdviewer-1.1.0.jar`
+still works if you prefer.
+
+> Requires JDK 21 or newer. See the installation notes below.
+
+Taking the wrong download fails at startup with `Error initializing QuantumRenderer: no
+suitable pipeline found`, which names graphics pipelines rather than the cause: that jar
+has no renderer built for your system. **Release 1.0.0 shipped a single jar carrying the
+Windows libraries to everybody**, so if it never started for you on Linux or macOS, that
+was the packaging and 1.1.0 is the fix.
+
+Earlier tags — `1.0.0-EA`, `1.0.0-beta-1` and `1.0.0-release` — are kept for reference.
 
 ## Prerequisites
 
@@ -56,12 +80,12 @@ mvn javafx:run
 ### Option 2: Standalone jar
 ```bash
 mvn clean package
-java -jar target/mdviewer-1.0.0.jar
+java -jar target/mdviewer-1.1.0.jar
 ```
 
 ### Option 3: Open file directly
 ```bash
-java -jar target/mdviewer-1.0.0.jar file.md
+java -jar target/mdviewer-1.1.0.jar file.md
 ```
 
 <div align="left">
@@ -71,10 +95,32 @@ java -jar target/mdviewer-1.0.0.jar file.md
 </div>
 
 `mvn clean package` (or `package.bat` / `package.ps1`) produces **one self-contained jar**:
-`target/mdviewer-1.0.0.jar`, roughly 57 MB. Everything it needs is inside it — JavaFX
-(including its native `.dll`s), commonmark, PlantUML with its C4 standard library, and the
+`target/mdviewer-1.1.0.jar`, roughly 58 MB. Everything it needs is inside it — JavaFX
+(including its native libraries), commonmark, PlantUML with its C4 standard library, and the
 mermaid bundle. The target machine needs only a JRE 21; no JavaFX SDK, no Graphviz, and no
 internet connection.
+
+### Building for each platform
+
+The jar carries JavaFX's native libraries, and which ones is decided by `javafx.platform`.
+Left alone it follows the machine doing the build — which is how 1.0.0 shipped Windows
+libraries to every user. Name it instead:
+
+```bash
+mvn clean package -DskipTests -Djavafx.platform=linux          # also: win, mac,
+mvn clean package -DskipTests -Djavafx.platform=linux-aarch64  # mac-aarch64
+```
+
+Each produces `target/mdviewer-1.1.0-<platform>.jar`. **Cross-building works** — these are
+ordinary downloads, so every platform builds on any machine, and a release does not need
+five computers. Each run overwrites `target/`, so copy the jar out between builds.
+
+A plain `mvn package` with no `-D` still produces `mdviewer-1.1.0.jar` built for this
+machine, which is what you want while working on it and never what you want for a release.
+
+A release download also carries `dist-scripts/run.sh` or `dist-scripts/run.bat`. Those are
+the **launchers that ship to users** — not to be confused with `run.bat` and `run.ps1` in
+the repository root, which run the application from source during development.
 
 <div align="left">
 
@@ -82,14 +128,15 @@ Two consequences of that packaging worth knowing:
 
 </div>
 
-- **The jar is platform-specific.** It embeds the JavaFX natives for the OS it was built on,
-  so a jar built on Windows runs on Windows. Build on each OS you intend to ship to.
+- **The jar is platform-specific.** It embeds JavaFX's native libraries for one operating
+  system and architecture. Build one per platform with `-Djavafx.platform` as above; you do
+  not need one machine per platform, only one flag per build.
 - **`Launcher` is the manifest main class, not `MainApp`.** The JVM refuses to start a main
   class that extends `javafx.application.Application` when JavaFX is on the classpath, which
   is exactly the situation inside a shaded jar. `Launcher` is a plain class that calls into
   `MainApp`, which sidesteps that check. Do not "simplify" the manifest to point at `MainApp`.
 
-**Close the app before packaging.** A running MDViewer holds `target/mdviewer-1.0.0.jar`
+**Close the app before packaging.** A running MDViewer holds `target/mdviewer-1.1.0.jar`
 open, and Windows will not let the build overwrite or delete it. Maven reports that as
 `Failed to clean project` or `Could not create modular JAR file`, neither of which
 mentions the real cause, so `package.bat`/`package.ps1` check for it first and say so
@@ -104,6 +151,36 @@ module'` is expected and harmless — it is JavaFX noting that it is running fro
 rather than the module path.
 
 ## Features
+
+- **Touch, on a tablet:** the gestures a touchscreen has and a mouse does not. X11 reports
+  a touchscreen as an ordinary pointer, so JavaFX never sees a touch and never synthesises
+  a scroll or offers a right click — without these, a drag selected text and nothing moved,
+  and every context menu in the application was unreachable.
+
+  | Gesture | What it does |
+  |---|---|
+  | Drag | Scrolls the document |
+  | Press and hold | Opens the context menu a right click would |
+  | Double tap, hold, drag | Selects across lines |
+  | One tap in the file tree | Opens that file |
+
+  **Settings → Display Size** — Tablet, Regular or Extra Large — scales type, row heights,
+  hit targets, menus, dialogs and the rendered document together. **Settings → Touch Mode**
+  turns the gestures on. Both default themselves on a machine that has a touchscreen and no
+  keyboard attached: a tablet in a keyboard case is a laptop, and a keyboard thrown over
+  half the screen is worse than none.
+
+  An on-screen keyboard is asked for when you tap into any text field, and the window moves
+  above it. Neither happens by itself, because JavaFX takes no part in the input-method
+  protocol and the compositor is therefore never told a text field has focus. The command is
+  configurable in `~/.mdviewer/ui.properties` — `keyboardShowCommand` defaults to
+  `vkbd --show`, `keyboardHeightFraction` says how much of the screen to leave clear, and
+  `keyboardSummon=never` switches the whole thing off.
+
+- **Paste a screenshot into a document:** Ctrl+V, or **Edit → Paste Image**, writes the
+  picture into an `assets/` folder beside the file and inserts a reference to it. An unsaved
+  document offers to save itself first, since there is nowhere to put the file until it has
+  a home.
 
 - **Welcome screen:** with nothing open, the window offers New document, Open file, Open
   folder and the folders you had open last, rather than an empty grey rectangle. The file
@@ -329,14 +406,31 @@ MDViewer/
 │   │       ├── WelcomeView.java     # First screen when nothing is open
 │   │       ├── PreviewToolbar.java  # Formatting toolbar actions
 │   │       ├── FindBar.java         # Find & replace bar
+│   │       ├── ChartDialog.java     # Chart insertion, and the type picker beside it
+│   │       ├── TableSizePicker.java # Table size grid
+│   │       ├── AccountBar.java      # Cloud sign-in state, along the explorer's foot
+│   │       ├── SyncIndicator.java   # What sync is doing, and what it last did
+│   │       ├── TouchScroll.java     # Drag to scroll; the touch-mode setting
+│   │       ├── LongPress.java       # Press and hold as a right click
+│   │       ├── DisplaySize.java     # Tablet / Regular / Extra Large
+│   │       ├── VirtualKeyboard.java # Summons the on-screen keyboard; device detection
+│   │       ├── WindowStyling.java   # Puts the theme and size on dialogs, which are own windows
+│   │       ├── UiSettings.java      # ui.properties: display size, touch, keyboard
+│   │       ├── ClipboardImage.java  # Clipboard picture to PNG, by three routes
 │   │       └── CropDialog.java      # Image crop dialog
+│   │   └── sync/                    # Cloud sync: client, session, scanner, state machine
 │   └── resources/
 │       ├── fxml/main.fxml         # Main UI layout
-│       ├── css/styles.css         # Application + preview styles (light/dark themes)
+│       ├── css/styles.css         # Application + preview styles, and the display sizes
+│       ├── css/menus-tablet.css   # Menu popups at each size - a popup is its own window,
+│       ├── css/menus-large.css    #   so it takes a stylesheet rather than a style class
+│       ├── css/mdchart.css        # Chart rendering
 │       └── js/mermaid.min.js      # Bundled mermaid renderer
 ├── pom.xml                        # Maven build configuration
 ├── package.bat / package.ps1      # Build standalone shaded JAR
-├── run.bat / run.ps1              # Run from source
+├── run.bat / run.ps1              # Run from source (development)
+├── dist-scripts/run.sh            # Launchers that ship inside a release download -
+├── dist-scripts/run.bat           #   not the same thing as run.bat above
 └── screenshots/                   # Application screenshots for documentation
 ```
 
@@ -358,6 +452,7 @@ MDViewer/
 - ✅ **Phase 4:** Toolbar Bridge & GUI Editor (Toolbar integration, JS bridge logic, formatting actions)
 - ✅ **Phase 5:** OS Deployment & Polishing (Workspace management, file operations, find/replace, dark mode, diagram rendering)
 - ✅ **Phase 6:** Assistant (reads the document and the sources it names; whole-project scan; per-document conversations) — shipped in `1.0.0-release`
+- ✅ **Phase 7:** Touch (drag to scroll, press and hold for context menus, one tap to open a file, display sizes, on-screen keyboard, per-platform downloads) — shipped in `1.1.0`
 - ⏳ **Assistant phase 2:** Propose a whole-document rewrite and show it as a side-by-side diff, merged only on approval. Nothing in the assistant writes to a document yet.
 - ⏳ **Session persistence:** Open workspaces, open documents, theme and window geometry are forgotten on exit. Recent workspaces already persist; the rest do not.
 - ⏳ **Native Packaging:** Bundle JRE for true double-click execution without requiring Java installation
@@ -366,3 +461,4 @@ MDViewer/
 ## License
 
 MIT
+
