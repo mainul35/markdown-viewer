@@ -1469,3 +1469,37 @@
 .display-large .toolbar-icon-stroke {
     -fx-stroke-width: 2;
 }
+
+/* --- Split dividers at each size -----------------------------------------
+
+   Two pixels is right for a mouse, which snaps to a divider from either side,
+   and useless for a finger: there is no snapping, and the finger covers the
+   divider it is aiming at. Widening it is the whole fix - the grab area of a
+   divider is its padding, so this is both what you see and what you can hit.
+
+   Wider than the 44px used elsewhere would be absurd for a line, so these are
+   sized to be findable rather than to meet that floor: a divider is a long
+   target, and only its width is in short supply.
+   -------------------------------------------------------------------------- */
+
+.display-tablet .split-pane > .split-pane-divider {
+    -fx-padding: 0 9 0 9;
+}
+
+.display-large .split-pane > .split-pane-divider {
+    -fx-padding: 0 11 0 11;
+}
+
+/* A visible line down the middle of a wide divider, so it still reads as an
+   edge rather than as a gap somebody forgot to fill. */
+.display-tablet .split-pane > .split-pane-divider > .vertical-grabber,
+.display-large .split-pane > .split-pane-divider > .vertical-grabber,
+.display-tablet .split-pane > .split-pane-divider > .horizontal-grabber,
+.display-large .split-pane > .split-pane-divider > .horizontal-grabber {
+    -fx-background-color: -mdv-text-muted;
+    -fx-background-insets: 0;
+    -fx-background-radius: 2;
+    -fx-pref-width: 3;
+    -fx-pref-height: 26;
+    -fx-opacity: 0.55;
+}
