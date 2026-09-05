@@ -23,10 +23,14 @@
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
-jar="$here/mdviewer-1.0.0.jar"
 
-if [ ! -f "$jar" ]; then
-    echo "mdviewer-1.0.0.jar is not next to this script (looked in $here)." >&2
+# Whatever jar is beside this script, rather than a version written into it. A
+# release that renames the jar and forgets the launcher ships something that
+# cannot start, and the name is the one thing that changes every release.
+jar=$(ls "$here"/mdviewer-*.jar 2>/dev/null | head -1)
+
+if [ -z "$jar" ]; then
+    echo "No mdviewer-*.jar next to this script (looked in $here)." >&2
     exit 1
 fi
 

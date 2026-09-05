@@ -177,7 +177,7 @@ public class MainController {
     /** So the explorer is restored only if the welcome screen was what hid it. */
     private boolean explorerHiddenForWelcome;
 
-    private static final String APP_VERSION = "1.0.0";
+    private static final String APP_VERSION = "1.1.0";
 
     /**
      * Re-reads the workspace tree on a timer. The explorer caches directory listings, so a
@@ -940,7 +940,10 @@ public class MainController {
         alert.initOwner(primaryStage);
         alert.setTitle("About MDViewer");
         alert.setHeaderText("MDViewer - Markdown Editor");
-        alert.setContentText("Version 1.0.0\nA professional desktop Markdown editor built with JavaFX.");
+        /* From the constant, not a second copy of the number. The welcome screen already
+           reads it from there, and two places to change is one place to forget. */
+        alert.setContentText("Version " + APP_VERSION
+                + "\nA professional desktop Markdown editor built with JavaFX.");
         alert.showAndWait();
     }
 

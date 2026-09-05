@@ -14,10 +14,13 @@ rem warning.
 setlocal enabledelayedexpansion
 
 set "HERE=%~dp0"
-set "JAR=%HERE%mdviewer-1.0.0.jar"
+rem  Whatever jar is beside this script, rather than a version written into it -
+rem  the name is the one thing that changes every release.
+set "JAR="
+for %%j in ("%HERE%mdviewer-*.jar") do if not defined JAR set "JAR=%%~fj"
 
-if not exist "%JAR%" (
-    echo mdviewer-1.0.0.jar is not next to this script ^(looked in %HERE%^).
+if not defined JAR (
+    echo No mdviewer-*.jar next to this script ^(looked in %HERE%^).
     exit /b 1
 )
 
