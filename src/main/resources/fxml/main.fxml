@@ -8,7 +8,7 @@
             fx:controller="com.mdviewer.MainController">
     <top>
         <VBox>
-            <MenuBar>
+            <MenuBar fx:id="menuBar">
             <!--
                 "shortcut" rather than "control" so the accelerator is Ctrl on Windows and
                 Linux and Cmd on macOS, which is what each platform's users press.
@@ -59,6 +59,17 @@
                         <accelerator><KeyCodeCombination alt="UP" code="Z" control="UP" meta="UP" shift="DOWN" shortcut="DOWN"/></accelerator>
                     </MenuItem>
                     <SeparatorMenuItem/>
+                    <!--
+                        A menu item as well as Ctrl+V, for the same reason Undo is one: the
+                        keystroke does not always arrive. A context menu's Paste goes
+                        straight to the control's skin and cannot be intercepted, and on a
+                        tablet the keystroke comes from an on-screen keyboard that may or
+                        may not deliver it. This route always works.
+                    -->
+                    <MenuItem text="Paste Image" onAction="#handlePasteImage">
+                        <accelerator><KeyCodeCombination alt="UP" code="V" control="UP" meta="UP" shift="DOWN" shortcut="DOWN"/></accelerator>
+                    </MenuItem>
+                    <SeparatorMenuItem/>
                     <MenuItem text="Find..." onAction="#handleFind">
                         <accelerator><KeyCodeCombination alt="UP" code="F" control="UP" meta="UP" shift="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>
@@ -98,6 +109,16 @@
                     <CheckMenuItem fx:id="cloudAutoSyncMenuItem" text="Sync Workspaces Automatically" selected="true" onAction="#handleToggleCloudAutoSync"/>
                     <SeparatorMenuItem/>
                     <CheckMenuItem fx:id="autoRefreshMenuItem" text="Auto-refresh Workspaces (5 min)" selected="true" onAction="#handleToggleAutoRefresh"/>
+                    <SeparatorMenuItem/>
+                    <Menu text="Display Size">
+                        <RadioMenuItem fx:id="displayTabletItem" text="Tablet" onAction="#handleDisplaySize">
+                            <toggleGroup><ToggleGroup fx:id="displaySizeGroup"/></toggleGroup>
+                        </RadioMenuItem>
+                        <RadioMenuItem fx:id="displayRegularItem" text="Regular Display" onAction="#handleDisplaySize" toggleGroup="$displaySizeGroup"/>
+                        <RadioMenuItem fx:id="displayLargeItem" text="Extra Large Display" onAction="#handleDisplaySize" toggleGroup="$displaySizeGroup"/>
+                    </Menu>
+                    <CheckMenuItem fx:id="touchScrollMenuItem" text="Touch Mode (drag to scroll)"
+                                   onAction="#handleToggleTouchScroll"/>
                 </Menu>
                 <Menu text="Help">
                     <MenuItem text="About" onAction="#handleAbout"/>

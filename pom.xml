@@ -6,7 +6,7 @@
 
     <groupId>com.mdviewer</groupId>
     <artifactId>mdviewer</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <packaging>jar</packaging>
 
     <name>MDViewer</name>
@@ -19,7 +19,7 @@
         <javafx.version>21</javafx.version>
         <!--
             Appended to the distribution jar's name. Empty by default, so a plain
-            `mvn package` still produces mdviewer-1.0.0.jar for whoever is working on
+            `mvn package` still produces mdviewer-<version>.jar for whoever is working on
             it. A release profile sets both this and javafx.platform together - see
             the profiles at the end of this file.
         -->
@@ -139,7 +139,7 @@
             <!--
                 Standalone distribution: bundles JavaFX (including its native libraries),
                 commonmark, PlantUML and the mermaid build into one runnable jar, so
-                `java -jar target/mdviewer-1.0.0.jar` needs nothing but a JRE 21.
+                `java -jar target/mdviewer-<version>.jar` needs nothing but a JRE 21.
                 The bundled natives are platform specific, and which ones get bundled is
                 decided by javafx.platform - which defaults to the machine doing the build.
                 That default is how release 1.0.0 shipped a Windows-only jar: on Linux it

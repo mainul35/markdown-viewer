@@ -54,7 +54,11 @@ import com.mdviewer.ui.CropDialog;
 import com.mdviewer.ui.FindBar;
 import com.mdviewer.ui.MarkdownFiles;
 import com.mdviewer.ui.PathTreeItem;
+import com.mdviewer.ui.DisplaySize;
 import com.mdviewer.ui.PreviewToolbar;
+import com.mdviewer.ui.LongPress;
+import com.mdviewer.ui.VirtualKeyboard;
+import com.mdviewer.ui.TouchScroll;
 import com.mdviewer.ui.WelcomeView;
 import com.mdviewer.ui.WorkspaceView;
 
@@ -116,6 +120,21 @@ public class MainController {
     private MenuItem explorerMenuItem;
 
     @FXML
+    private javafx.scene.control.CheckMenuItem touchScrollMenuItem;
+
+    @FXML
+    private javafx.scene.control.MenuBar menuBar;
+
+    @FXML
+    private javafx.scene.control.RadioMenuItem displayTabletItem;
+
+    @FXML
+    private javafx.scene.control.RadioMenuItem displayRegularItem;
+
+    @FXML
+    private javafx.scene.control.RadioMenuItem displayLargeItem;
+
+    @FXML
     private MenuItem assistantMenuItem;
 
     private AiPanel aiPanel;
@@ -158,7 +177,7 @@ public class MainController {
     /** So the explorer is restored only if the welcome screen was what hid it. */
     private boolean explorerHiddenForWelcome;
 
-    private static final String APP_VERSION = "1.0.0";
+    private static final String APP_VERSION = "1.1.0";
 
     /**
      * Re-reads the workspace tree on a timer. The explorer caches directory listings, so a
@@ -234,6 +253,9 @@ public class MainController {
     /** Style class toggled on the scene root; see styles.css. */
     private static final String DARK_STYLE_CLASS = "dark-theme";
 
+    /** Past this the file tree is taking space the document needs more. */
+    private static final double MAX_EXPLORER_WIDTH = 240;
+
     /**
      * Tab ceilings. Past these the strips stop being scannable, which is the whole point
      * of grouping files by workspace; opening more is refused with a status-bar message
@@ -244,6 +266,28 @@ public class MainController {
 
     private boolean darkMode = false;
 
+    /** Drag to scroll instead of drag to select, for touchscreens. */
+    private final TouchScroll touchScroll = new TouchScroll();
+
+    /** Settings file shared with {@link TouchScroll}. */
+    private final com.mdviewer.ui.UiSettings uiSettings = new com.mdviewer.ui.UiSettings();
+
+    /** Asks the desktop's on-screen keyboard to appear; see {@link VirtualKeyboard}. */
+    private final VirtualKeyboard virtualKeyboard = new VirtualKeyboard(uiSettings);
+
+    /**
+     * Delays hiding the keyboard, so moving between two text fields does not flash it.
+     *
+     * <p>Focus leaves the editor before it arrives anywhere else, so a hide on focus lost
+     * and a show on focus gained would fire in that order every time - the keyboard would
+     * drop and come back for a click from the editor into the find bar.
+     */
+    private final javafx.animation.PauseTransition keyboardHide =
+            new javafx.animation.PauseTransition(javafx.util.Duration.millis(250));
+
+    /** How much room the interface gives itself. Chosen in Settings, not measured. */
+    private DisplaySize displaySize = DisplaySize.REGULAR;
+
     public enum EditorMode {
         RAW, SPLIT, FULL_PREVIEW
     }
@@ -252,6 +296,16 @@ public class MainController {
     public void initialize() {
         webView = new WebView();
         webView.setMinWidth(0);
+        touchScroll.install(webView);
+        LongPress.install(webView, touchScroll::isEnabled);
+        if (touchScrollMenuItem != null) {
+            touchScrollMenuItem.setSelected(touchScroll.isEnabled());
+        }
+        installKeyboardSummon();
+        displaySize = DisplaySize.load(uiSettings);
+        applyDisplaySize();
+        applyPreviewFontSize();
+        installResponsiveLayout();
 
         previewToolbar = new PreviewToolbar();
         previewToolbar.setOnAction(this::applyFormat);
@@ -280,6 +334,8 @@ public class MainController {
         accountBar.setActions(new AccountActions());
 
         fileTreePanel = new FileTreePanel();
+        fileTreePanel.setOpenOnSingleClick(touchScroll.isEnabled());
+        LongPress.install(fileTreePanel.getTreeView(), touchScroll::isEnabled);
         fileTreePanel.setOnFileActivated(path -> openFile(path.toFile()));
         fileTreePanel.setOnReveal(this::handleRevealInTree);
         fileTreePanel.setFileActions(new ExplorerFileActions());
@@ -571,6 +627,9 @@ public class MainController {
 
     private DocumentView createDocument(WorkspaceView workspace, Path path, String text) {
         DocumentView document = new DocumentView(path, "Untitled-" + (++untitledCounter));
+        touchScroll.install(document.getEditor());
+        installImagePaste(document);
+        LongPress.install(document.getEditor(), touchScroll::isEnabled);
 
         loadingDocument = true;
         document.getEditor().setText(text);
@@ -881,7 +940,10 @@ public class MainController {
         alert.initOwner(primaryStage);
         alert.setTitle("About MDViewer");
         alert.setHeaderText("MDViewer - Markdown Editor");
-        alert.setContentText("Version 1.0.0\nA professional desktop Markdown editor built with JavaFX.");
+        /* From the constant, not a second copy of the number. The welcome screen already
+           reads it from there, and two places to change is one place to forget. */
+        alert.setContentText("Version " + APP_VERSION
+                + "\nA professional desktop Markdown editor built with JavaFX.");
         alert.showAndWait();
     }
 
@@ -1659,6 +1721,33 @@ public class MainController {
         return mainSplit.getItems().contains(aiPanel);
     }
 
+    /**
+     * Where to put the divider so the assistant is wide enough to use.
+     *
+     * <p>The remembered position is a fraction, and a fraction that was comfortable on a
+     * wide window is a column of ellipses on a narrow one - four labelled buttons across
+     * 200px show "..." apiece. So the fraction is treated as a preference and a width in
+     * pixels as the requirement: whichever leaves more room wins.
+     *
+     * <p>The minimum grows with the display size, because the same panel holds larger type
+     * at tablet size and needs the room to show it. It is capped at half the window - an
+     * assistant that has crowded out the document it is answering about has stopped being
+     * useful.
+     */
+    private double assistantOpeningPosition() {
+        double width = mainSplit.getWidth();
+        if (width <= 0) {
+            return assistantDivider;
+        }
+        double wanted = switch (displaySize) {
+            case TABLET -> 460;
+            case LARGE -> 520;
+            case REGULAR -> 360;
+        };
+        double atMostHalf = Math.min(wanted, width / 2);
+        return Math.min(assistantDivider, 1 - atMostHalf / width);
+    }
+
     private void showAssistant(boolean visible) {
         if (visible == isAssistantVisible()) {
             return;
@@ -1668,8 +1757,9 @@ public class MainController {
             int divider = mainSplit.getItems().size() - 2;
             // Twice: a divider cannot be positioned until the new item has been laid out,
             // the same two-pass dance the split's own mode switching needs.
-            mainSplit.setDividerPosition(divider, assistantDivider);
-            Platform.runLater(() -> mainSplit.setDividerPosition(divider, assistantDivider));
+            double opened = assistantOpeningPosition();
+            mainSplit.setDividerPosition(divider, opened);
+            Platform.runLater(() -> mainSplit.setDividerPosition(divider, opened));
             /* Three columns is one too many. With the tree, the editor, the preview and
                the assistant all sharing the width, none of them is wide enough to work in
                - and the assistant is for reading about the document, which is what the
@@ -1706,6 +1796,170 @@ public class MainController {
     }
 
     /**
+     * Turns drag-to-scroll on or off.
+     *
+     * <p>A touchscreen that the system reports as an ordinary pointer is indistinguishable
+     * from a mouse, so the app cannot decide this for you: the same drag is a selection to
+     * one person and a scroll to another. The tick is remembered between runs.
+     */
+    @FXML
+    private void handleToggleTouchScroll() {
+        touchScroll.setEnabled(touchScrollMenuItem.isSelected());
+        if (fileTreePanel != null) {
+            fileTreePanel.setOpenOnSingleClick(touchScroll.isEnabled());
+        }
+    }
+
+    /**
+     * Grows every hit target while touch mode is on.
+     *
+     * <p>Shares the switch with drag-to-scroll because the two problems arrive together: a
+     * machine being driven by a finger also needs targets a finger can hit. Applied as a
+     * style class on the root so the rules live in the stylesheet with everything else,
+     * rather than as sizes set from code that the theme cannot then override.
+     */
+    /**
+     * Keeps the layout matched to how much width there actually is.
+     *
+     * <p>Watches the scene rather than the screen, so rotating a tablet or dragging the
+     * window narrower is noticed. The scene does not exist while FXML is being built, hence
+     * the wait for it to arrive.
+     */
+    private void installResponsiveLayout() {
+        if (rootPane == null) {
+            return;
+        }
+        if (primaryStage != null) {
+            /* Switching to another application leaves the window short and the space it
+               gave up empty, since the keyboard goes with the focus. */
+            primaryStage.focusedProperty().addListener((observable, was, inFront) -> {
+                if (!inFront && windowMovedForKeyboard) {
+                    makeRoomForKeyboard(false);
+                }
+            });
+        }
+        if (rootPane.getScene() != null) {
+            watchWidth(rootPane.getScene());
+        } else {
+            rootPane.sceneProperty().addListener((observable, had, scene) -> {
+                if (scene != null) {
+                    watchWidth(scene);
+                }
+            });
+        }
+    }
+
+    private void watchWidth(javafx.scene.Scene scene) {
+        // Menu stylesheets attach to the scene, which did not exist while FXML was built.
+        styleMenus();
+        applyWidth(scene.getWidth());
+        scene.widthProperty().addListener(
+                (observable, was, now) -> applyWidth(now.doubleValue()));
+    }
+
+    private void applyWidth(double width) {
+        if (width > 0) {
+            capExplorer(width);
+        }
+    }
+
+    /**
+     * Stops the file tree taking a third of a narrow window.
+     *
+     * <p>The divider is a fraction, so a sidebar that looks right at 1600px is half the
+     * document at 800. This only ever narrows it: a wide window is left alone, and so is a
+     * sidebar the reader has already dragged smaller than the cap.
+     */
+    private void capExplorer(double width) {
+        if (mainSplit == null || !isExplorerVisible() || mainSplit.getDividers().isEmpty()) {
+            return;
+        }
+        double cap = MAX_EXPLORER_WIDTH / width;
+        if (mainSplit.getDividerPositions()[0] > cap) {
+            mainSplit.setDividerPosition(0, cap);
+            explorerDivider = cap;
+        }
+    }
+
+    /**
+     * Applies the chosen display size, and ticks the menu item that matches it.
+     *
+     * <p>Regular adds no class at all. Styling the baseline would mean every rule in the
+     * stylesheet needing a counterpart, and a theme that forgets one silently stops
+     * applying at whichever size nobody tested.
+     */
+    private void applyDisplaySize() {
+        if (rootPane == null) {
+            return;
+        }
+        rootPane.getStyleClass().removeAll(DisplaySize.allStyleClasses());
+        String wanted = displaySize.styleClass();
+        if (wanted != null && !rootPane.getStyleClass().contains(wanted)) {
+            rootPane.getStyleClass().add(wanted);
+        }
+        for (javafx.stage.Window window : javafx.stage.Window.getWindows()) {
+            if (window != primaryStage) {
+                dressWindow(window);
+            }
+        }
+        if (displayTabletItem != null) {
+            displayTabletItem.setSelected(displaySize == DisplaySize.TABLET);
+            displayRegularItem.setSelected(displaySize == DisplaySize.REGULAR);
+            displayLargeItem.setSelected(displaySize == DisplaySize.LARGE);
+        }
+        styleMenus();
+    }
+
+    /**
+     * Sizes the menu popups, which the main stylesheet cannot reach on its own.
+     *
+     * <p>A menu popup is its own window. It inherits the scene's <em>stylesheets</em> - the
+     * recent workspaces rows in this application are styled from the main file and they
+     * live in a popup - but not the root's <em>style classes</em>. So a rule written as
+     * {@code .display-tablet .menu-item} can never match, while a plain {@code .menu-item}
+     * always will. That is why the first attempt at this silently did nothing.
+     *
+     * <p>The way to scope an unscopable rule is therefore to scope the file: one small
+     * stylesheet per size, added to the scene when that size is chosen and taken away when
+     * it is not.
+     */
+    private void styleMenus() {
+        if (rootPane == null || rootPane.getScene() == null) {
+            return;
+        }
+        var sheets = rootPane.getScene().getStylesheets();
+        sheets.removeAll(menuSheet("menus-tablet"), menuSheet("menus-large"));
+        String wanted = switch (displaySize) {
+            case TABLET -> menuSheet("menus-tablet");
+            case LARGE -> menuSheet("menus-large");
+            case REGULAR -> null;
+        };
+        if (wanted != null && !sheets.contains(wanted)) {
+            sheets.add(wanted);
+        }
+    }
+
+    private String menuSheet(String name) {
+        return MainController.class.getResource("/css/" + name + ".css").toExternalForm();
+    }
+
+    /** Settings > Display Size. */
+    @FXML
+    private void handleDisplaySize() {
+        if (displayTabletItem != null && displayTabletItem.isSelected()) {
+            displaySize = DisplaySize.TABLET;
+        } else if (displayLargeItem != null && displayLargeItem.isSelected()) {
+            displaySize = DisplaySize.LARGE;
+        } else {
+            displaySize = DisplaySize.REGULAR;
+        }
+        displaySize.save(uiSettings);
+        applyDisplaySize();
+        applyPreviewFontSize();
+        setTransientStatus("Display size: " + displaySize.label());
+    }
+
+    /**
      * Rebuilds the Recent Workspaces menu from the history file.
      *
      * <p>Folders that are already open are shown but disabled rather than hidden: a
@@ -1714,11 +1968,14 @@ public class MainController {
      */
     private void rebuildRecentWorkspaces() {
         recentWorkspacesMenu.getItems().clear();
+        // Items added below are new objects, so they carry none of the sizing applied
+        // earlier; styleMenus() runs again at the end of this method.
         List<Path> recent = workspaceHistory.list();
         if (recent.isEmpty()) {
             MenuItem empty = new MenuItem("No recent workspaces");
             empty.setDisable(true);
             recentWorkspacesMenu.getItems().add(empty);
+            styleMenus();
             return;
         }
         for (Path root : recent) {
@@ -1733,6 +1990,7 @@ public class MainController {
             setTransientStatus("Recent workspaces cleared.");
         });
         recentWorkspacesMenu.getItems().addAll(new SeparatorMenuItem(), clear);
+        styleMenus();
     }
 
     /**
@@ -2018,6 +2276,35 @@ public class MainController {
                     "window.__mdSetTheme(" + toJsStringLiteral(darkMode ? "dark" : "light") + ");");
         } catch (RuntimeException e) {
             // Preview page not in a usable state; the shell reload path re-applies it.
+        }
+        applyPreviewFontSize();
+    }
+
+    /**
+     * Scales the rendered document with the rest of the interface.
+     *
+     * <p>The preview is a web page, so none of the display size reached it - the chrome grew
+     * and the document it exists to show stayed where it was, which is the wrong way round.
+     * Its headings are in rem, so one number on the root element scales everything, and the
+     * body is relative now rather than a fixed 16px that ignored it.
+     *
+     * <p>Applied here, alongside the theme, because both have to be re-sent whenever the
+     * page is rebuilt - a preview that reloads and comes back at the wrong size is worse
+     * than one that was never scaled.
+     */
+    private void applyPreviewFontSize() {
+        if (!previewReady) {
+            return;
+        }
+        int size = switch (displaySize) {
+            case TABLET -> 19;
+            case LARGE -> 22;
+            case REGULAR -> 16;
+        };
+        try {
+            webView.getEngine().executeScript("window.__mdSetFontSize(" + size + ");");
+        } catch (RuntimeException pageNotReady) {
+            // Re-applied when the shell reloads.
         }
     }
 
@@ -2887,6 +3174,461 @@ public class MainController {
      * reference to a file elsewhere on this machine breaks the moment the folder is shared
      * or moved.
      */
+    /**
+     * Ctrl+V with a picture on the clipboard writes the picture, not nothing.
+     *
+     * <p>A TextArea pastes text. Given an image it finds no text flavour and inserts
+     * nothing at all - no error, no character, which reads as the paste key having failed.
+     * Taking a screenshot and putting it in a document is one of the main things a markdown
+     * editor is for, so the same thing that happens through <em>Insert image</em> happens
+     * here: the bytes are written into assets/ beside the document and a reference to them
+     * is inserted at the caret.
+     *
+     * <p>An event filter, so it runs before the control's own paste. Only images are taken;
+     * text falls through untouched, which is the common case and must stay ordinary.
+     *
+     * <p>This covers the keystroke, not the context menu's Paste item - that goes straight
+     * to the skin and cannot be intercepted here.
+     */
+    /** Scenes already being watched, so a window shown twice is not wired twice. */
+    private final java.util.Set<javafx.scene.Scene> watchedScenes =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
+    /**
+     * Brings the on-screen keyboard up whenever anything typeable takes focus.
+     *
+     * <p>Written against the scene rather than against a control. The first version wired
+     * the document's editor as each document opened, which worked there and nowhere else -
+     * the find bar, the assistant's question box, every field in every dialog stayed
+     * silent, and each would have needed remembering separately. Watching the focus owner
+     * covers all of them, including ones added later, because the question is not "is this
+     * the editor" but "can you type into whatever just took focus".
+     *
+     * <p>Every window gets its own scene, so dialogs are watched as they appear rather than
+     * only the main one.
+     */
+    private void installKeyboardSummon() {
+        for (javafx.stage.Window window : javafx.stage.Window.getWindows()) {
+            watchForTyping(window);
+        }
+        javafx.stage.Window.getWindows().addListener(
+                (javafx.collections.ListChangeListener<javafx.stage.Window>) change -> {
+                    while (change.next()) {
+                        change.getAddedSubList().forEach(this::watchForTyping);
+                    }
+                });
+    }
+
+    private void watchForTyping(javafx.stage.Window window) {
+        if (window.getScene() != null) {
+            watchScene(window.getScene());
+            dressWindow(window);
+        }
+        window.sceneProperty().addListener((observable, was, scene) -> {
+            if (scene != null) {
+                watchScene(scene);
+                dressWindow(window);
+            }
+        });
+    }
+
+    /**
+     * Gives a window the application's stylesheet and its display size.
+     *
+     * <p>A dialog is its own window with its own scene, so neither reaches it from the main
+     * one. Without the class it is the right theme at desktop sizes - small type and small
+     * buttons in front of an application that has neither, which is what a tablet showed.
+     *
+     * <p>Done as windows appear rather than at each call site, because dialogs are built in
+     * a dozen places here and one of them will always be the one nobody remembered.
+     */
+    private void dressWindow(javafx.stage.Window window) {
+        com.mdviewer.ui.WindowStyling.apply(window, appStylesheet(), displaySize.styleClass());
+    }
+
+    private String appStylesheet() {
+        return MainController.class.getResource("/css/styles.css").toExternalForm();
+    }
+
+    private void watchScene(javafx.scene.Scene scene) {
+        if (!watchedScenes.add(scene)) {
+            return;
+        }
+        scene.focusOwnerProperty().addListener((observable, lost, gained) -> {
+            if (!virtualKeyboard.isWanted()) {
+                return;
+            }
+            /*
+             * TextInputControl is the common parent of TextField, TextArea and
+             * PasswordField, and an editable ComboBox's editor is a TextField - so this one
+             * test covers every place in the application where typing is possible.
+             */
+            if (gained instanceof javafx.scene.control.TextInputControl) {
+                keyboardHide.stop();
+                virtualKeyboard.show();
+                /* Only the main window steps aside. A dialog is small, already centred,
+                   and moving it about while somebody is filling it in is worse than the
+                   keyboard overlapping its lower edge. */
+                if (primaryStage != null && scene == primaryStage.getScene()) {
+                    makeRoomForKeyboard(true);
+                }
+            } else {
+                keyboardHide.playFromStart();
+            }
+        });
+
+        /* Escape gives the window back without having to move the caret elsewhere. The
+           keyboard can also be dismissed by its own hide key, and nothing tells this
+           application when that happens. */
+        scene.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == javafx.scene.input.KeyCode.ESCAPE && windowMovedForKeyboard) {
+                virtualKeyboard.hide();
+                makeRoomForKeyboard(false);
+            }
+        });
+    }
+
+    /**
+     * Sets the window's height, restating the width so the change is not thrown away.
+     *
+     * <p>Setting only the height does nothing on GTK. JavaFX passes a width of zero to
+     * {@code gtk_window_resize}, which refuses the whole call - "assertion 'width > 0'
+     * failed" on the console, the height unchanged, and no exception anywhere. Measured on
+     * the tablet: setHeight(400) left an 842px window at 842, and the same call with the
+     * width restated to the value it already had resized it correctly.
+     *
+     * <p>Assigning a property the value it already holds looks like a line that does
+     * nothing, which is exactly why it needs the comment: it is what makes the next line
+     * work.
+     */
+    private void resizeHeight(double height) {
+        primaryStage.setWidth(primaryStage.getWidth());
+        primaryStage.setHeight(height);
+    }
+
+    /** Where the window was before it got out of the keyboard's way. */
+    private double windowY;
+    private double windowHeight;
+    private boolean windowWasMaximised;
+    private boolean windowMovedForKeyboard;
+
+    /**
+     * Shrinks the window so its bottom edge sits above the keyboard.
+     *
+     * <p>A compositor resizes a window when the application takes part in the input-method
+     * protocol. This one cannot - the same gap that meant the keyboard had to be summoned
+     * by hand - so the window has to move itself or be typed at through a keyboard sitting
+     * on top of it.
+     *
+     * <p>An earlier version padded the contents instead, which leaves the frame where it is
+     * and shrinks what is drawn inside it. That is wrong twice over: the window still
+     * covers the screen it is no longer using, and when the keyboard is not exactly where
+     * the padding assumed, the gap is visible as an empty band. Moving the window is what
+     * was actually wanted, and it is honest - the window really is smaller.
+     *
+     * <p>A maximised window ignores a height, so it is un-maximised first and put back
+     * afterwards. That is a visible step, and the alternative is a keyboard covering the
+     * document, which is worse.
+     */
+    private void makeRoomForKeyboard(boolean roomNeeded) {
+        if (primaryStage == null) {
+            return;
+        }
+        double fraction = virtualKeyboard.heightFraction();
+        if (fraction <= 0) {
+            return;
+        }
+        javafx.geometry.Rectangle2D screen = javafx.stage.Screen.getPrimary().getVisualBounds();
+
+        double keyboardTop = screen.getMaxY() - screen.getHeight() * fraction;
+
+        if (roomNeeded) {
+            /*
+             * Asked of the window rather than of a flag. The previous version returned
+             * early when it believed it had already moved the window, and that belief
+             * survives things it knows nothing about - the window being maximised or
+             * resized by hand while the flag was set. It was then convinced the window
+             * was clear of a keyboard sitting on top of it, and every later focus did
+             * nothing at all.
+             *
+             * A window's own bottom edge cannot drift out of step with the window.
+             */
+            if (primaryStage.getY() + primaryStage.getHeight() <= keyboardTop + 1) {
+                return;      // genuinely clear already
+            }
+            if (!windowMovedForKeyboard) {
+                /* Only the first move records where to go back to; a second would record
+                   the already-shortened window as the thing to restore. */
+                windowWasMaximised = primaryStage.isMaximized();
+                windowY = primaryStage.getY();
+                windowHeight = primaryStage.getHeight();
+            }
+            if (primaryStage.isMaximized()) {
+                /* A maximised window ignores a height, so it has to come out of that
+                   state first - and be put back afterwards. Visible, and better than a
+                   keyboard sitting on the document. */
+                primaryStage.setMaximized(false);
+            }
+            double[] fitted = VirtualKeyboard.fitAbove(screen.getMinY(), screen.getMaxY(),
+                    primaryStage.getY(), fraction);
+            if (fitted != null) {
+                primaryStage.setY(fitted[0]);
+                resizeHeight(fitted[1]);
+                windowMovedForKeyboard = true;
+            } else if (windowWasMaximised) {
+                primaryStage.setMaximized(true);   // nothing to do; leave it as it was
+            }
+        } else if (windowMovedForKeyboard) {
+            windowMovedForKeyboard = false;
+            primaryStage.setY(windowY);
+            resizeHeight(windowHeight);
+            if (windowWasMaximised) {
+                primaryStage.setMaximized(true);
+            }
+        }
+    }
+
+    private void installImagePaste(DocumentView document) {
+        javafx.scene.input.KeyCombination paste = new javafx.scene.input.KeyCodeCombination(
+                javafx.scene.input.KeyCode.V, javafx.scene.input.KeyCombination.SHORTCUT_DOWN);
+        document.getEditor().addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
+            if (paste.match(event) && pasteImage(document, false)) {
+                event.consume();
+            }
+        });
+    }
+
+    /**
+     * @return true when the clipboard held an image and this handled it - including the
+     *         cases where it could not, since falling through to a text paste after
+     *         refusing an image would put something unexpected in the document
+     */
+    /**
+     * Edit &gt; Paste Image.
+     *
+     * <p>The same work as Ctrl+V, reachable when the keystroke is not. A context menu's
+     * Paste goes straight to the control's skin and cannot be intercepted from here, and on
+     * a tablet the keystroke arrives from an on-screen keyboard that may or may not deliver
+     * it - so the one route that is always available is a menu item.
+     *
+     * <p>Asked explicitly, it answers explicitly: if there is no picture to paste it says
+     * what the clipboard does hold, in a dialog rather than the status bar. Somebody who
+     * has just chosen "Paste Image" is owed a reason, and a line in the status bar is easy
+     * to miss on a small screen.
+     */
+    @FXML
+    private void handlePasteImage() {
+        DocumentView document = activeDocument();
+        if (document == null) {
+            setTransientStatus("Open a document before pasting an image.");
+            return;
+        }
+        document.getEditor().requestFocus();
+        pasteImage(document, true);
+    }
+
+    /**
+     * @param loud whether to explain in a dialog when there is nothing to paste, rather
+     *             than falling through quietly to let an ordinary text paste happen
+     */
+    private boolean pasteImage(DocumentView document, boolean loud) {
+        Clipboard clipboard = Clipboard.getSystemClipboard();
+
+        /*
+         * Three shapes, because a screenshot tool decides which one you get and they are
+         * not interchangeable. Spectacle's "copy image" puts pixels on the clipboard;
+         * "copy location" and a file manager put a file; some tools offer only a file URI
+         * as text. All three mean "the user wants this picture in the document".
+         */
+        boolean hasImage = clipboard.hasImage();
+        Path pastedFile = firstImageFile(clipboard);
+
+        /*
+         * JavaFX and AWT reach the same X11 selection through different code, and on Linux
+         * they disagree: hasImage() regularly answers false for a screenshot AWT reads
+         * without complaint. Asked only after JavaFX has said no, so the ordinary path is
+         * untouched and this costs nothing when it is not needed.
+         */
+        byte[] viaAwt = hasImage || pastedFile != null
+                ? null
+                : com.mdviewer.ui.ClipboardImage.fromSystemClipboard();
+
+        /*
+         * A backstop for compositors that do not bridge pictures to X11. KDE does - a
+         * copied screenshot arrives on the X11 clipboard in forty formats, image/png among
+         * them - so on that desktop neither this nor the AWT read above is ever reached,
+         * and that is the intended shape: the ordinary path stays the ordinary path.
+         */
+        byte[] viaCommand = hasImage || pastedFile != null || viaAwt != null
+                ? null
+                : com.mdviewer.ui.ClipboardImage.fromCommand(clipboardImageCommand());
+
+        if (!hasImage && pastedFile == null && viaAwt == null && viaCommand == null) {
+            if (!loud && (clipboard.hasString() || clipboard.hasHtml())) {
+                return false;      // ordinary text: leave the paste alone
+            }
+            /*
+             * Nothing usable and nothing to type. Rather than the silence that made this
+             * look like a broken key, say what the clipboard actually holds - the answer
+             * is normally either "nothing" or a format worth adding here.
+             */
+            String formats = clipboard.getContentTypes().isEmpty()
+                    ? "nothing at all"
+                    : clipboard.getContentTypes().stream()
+                            .map(Object::toString)
+                            .reduce((a, b) -> a + ", " + b).orElse("nothing at all");
+            if (loud) {
+                /* Both views of the same clipboard, because they disagree often enough
+                   that knowing which one saw what is the whole diagnosis. */
+                String viaSystem = com.mdviewer.ui.ClipboardImage.systemClipboardFormats();
+                String command = clipboardImageCommand();
+                showAlert("No image to paste",
+                        "JavaFX sees: " + formats + ".\n"
+                        + "The system clipboard offers: "
+                        + (viaSystem.isEmpty() ? "nothing at all" : viaSystem) + ".\n\n"
+                        + (command.isBlank()
+                                ? "If you have just taken a screenshot, the tool may have "
+                                  + "copied its location rather than the picture."
+                                : "No picture reached this application. If this desktop "
+                                  + "does not share pictures with X11 programs, a helper "
+                                  + "can read the clipboard directly:\n\n"
+                                  + "    sudo apt install wl-clipboard\n\n"
+                                  + "This tried: " + command));
+            } else {
+                setTransientStatus("Nothing to paste. The clipboard holds: " + formats);
+            }
+            return true;
+        }
+
+        Path baseDir = document.getBaseDir();
+        if (baseDir == null) {
+            /*
+             * The image has to live somewhere, and it belongs beside the document rather
+             * than in a temporary folder that a moved file would lose. An unsaved document
+             * has no beside yet.
+             *
+             * This used to be a line in the status bar, which is how it stayed a mystery:
+             * pasting text worked, pasting a picture did nothing visible, and the sentence
+             * explaining why sat in eleven point grey at the bottom of the window. Ask
+             * instead, and then do the thing that was asked for.
+             */
+            if (!askToSaveBeforePasting(document)) {
+                return true;
+            }
+            baseDir = document.getBaseDir();
+            if (baseDir == null) {
+                return true;      // the save was cancelled or failed; it has said so
+            }
+        }
+
+        try {
+            Path assets = baseDir.resolve("assets");
+            Files.createDirectories(assets);
+            Path target;
+            if (hasImage || viaAwt != null || viaCommand != null) {
+                byte[] png = viaAwt != null ? viaAwt
+                        : viaCommand != null ? viaCommand
+                        : com.mdviewer.ui.ClipboardImage.png(clipboard.getImage());
+                if (png == null) {
+                    setTransientStatus("That image could not be read from the clipboard.");
+                    return true;
+                }
+                String stamp = java.time.LocalDateTime.now().format(
+                        java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
+                target = uniqueTarget(assets, "pasted-" + stamp + ".png");
+                Files.write(target, png);
+            } else {
+                target = uniqueTarget(assets, pastedFile.getFileName().toString());
+                Files.copy(pastedFile, target);
+            }
+
+            String alt = stripExtension(target.getFileName().toString());
+            String snippet = new ImageRef(alt, relativeAsset(document, target)).toMarkup();
+            TextArea editor = document.getEditor();
+            int caret = editor.getCaretPosition();
+            editor.insertText(caret, snippet);
+            editor.selectRange(caret + 2, caret + 2 + alt.length());
+            previewDebounce.stop();
+            updatePreview();
+            setTransientStatus("Pasted into assets/" + target.getFileName());
+        } catch (IOException e) {
+            showAlert("Error", "Could not save the pasted image: " + e.getMessage());
+        }
+        return true;
+    }
+
+    /**
+     * Offers to save an untitled document, so a pasted image has somewhere to go.
+     *
+     * @return whether the document now has a home on disk
+     */
+    private boolean askToSaveBeforePasting(DocumentView document) {
+        Alert ask = new Alert(Alert.AlertType.CONFIRMATION,
+                "This document has not been saved yet, so there is nowhere to put the "
+                + "image.\n\nSave it now, and the picture will be stored in an assets "
+                + "folder beside it.",
+                ButtonType.CANCEL, ButtonType.OK);
+        ask.setTitle("Save before pasting");
+        ask.setHeaderText("Save this document first?");
+        ask.initOwner(primaryStage);
+        ask.getDialogPane().getStylesheets().setAll(primaryStage.getScene().getStylesheets());
+        if (ask.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
+            return false;
+        }
+        handleSaveAs();
+        return document.getBaseDir() != null;
+    }
+
+    /**
+     * The command asked for the clipboard's picture when no Java API can see it.
+     *
+     * <p>Configurable in {@code ~/.mdviewer/ui.properties} for the same reason the
+     * on-screen keyboard's command is: the right answer differs by desktop, and a line of
+     * configuration beats a build. Empty switches it off.
+     */
+    private String clipboardImageCommand() {
+        String stored = uiSettings.get("clipboardImageCommand");
+        if (stored != null) {
+            String trimmed = stored.trim();
+            /* Empty means "unset", not "off" - see VirtualKeyboard for why that matters. */
+            if (trimmed.equalsIgnoreCase("off") || trimmed.equalsIgnoreCase("none")) {
+                return "";
+            }
+            if (!trimmed.isEmpty()) {
+                return trimmed;
+            }
+        }
+        return System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT)
+                .contains("linux") ? "wl-paste --type image/png" : "";
+    }
+
+    /** An image the clipboard is offering as a file, either directly or as a file: URI. */
+    private static Path firstImageFile(Clipboard clipboard) {
+        if (clipboard.hasFiles()) {
+            for (File file : clipboard.getFiles()) {
+                if (looksLikeAnImage(file.getName())) {
+                    return file.toPath();
+                }
+            }
+        }
+        String url = clipboard.hasUrl() ? clipboard.getUrl()
+                : clipboard.hasString() ? clipboard.getString() : null;
+        if (url != null && url.startsWith("file:") && looksLikeAnImage(url)) {
+            try {
+                return Path.of(java.net.URI.create(url.trim()));
+            } catch (RuntimeException notAPath) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private static boolean looksLikeAnImage(String name) {
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        return lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg")
+                || lower.endsWith(".gif") || lower.endsWith(".webp") || lower.endsWith(".bmp");
+    }
+
     private void insertImage(DocumentView document) {
         Path baseDir = document.getBaseDir();
         if (baseDir == null) {
@@ -3474,6 +4216,33 @@ public class MainController {
         }
 
         /** The Markdown a rendered block came from, for editing it in place. */
+        /**
+         * A block in the preview has been opened for editing.
+         *
+         * <p>The keyboard is summoned from the raw editor by watching its focus. There is
+         * no equivalent here: the thing taking focus is a textarea inside the page, which
+         * JavaFX cannot see - as far as it is concerned the WebView already had focus and
+         * nothing changed. So the page says so itself.
+         */
+        public void editingStarted() {
+            if (!virtualKeyboard.isWanted()) {
+                return;
+            }
+            javafx.application.Platform.runLater(() -> {
+                keyboardHide.stop();
+                virtualKeyboard.show();
+                makeRoomForKeyboard(true);
+            });
+        }
+
+        /** That block has been committed or abandoned. */
+        public void editingEnded() {
+            if (!virtualKeyboard.isWanted()) {
+                return;
+            }
+            javafx.application.Platform.runLater(keyboardHide::playFromStart);
+        }
+
         public String blockSource(int start, int end) {
             DocumentView document = activeDocument();
             if (document == null) {
@@ -3690,7 +4459,7 @@ public class MainController {
             body {
               margin:0; padding:40px 44px 120px;
               background:var(--paper); color:var(--ink);
-              font-family:var(--body); font-size:16px; line-height:1.68;
+              font-family:var(--body); font-size:1rem; line-height:1.68;
               -webkit-font-smoothing:antialiased; word-wrap:break-word;
             }
 
@@ -4096,6 +4865,13 @@ public class MainController {
         String css = previewCss();
 
         String js = """
+            /* The rendered document is a web page and followed none of the
+               application's display size. Headings are already in rem, so setting the
+               root size scales the whole document from one number - and body is now
+               relative too, rather than a fixed 16px that ignored it. */
+            window.__mdSetFontSize = function (px) {
+              document.documentElement.style.fontSize = px + 'px';
+            };
             window.__mdSetTheme = function (theme) {
               document.documentElement.setAttribute('data-theme', theme);
             };
@@ -4391,6 +5167,8 @@ public class MainController {
               cell.classList.add('mdv-cell-editing');
               window.__mdEditingCell = cell;
               cell.focus();
+              /* Same as a block: focus inside the page is invisible from outside it. */
+              if (window.mdvBridge) { window.mdvBridge.editingStarted(); }
               var range = document.createRange();
               range.selectNodeContents(cell);
               var sel = window.getSelection();
@@ -4400,6 +5178,7 @@ public class MainController {
 
             function mdEndCellEdit(cell, commit) {
               if (window.__mdEditingCell !== cell) { return; }
+              if (window.mdvBridge) { window.mdvBridge.editingEnded(); }
               window.__mdEditingCell = null;
               cell.removeAttribute('contenteditable');
               cell.classList.remove('mdv-cell-editing');
@@ -4561,10 +5340,14 @@ public class MainController {
 
               mdAutosize(area);
               area.focus();
+              /* The application cannot see focus inside the page, and an on-screen
+                 keyboard has to be asked for from outside it. */
+              if (window.mdvBridge) { window.mdvBridge.editingStarted(); }
               area.select();
             }
 
             function mdEndBlockEdit(block, commit) {
+              if (window.mdvBridge) { window.mdvBridge.editingEnded(); }
               if (window.__mdEditingBlock !== block) { return; }
               window.__mdEditingBlock = null;
               block.classList.remove('mdv-block-editing');

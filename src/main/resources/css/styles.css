@@ -1095,3 +1095,569 @@
     -fx-background-color: -mdv-accent;
     -fx-background-radius: 2;
 }
+
+/* ==========================================================================
+   Display size
+
+   Three sizes, chosen in Settings > Display Size. One ladder, not a set of
+   special cases: Regular is a desktop at arm's length, Tablet is a screen held
+   in the hands, Extra Large is either a very dense panel or eyes that would
+   rather not squint.
+
+   The first version of this got the direction wrong. It treated a tablet as a
+   small screen and tightened everything to fit more in - which is right for a
+   cramped window on a desktop and exactly backwards for a finger. Fitting more
+   on screen is worthless if you cannot hit any of it. Every size below scales
+   in one direction only: up.
+
+   Two things learned by measuring rather than reading:
+
+   -fx-cell-size is not a JavaFX property. Tree row heights come from
+   -fx-fixed-cell-size on the *view*, not from anything on the cell, and the
+   invalid form is discarded in silence - which is why an earlier version of
+   these rules changed nothing at all and looked correct doing it.
+
+   Font size on .root cascades to every control that has not set its own, so one
+   declaration does most of the work. The per-control rules below exist only for
+   the ones that pin a size of their own and would otherwise ignore it.
+
+   Menus are absent on purpose: a menu popup is its own window and is not a
+   descendant of the scene root, so no rule keyed on a root class can reach it.
+   ========================================================================== */
+
+/* --- Tablet: held in the hands, driven by a finger ----------------------- */
+
+.display-tablet {
+    -fx-font-size: 16px;
+}
+
+.display-tablet .tool-bar {
+    -fx-padding: 6 8 6 8;
+}
+
+/* 44px is the floor every platform's guidance settles on, and it is a floor
+   rather than a preference: below it the miss rate climbs sharply, and a missed
+   tap on a formatting toolbar is an edit you did not ask for. */
+.display-tablet .tool-bar .button,
+.display-tablet .tool-bar .toggle-button,
+.display-tablet .tool-bar .menu-button {
+    -fx-min-height: 44;
+    -fx-min-width: 44;
+}
+
+.display-tablet .mode-button {
+    -fx-min-height: 44;
+    -fx-padding: 8 16 8 16;
+    -fx-font-size: 16px;
+}
+
+.display-tablet .tree-view {
+    -fx-fixed-cell-size: -1;
+}
+
+/* The disclosure arrow is drawn for a 24px row and pinned to the top of a taller
+   one - on a 44px row it sat 24px above centre, which is what made the folder
+   arrows look unrelated to their names. Centring it is the fix; scaling it is
+   because an arrow sized for a mouse is a poor target for a finger. */
+.display-tablet .tree-cell > .tree-disclosure-node {
+    -fx-alignment: center;
+    -fx-padding: 8 6 8 6;
+}
+
+.display-tablet .tree-cell > .tree-disclosure-node > .arrow {
+    -fx-scale-x: 1.25;
+    -fx-scale-y: 1.25;
+}
+
+.display-tablet .tree-cell {
+    -fx-font-size: 18px;
+    -fx-padding: 10 6 10 6;
+}
+
+.display-tablet .tab-pane > .tab-header-area > .headers-region > .tab {
+    -fx-padding: 12 16 12 16;
+}
+
+.display-tablet .tab-pane > .tab-header-area > .headers-region > .tab .tab-label {
+    -fx-font-size: 16px;
+}
+
+/* The close cross is the smallest target in the window and the one with the
+   worst consequence for a miss. */
+.display-tablet .tab-pane > .tab-header-area > .headers-region > .tab > .tab-container > .tab-close-button {
+    -fx-scale-x: 1.5;
+    -fx-scale-y: 1.5;
+    -fx-translate-x: 5;
+}
+
+.display-tablet .status-bar {
+    -fx-font-size: 14px;
+    -fx-padding: 7 12 7 12;
+}
+
+.display-tablet .workspace-title {
+    -fx-font-size: 13px;
+    -fx-padding: 8 8 8 8;
+}
+
+.display-tablet .tool-stripe-button {
+    -fx-min-height: 48;
+    -fx-min-width: 40;
+}
+
+.display-tablet .find-icon-button {
+    -fx-min-height: 40;
+    -fx-min-width: 40;
+}
+
+.display-tablet .scroll-bar:vertical,
+.display-tablet .scroll-bar:horizontal {
+    -fx-pref-width: 16;
+    -fx-pref-height: 16;
+}
+
+/* --- Extra large: a dense panel, or eyes that would rather not squint ---- */
+
+.display-large {
+    -fx-font-size: 19px;
+}
+
+.display-large .tool-bar {
+    -fx-padding: 8 12 8 12;
+}
+
+.display-large .tool-bar .button,
+.display-large .tool-bar .toggle-button,
+.display-large .tool-bar .menu-button {
+    -fx-min-height: 52;
+    -fx-min-width: 52;
+}
+
+.display-large .mode-button {
+    -fx-min-height: 52;
+    -fx-padding: 10 20 10 20;
+    -fx-font-size: 19px;
+}
+
+.display-large .tree-view {
+    -fx-fixed-cell-size: -1;
+}
+
+/* The disclosure arrow is drawn for a 24px row and pinned to the top of a taller
+   one - on a 44px row it sat 24px above centre, which is what made the folder
+   arrows look unrelated to their names. Centring it is the fix; scaling it is
+   because an arrow sized for a mouse is a poor target for a finger. */
+.display-large .tree-cell > .tree-disclosure-node {
+    -fx-alignment: center;
+    -fx-padding: 9 8 9 8;
+}
+
+.display-large .tree-cell > .tree-disclosure-node > .arrow {
+    -fx-scale-x: 1.4;
+    -fx-scale-y: 1.4;
+}
+
+.display-large .tree-cell {
+    -fx-font-size: 21px;
+    -fx-padding: 13 8 13 8;
+}
+
+.display-large .tab-pane > .tab-header-area > .headers-region > .tab {
+    -fx-padding: 14 18 14 18;
+}
+
+.display-large .tab-pane > .tab-header-area > .headers-region > .tab .tab-label {
+    -fx-font-size: 18px;
+}
+
+.display-large .tab-pane > .tab-header-area > .headers-region > .tab > .tab-container > .tab-close-button {
+    -fx-scale-x: 1.7;
+    -fx-scale-y: 1.7;
+    -fx-translate-x: 6;
+}
+
+.display-large .status-bar {
+    -fx-font-size: 16px;
+    -fx-padding: 8 16 8 16;
+}
+
+.display-large .workspace-title {
+    -fx-font-size: 15px;
+    -fx-padding: 10 10 10 10;
+}
+
+.display-large .tool-stripe-button {
+    -fx-min-height: 56;
+    -fx-min-width: 46;
+}
+
+.display-large .find-icon-button {
+    -fx-min-height: 46;
+    -fx-min-width: 46;
+}
+
+.display-large .scroll-bar:vertical,
+.display-large .scroll-bar:horizontal {
+    -fx-pref-width: 18;
+    -fx-pref-height: 18;
+}
+
+/* --- The welcome screen, at each size ------------------------------------
+
+   Every class on this screen pins its own -fx-font-size, so the size on .root
+   never reaches any of it - which is why the first screen of the application
+   stayed at desktop sizes while everything behind it grew. Each one has to be
+   named.
+
+   The link rows also get a minimum height. They are the first thing anybody
+   taps, they sit in the middle of an otherwise empty card, and a hyperlink is
+   only as tall as its text.
+   -------------------------------------------------------------------------- */
+
+.display-tablet .welcome-card {
+    -fx-padding: 34 36 32 36;
+}
+
+.display-tablet .welcome-title {
+    -fx-font-size: 34px;
+}
+
+.display-tablet .welcome-subtitle {
+    -fx-font-size: 16px;
+}
+
+.display-tablet .welcome-section {
+    -fx-font-size: 13px;
+}
+
+.display-tablet .welcome-action,
+.display-tablet .welcome-recent-name {
+    -fx-font-size: 19px;
+    -fx-min-height: 44;
+    -fx-padding: 6 0 6 0;
+}
+
+.display-tablet .welcome-shortcut,
+.display-tablet .welcome-recent-path {
+    -fx-font-size: 14px;
+}
+
+.display-large .welcome-card {
+    -fx-padding: 38 40 36 40;
+}
+
+.display-large .welcome-title {
+    -fx-font-size: 38px;
+}
+
+.display-large .welcome-subtitle {
+    -fx-font-size: 18px;
+}
+
+.display-large .welcome-section {
+    -fx-font-size: 15px;
+}
+
+.display-large .welcome-action,
+.display-large .welcome-recent-name {
+    -fx-font-size: 23px;
+    -fx-min-height: 48;
+    -fx-padding: 8 0 8 0;
+}
+
+.display-large .welcome-shortcut,
+.display-large .welcome-recent-path {
+    -fx-font-size: 17px;
+}
+
+
+/* --- The raw editor, and a caret you can find ----------------------------
+
+   The editor pins its own font, so the size on .root does not reach it either.
+
+   The caret gets a colour and a second pixel. At 13.5px monospace on a bright
+   tablet screen a one-pixel hairline in the text colour is genuinely hard to
+   locate, and losing the caret in a document is worse than small text: you can
+   read small text, but you cannot type where you cannot see.
+   -------------------------------------------------------------------------- */
+
+.display-tablet .markdown-editor {
+    -fx-font-size: 18px;
+}
+
+.display-large .markdown-editor {
+    -fx-font-size: 21px;
+}
+
+.display-tablet .markdown-editor .caret,
+.display-large .markdown-editor .caret {
+    -fx-stroke: -mdv-accent;
+    -fx-stroke-width: 2;
+}
+
+/* The menu bar itself is in the scene and can be styled here. Its popups are
+   separate windows and cannot - those are sized from code; see
+   MainController.styleMenus. */
+
+.display-tablet .menu-bar {
+    -fx-font-size: 17px;
+    -fx-padding: 4 2 4 2;
+}
+
+.display-tablet .menu-bar > .container > .menu-button {
+    -fx-padding: 8 12 8 12;
+}
+
+.display-large .menu-bar {
+    -fx-font-size: 20px;
+    -fx-padding: 6 2 6 2;
+}
+
+.display-large .menu-bar > .container > .menu-button {
+    -fx-padding: 10 14 10 14;
+}
+
+/* --- Toolbar at each size ------------------------------------------------
+
+   The buttons were already 44px, and the icons inside them were not. A bigger
+   button with the same small glyph is a bigger place to tap and no easier to
+   read, which is half the job.
+
+   The icons are drawn shapes rather than a font, so they do not follow
+   -fx-font-size the way the lettered buttons do. Scaling the graphic is what
+   moves them, and the stroke is thickened with it - a 1.5px line scaled up stays
+   1.5px on screen and looks spindly next to type that grew.
+   -------------------------------------------------------------------------- */
+
+/* .tool-bar .button does not match here: the formatting toolbar is an HBox, not a
+   ToolBar, and its buttons carry .toolbar-button. An earlier rule aimed at the
+   first selector was styling nothing at all. */
+.display-tablet .toolbar-button {
+    -fx-font-size: 15px;
+    -fx-padding: 6 9 6 9;
+    -fx-min-height: 44;
+}
+
+.display-tablet .toolbar-heading { -fx-font-size: 14px; }
+.display-tablet .toolbar-width { -fx-font-size: 13px; }
+.display-tablet .toolbar-icon-button { -fx-min-width: 44; }
+
+.display-tablet .toolbar-icon {
+    -fx-scale-x: 1.35;
+    -fx-scale-y: 1.35;
+}
+
+.display-tablet .toolbar-icon-stroke {
+    -fx-stroke-width: 1.8;
+}
+
+.display-large .toolbar-button {
+    -fx-font-size: 18px;
+    -fx-padding: 8 11 8 11;
+    -fx-min-height: 52;
+}
+
+.display-large .toolbar-heading { -fx-font-size: 17px; }
+.display-large .toolbar-width { -fx-font-size: 15px; }
+.display-large .toolbar-icon-button { -fx-min-width: 52; }
+
+.display-large .toolbar-icon {
+    -fx-scale-x: 1.6;
+    -fx-scale-y: 1.6;
+}
+
+.display-large .toolbar-icon-stroke {
+    -fx-stroke-width: 2;
+}
+
+/* --- Split dividers at each size -----------------------------------------
+
+   Two pixels is right for a mouse, which snaps to a divider from either side,
+   and useless for a finger: there is no snapping, and the finger covers the
+   divider it is aiming at. Widening it is the whole fix - the grab area of a
+   divider is its padding, so this is both what you see and what you can hit.
+
+   Wider than the 44px used elsewhere would be absurd for a line, so these are
+   sized to be findable rather than to meet that floor: a divider is a long
+   target, and only its width is in short supply.
+   -------------------------------------------------------------------------- */
+
+.display-tablet .split-pane > .split-pane-divider {
+    -fx-padding: 0 9 0 9;
+}
+
+.display-large .split-pane > .split-pane-divider {
+    -fx-padding: 0 11 0 11;
+}
+
+/* A visible line down the middle of a wide divider, so it still reads as an
+   edge rather than as a gap somebody forgot to fill. */
+.display-tablet .split-pane > .split-pane-divider > .vertical-grabber,
+.display-large .split-pane > .split-pane-divider > .vertical-grabber,
+.display-tablet .split-pane > .split-pane-divider > .horizontal-grabber,
+.display-large .split-pane > .split-pane-divider > .horizontal-grabber {
+    -fx-background-color: -mdv-text-muted;
+    -fx-background-insets: 0;
+    -fx-background-radius: 2;
+    -fx-pref-width: 3;
+    -fx-pref-height: 26;
+    -fx-opacity: 0.55;
+}
+
+/* A divider that answers when you touch it.
+ *
+ * A wide divider is a target you can hit and still says nothing about what it is
+ * for. On a desktop the cursor changes to a resize arrow and that is the whole
+ * signal; a finger has no cursor, so the divider itself has to be the feedback -
+ * it colours under the finger, which is the moment somebody needs to know that
+ * holding on and moving will do something.
+ *
+ * Hover is included for the mouse, where it costs nothing and gives the same
+ * signal a moment earlier.
+ */
+
+.split-pane > .split-pane-divider:hover {
+    -fx-background-color: -mdv-accent-soft;
+}
+
+.split-pane > .split-pane-divider:pressed {
+    -fx-background-color: -mdv-accent;
+}
+
+.split-pane > .split-pane-divider:pressed > .vertical-grabber,
+.split-pane > .split-pane-divider:pressed > .horizontal-grabber {
+    -fx-background-color: white;
+    -fx-opacity: 0.9;
+}
+
+/* The grip grows a little under the finger as well - a colour change alone is
+   easy to miss when a fingertip is covering most of what changed. */
+.display-tablet .split-pane > .split-pane-divider:pressed > .vertical-grabber,
+.display-large .split-pane > .split-pane-divider:pressed > .vertical-grabber {
+    -fx-pref-width: 4;
+    -fx-pref-height: 34;
+}
+
+/* --- The assistant's buttons ---------------------------------------------
+
+   Four labelled buttons across a narrow panel ellipsise to "..." apiece, which
+   is worse than no label: it takes the space and says nothing. At the sizes
+   meant for a finger they show their symbol instead, with the words kept as the
+   tooltip, so the meaning is still reachable.
+   -------------------------------------------------------------------------- */
+
+.ai-icon {
+    -fx-opacity: 0.9;
+}
+
+.display-tablet .ai-buttons .ai-button,
+.display-large .ai-buttons .ai-button {
+    -fx-content-display: graphic-only;
+    -fx-min-width: 44;
+    -fx-min-height: 44;
+}
+
+.display-large .ai-buttons .ai-button {
+    -fx-min-width: 52;
+    -fx-min-height: 52;
+}
+
+.display-tablet .ai-buttons .ai-icon,
+.display-large .ai-buttons .ai-icon {
+    -fx-scale-x: 1.3;
+    -fx-scale-y: 1.3;
+}
+
+/* --- Dialogs at each size ------------------------------------------------
+
+   A dialog is its own window, so it takes the size class from WindowStyling
+   rather than from the main root. Everything below is scoped to .dialog-pane so
+   that a blanket ".button" rule does not also inflate the toolbar's icon buttons,
+   which set their own sizes for their own reasons.
+
+   The buttons get a width as well as a height. OK and Cancel side by side are the
+   two most-tapped targets in the application and the easiest pair to confuse a
+   finger between.
+   -------------------------------------------------------------------------- */
+
+.display-tablet.dialog-pane ,
+.display-tablet .dialog-pane {
+    -fx-font-size: 16px;
+}
+
+.display-tablet.dialog-pane .label,
+.display-tablet .dialog-pane .label,
+.display-tablet.dialog-pane .check-box,
+.display-tablet .dialog-pane .check-box,
+.display-tablet.dialog-pane .hyperlink ,
+.display-tablet .dialog-pane .hyperlink {
+    -fx-font-size: 16px;
+}
+
+/* Height from padding, because neither a minimum nor a preferred size reaches
+   here: a dialog's buttons live in a ButtonBar whose skin sets their sizes in
+   code, and code beats a stylesheet. -fx-min-height: 44 measured 37, and
+   -fx-pref-height: 44 measured 37 as well. Padding is the one lever that works,
+   so the numbers below are chosen to add up to the target rather than to state
+   it. */
+.display-tablet.dialog-pane .button ,
+.display-tablet .dialog-pane .button {
+    -fx-font-size: 16px;
+    -fx-padding: 12 20 12 20;
+}
+
+.display-tablet.dialog-pane .text-field,
+.display-tablet .dialog-pane .text-field,
+.display-tablet.dialog-pane .password-field,
+.display-tablet .dialog-pane .password-field,
+.display-tablet.dialog-pane .text-area,
+.display-tablet .dialog-pane .text-area,
+.display-tablet.dialog-pane .combo-box ,
+.display-tablet .dialog-pane .combo-box {
+    -fx-font-size: 16px;
+    -fx-min-height: 44;
+}
+
+.display-tablet.dialog-pane .check-box > .box ,
+.display-tablet .dialog-pane .check-box > .box {
+    -fx-scale-x: 1.3;
+    -fx-scale-y: 1.3;
+}
+
+.display-large.dialog-pane ,
+.display-large .dialog-pane {
+    -fx-font-size: 19px;
+}
+
+.display-large.dialog-pane .label,
+.display-large .dialog-pane .label,
+.display-large.dialog-pane .check-box,
+.display-large .dialog-pane .check-box,
+.display-large.dialog-pane .hyperlink ,
+.display-large .dialog-pane .hyperlink {
+    -fx-font-size: 19px;
+}
+
+.display-large.dialog-pane .button ,
+.display-large .dialog-pane .button {
+    -fx-font-size: 19px;
+    -fx-padding: 14 24 14 24;
+}
+
+.display-large.dialog-pane .text-field,
+.display-large .dialog-pane .text-field,
+.display-large.dialog-pane .password-field,
+.display-large .dialog-pane .password-field,
+.display-large.dialog-pane .text-area,
+.display-large .dialog-pane .text-area,
+.display-large.dialog-pane .combo-box ,
+.display-large .dialog-pane .combo-box {
+    -fx-font-size: 19px;
+    -fx-min-height: 52;
+}
+
+.display-large.dialog-pane .check-box > .box ,
+.display-large .dialog-pane .check-box > .box {
+    -fx-scale-x: 1.5;
+    -fx-scale-y: 1.5;
+}
