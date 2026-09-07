@@ -38,12 +38,12 @@
     -->
     <distributionManagement>
         <repository>
-            <id>github</id>
+            <id>github-mdviewer</id>
             <name>GitHub Packages - mainul35/markdown-viewer</name>
             <url>https://maven.pkg.github.com/mainul35/markdown-viewer</url>
         </repository>
         <snapshotRepository>
-            <id>github</id>
+            <id>github-mdviewer</id>
             <name>GitHub Packages - mainul35/markdown-viewer</name>
             <url>https://maven.pkg.github.com/mainul35/markdown-viewer</url>
         </snapshotRepository>
