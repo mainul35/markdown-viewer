@@ -6,7 +6,7 @@
 
     <groupId>com.mdviewer</groupId>
     <artifactId>mdviewer</artifactId>
-    <version>1.1.0</version>
+    <version>1.1.1</version>
     <packaging>jar</packaging>
 
     <name>MDViewer</name>
@@ -158,58 +158,6 @@
                     </archive>
                 </configuration>
             </plugin>
-            <!--
-                Standalone distribution: bundles JavaFX (including its native libraries),
-                commonmark, PlantUML and the mermaid build into one runnable jar, so
-                `java -jar target/mdviewer-<version>.jar` needs nothing but a JRE 21.
-                The bundled natives are platform specific, and which ones get bundled is
-                decided by javafx.platform - which defaults to the machine doing the build.
-                That default is how release 1.0.0 shipped a Windows-only jar: on Linux it
-                failed with "Error initializing QuantumRenderer: no suitable pipeline found",
-                which names graphics pipelines and not the actual cause. Release builds must
-                pass -P<platform> so the choice is made on purpose rather than by accident.
-            -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.5.1</version>
-                <executions>
-                    <execution>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>shade</goal>
-                        </goals>
-                        <configuration>
-                            <createDependencyReducedPom>false</createDependencyReducedPom>
-                            <finalName>mdviewer-${project.version}${dist.suffix}</finalName>
-                            <shadedArtifactAttached>false</shadedArtifactAttached>
-                            <transformers>
-                                <transformer
-                                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.mdviewer.Launcher</mainClass>
-                                </transformer>
-                                <!-- JavaFX and PlantUML both look services up via ServiceLoader. -->
-                                <transformer
-                                        implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
-                            </transformers>
-                            <filters>
-                                <filter>
-                                    <artifact>*:*</artifact>
-                                    <excludes>
-                                        <!-- Module descriptors are meaningless on the classpath and collide. -->
-                                        <exclude>module-info.class</exclude>
-                                        <exclude>META-INF/versions/*/module-info.class</exclude>
-                                        <!-- Signatures break once jars are merged. -->
-                                        <exclude>META-INF/*.SF</exclude>
-                                        <exclude>META-INF/*.DSA</exclude>
-                                        <exclude>META-INF/*.RSA</exclude>
-                                    </excludes>
-                                </filter>
-                            </filters>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
     </build>
 
@@ -235,6 +183,85 @@
         is what you want while working on it and is never what you want for a release.
     -->
     <profiles>
+        <!--
+            The runnable, standalone jar - and only when it is asked for.
+
+            This used to run on every build, which meant `mvn install` replaced the main
+            artifact with a 60 MB uber-jar carrying JavaFX and one platform's native
+            libraries. That is the right thing to hand a user and the wrong thing to
+            publish: smIDE depends on this as a library, and a library that bundles
+            JavaFX gives every consumer a second copy of it - built for whatever machine
+            happened to run the deploy.
+
+            So the default build now produces an ordinary jar of com/mdviewer classes,
+            with the dependencies declared in the pom for consumers to resolve for their
+            own platform, and the distribution is a profile:
+
+                mvn clean package -DskipTests -Djavafx.platform=win
+                mvn clean package -DskipTests -Pdist          (this machine's platform)
+        -->
+        <profile>
+            <id>dist</id>
+            <activation>
+                <property><name>javafx.platform</name></property>
+            </activation>
+            <build>
+                <plugins>
+                <!--
+                    Standalone distribution: bundles JavaFX (including its native libraries),
+                    commonmark, PlantUML and the mermaid build into one runnable jar, so
+                    `java -jar target/mdviewer-<version>.jar` needs nothing but a JRE 21.
+                    The bundled natives are platform specific, and which ones get bundled is
+                    decided by javafx.platform - which defaults to the machine doing the build.
+                    That default is how release 1.0.0 shipped a Windows-only jar: on Linux it
+                    failed with "Error initializing QuantumRenderer: no suitable pipeline found",
+                    which names graphics pipelines and not the actual cause. Release builds must
+                    pass -P<platform> so the choice is made on purpose rather than by accident.
+                -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-shade-plugin</artifactId>
+                    <version>3.5.1</version>
+                    <executions>
+                        <execution>
+                            <phase>package</phase>
+                            <goals>
+                                <goal>shade</goal>
+                            </goals>
+                            <configuration>
+                                <createDependencyReducedPom>false</createDependencyReducedPom>
+                                <finalName>mdviewer-${project.version}${dist.suffix}</finalName>
+                                <shadedArtifactAttached>false</shadedArtifactAttached>
+                                <transformers>
+                                    <transformer
+                                            implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                        <mainClass>com.mdviewer.Launcher</mainClass>
+                                    </transformer>
+                                    <!-- JavaFX and PlantUML both look services up via ServiceLoader. -->
+                                    <transformer
+                                            implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                </transformers>
+                                <filters>
+                                    <filter>
+                                        <artifact>*:*</artifact>
+                                        <excludes>
+                                            <!-- Module descriptors are meaningless on the classpath and collide. -->
+                                            <exclude>module-info.class</exclude>
+                                            <exclude>META-INF/versions/*/module-info.class</exclude>
+                                            <!-- Signatures break once jars are merged. -->
+                                            <exclude>META-INF/*.SF</exclude>
+                                            <exclude>META-INF/*.DSA</exclude>
+                                            <exclude>META-INF/*.RSA</exclude>
+                                        </excludes>
+                                    </filter>
+                                </filters>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+                </plugins>
+            </build>
+        </profile>
         <profile>
             <id>win</id>
             <activation>
