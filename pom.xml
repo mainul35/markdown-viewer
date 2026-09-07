@@ -27,6 +27,28 @@
         <junit.version>5.11.4</junit.version>
     </properties>
 
+    <!--
+        Published to GitHub Packages so that smIDE, which embeds this renderer and this
+        chat client, can resolve it without anybody cloning and building this repository
+        first.
+
+        GitHub's Maven registry authenticates reads as well as writes, so consuming it
+        needs a token with read:packages in ~/.m2/settings.xml. That is the trade this
+        makes: a token instead of a clone.
+    -->
+    <distributionManagement>
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages - mainul35/markdown-viewer</name>
+            <url>https://maven.pkg.github.com/mainul35/markdown-viewer</url>
+        </repository>
+        <snapshotRepository>
+            <id>github</id>
+            <name>GitHub Packages - mainul35/markdown-viewer</name>
+            <url>https://maven.pkg.github.com/mainul35/markdown-viewer</url>
+        </snapshotRepository>
+    </distributionManagement>
+
     <dependencies>
         <dependency>
             <groupId>org.openjfx</groupId>
