@@ -43,10 +43,10 @@ public class SignIn {
     /**
      * The port the redirect comes back to.
      *
-     * <p>Fixed rather than chosen at random, because the authorization server stores the
-     * redirect URI it will accept and cannot be told a new one per attempt. RFC 8252 lets a
-     * server accept any port on the loopback address for exactly this reason; vsd-auth-server
-     * matches exactly, so both sides name the same number.
+     * <p>Fixed, and registered on the authorization server as part of the redirect URI. RFC
+     * 8252 lets a server accept any port on the loopback address for an app without a secret,
+     * and vsd-auth-server does for this one; a fixed port keeps the address the same as the
+     * one registered all the same, which is what any server accepts.
      */
     public static final int PORT = 8137;
 

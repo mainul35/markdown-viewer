@@ -13,13 +13,22 @@ import java.util.function.Consumer;
  *
  * <p>One instance, shared by everything that talks to the cloud, so a refresh done for one
  * request is a refresh the next one benefits from rather than a second round trip.
+ *
+ * <p><b>One refresh at a time.</b> Auto-sync, diagram uploads and the draft link each call the
+ * cloud on their own thread, and an access token lasts minutes, so two of them reach an
+ * expired token together. The server rotates refresh tokens: it honours a refresh token once,
+ * and refuses it after that. Two refreshes with the same token therefore meant one success and
+ * one refusal - and a refusal signs the reader out, so the reader was signed out by their own
+ * sync. Refreshing under a lock makes the second caller wait, and then refresh with the token
+ * the first one received.
  */
 public final class CloudSession implements CloudClient.Authorization {
 
     private final SignIn signIn;
     private final TokenStore store;
 
-    private Tokens tokens;
+    /* Written only under the lock; volatile so the readers that do not take it see the latest. */
+    private volatile Tokens tokens;
 
     public CloudSession(String issuer, String clientId) {
         this(new SignIn(issuer, clientId), new TokenStore());
@@ -57,7 +66,7 @@ public final class CloudSession implements CloudClient.Authorization {
         return tokens.missingScopes("workspace.read", "workspace.write", "settings.sync");
     }
 
-    public void signOut() throws IOException {
+    public synchronized void signOut() throws IOException {
         tokens = null;
         store.clear();
     }
@@ -72,7 +81,7 @@ public final class CloudSession implements CloudClient.Authorization {
      * in when it opens rather than after the reader notices it is not.
      */
     @Override
-    public String token() throws IOException {
+    public synchronized String token() throws IOException {
         if (tokens != null && !tokens.expired()) {
             return tokens.accessToken();
         }
@@ -87,7 +96,7 @@ public final class CloudSession implements CloudClient.Authorization {
      * where guessing costs the reader their sync.
      */
     @Override
-    public String renew() throws IOException {
+    public synchronized String renew() throws IOException {
         String refreshToken = tokens != null && tokens.canRefresh()
                 ? tokens.refreshToken()
                 : store.read();
@@ -139,8 +148,11 @@ public final class CloudSession implements CloudClient.Authorization {
      * <p>Used by the interactive sign-in, where the reader is watching and a failure to
      * store is worth telling them about. The refresh path deliberately does not use this:
      * there, a storage failure must not be mistaken for a rejected session.
+     *
+     * <p>Locked, but the browser sign-in that produced {@code fresh} was not: it can take
+     * minutes, and holding the lock that long would stall every sync waiting for a token.
      */
-    private void remember(Tokens fresh) throws IOException {
+    private synchronized void remember(Tokens fresh) throws IOException {
         this.tokens = fresh;
         if (fresh.canRefresh()) {
             store.write(fresh.refreshToken());

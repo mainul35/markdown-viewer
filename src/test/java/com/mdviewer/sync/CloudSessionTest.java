@@ -45,6 +45,80 @@ class CloudSessionTest {
         }
     }
 
+    /**
+     * A server that rotates refresh tokens as vsd-auth-server does: each one is honoured once,
+     * then refused. Slow enough that two threads arriving together are both inside it.
+     */
+    private static class RotatingSignIn extends SignIn {
+        private String current;
+        private int issued;
+
+        RotatingSignIn(String first) {
+            super("http://unused.invalid", "test-client");
+            this.current = first;
+        }
+
+        @Override
+        public Tokens refresh(String refreshToken) throws IOException {
+            String expected;
+            synchronized (this) {
+                expected = current;
+            }
+            try {
+                Thread.sleep(150);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            synchronized (this) {
+                if (!refreshToken.equals(expected) || !refreshToken.equals(current)) {
+                    throw new IOException("the authorization server refused the token request (400): invalid_grant");
+                }
+                issued++;
+                current = "refresh-" + issued;
+                return new Tokens("access-" + issued, current, Instant.now().plusSeconds(300), "workspace.read");
+            }
+        }
+
+        synchronized String current() {
+            return current;
+        }
+    }
+
+    /**
+     * Auto-sync and a diagram upload, on their own threads, both meeting an expired token.
+     * With rotation, two refreshes with the same token are one success and one refusal, and
+     * the refusal signed the reader out.
+     */
+    @Test
+    @DisplayName("two threads refreshing at once both get a token, and the reader stays signed in")
+    void concurrentRefreshesStaySignedIn(@TempDir Path directory) throws Exception {
+        TokenStore store = storeAt(directory.resolve("credentials"));
+        store.write("stored-refresh");
+        RotatingSignIn server = new RotatingSignIn("stored-refresh");
+        CloudSession session = sessionWith(server, store);
+
+        java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ExecutorService threads = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.List<java.util.concurrent.Future<String>> answers = new java.util.ArrayList<>();
+            for (int i = 0; i < 2; i++) {
+                answers.add(threads.submit(() -> {
+                    go.await();
+                    return session.renew();
+                }));
+            }
+            go.countDown();
+            for (var answer : answers) {
+                assertTrue(answer.get(10, java.util.concurrent.TimeUnit.SECONDS).startsWith("access-"),
+                        "each caller gets a token, neither is told to sign in");
+            }
+        } finally {
+            threads.shutdownNow();
+        }
+        assertEquals(server.current(), store.read(), "the stored refresh token is the one the server will honour next");
+        assertTrue(session.hasStoredSignIn());
+    }
+
     private TokenStore storeAt(Path file) throws Exception {
         var constructor = TokenStore.class.getDeclaredConstructor(Path.class);
         constructor.setAccessible(true);
