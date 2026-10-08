@@ -9,6 +9,7 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ComboBox;
@@ -258,7 +259,10 @@ public final class AiPanel extends VBox {
         hostLabel.setMaxWidth(Double.MAX_VALUE);
 
         transcriptView.getStyleClass().add("ai-transcript");
+        // WebKit's own menu offers Copy and little else, and it was switched off here with
+        // nothing put back - so right-clicking an answer did nothing at all.
         transcriptView.setContextMenuEnabled(false);
+        installTranscriptContextMenu();
         VBox.setVgrow(transcriptView, Priority.ALWAYS);
         initTranscript();
 
@@ -1414,6 +1418,71 @@ public final class AiPanel extends VBox {
     }
 
     /**
+     * The right-click menu for the transcript.
+     *
+     * <p>Copying only. The transcript is a rendered record of what was said, with nothing
+     * behind it to write to, so Cut and Paste would be buttons that cannot do anything -
+     * the input box below has both, from its own built-in menu.
+     *
+     * <p>Each item is enabled from what is actually under the pointer when the menu opens,
+     * so "Copy" is not offered with no selection and "Copy this message" is not offered in
+     * the gap between two.
+     */
+    private void installTranscriptContextMenu() {
+        MenuItem copySelection = new MenuItem("Copy");
+        MenuItem copyMessage = new MenuItem("Copy this message");
+        MenuItem copyAll = new MenuItem("Copy whole conversation");
+        MenuItem selectAll = new MenuItem("Select all");
+
+        ContextMenu menu = new ContextMenu(copySelection, copyMessage,
+                new SeparatorMenuItem(), copyAll, selectAll);
+
+        transcriptView.setOnContextMenuRequested(event -> {
+            String selection = pageString("window.__aiSelection()");
+            int turn = pageInt("window.__aiTurnAt(" + (int) event.getX()
+                    + ", " + (int) event.getY() + ")");
+
+            copySelection.setDisable(selection.isBlank());
+            copySelection.setOnAction(e -> copyToClipboard(selection));
+
+            copyMessage.setDisable(turn < 0 || turn >= turns.size());
+            copyMessage.setOnAction(e -> {
+                if (turn >= 0 && turn < turns.size()) {
+                    copyToClipboard(turns.get(turn).text());
+                }
+            });
+
+            copyAll.setDisable(turns.isEmpty());
+            copyAll.setOnAction(e -> copyToClipboard(wholeTranscript()));
+
+            selectAll.setDisable(turns.isEmpty());
+            selectAll.setOnAction(e -> runOnPage("window.__aiSelectAll()"));
+
+            menu.show(transcriptView, event.getScreenX(), event.getScreenY());
+            event.consume();
+        });
+    }
+
+    private String pageString(String script) {
+        Object value = runOnPage(script);
+        return value == null ? "" : value.toString();
+    }
+
+    private int pageInt(String script) {
+        Object value = runOnPage(script);
+        return value instanceof Number number ? number.intValue() : -1;
+    }
+
+    private Object runOnPage(String script) {
+        try {
+            return transcriptView.getEngine().executeScript(script);
+        } catch (RuntimeException pageNotReady) {
+            // The shell reloads on theme changes; the next right-click asks the new one.
+            return null;
+        }
+    }
+
+    /**
      * Copying, called from the page.
      *
      * <p>Public, and public methods on it, because that is the only shape a WebView will
@@ -1499,6 +1568,30 @@ public final class AiPanel extends VBox {
             window.__aiTheme = function (theme) {
               document.documentElement.setAttribute('data-theme', theme);
             };
+            /* What the right-click menu needs to know about the page. Asked at the moment
+               the menu opens rather than tracked as the pointer moves: a context menu is a
+               rare event, and a mousemove listener on a streaming transcript is not. */
+            window.__aiSelection = function () { return String(window.getSelection()); };
+            window.__aiSelectAll = function () {
+              var range = document.createRange();
+              range.selectNodeContents(document.body);
+              var selection = window.getSelection();
+              selection.removeAllRanges();
+              selection.addRange(range);
+            };
+            /* Which message sits under the pointer, or -1. Walks up from the element at the
+               point, so clicking the text, the heading or the padding of a message all name
+               the same message. */
+            window.__aiTurnAt = function (x, y) {
+              var node = document.elementFromPoint(x, y);
+              while (node && node !== document.body) {
+                if (node.hasAttribute && node.hasAttribute('data-turn')) {
+                  return parseInt(node.getAttribute('data-turn'), 10);
+                }
+                node = node.parentNode;
+              }
+              return -1;
+            };
             """;
         return "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>"
                 + MainController.previewCss() + overrides + "</style><script>" + js
@@ -1517,7 +1610,9 @@ public final class AiPanel extends VBox {
         }
         for (int i = 0; i < turns.size(); i++) {
             Turn turn = turns.get(i);
-            html.append("<div class=\"ai-turn ai-").append(turn.kind()).append("\">")
+            // data-turn is how the right-click menu works out which message was clicked.
+            html.append("<div class=\"ai-turn ai-").append(turn.kind())
+                    .append("\" data-turn=\"").append(i).append("\">")
                     .append("<div class=\"ai-who\">").append(escape(turn.who()))
                     .append("<button class=\"ai-copy\" onclick=\"aiBridge.copy(").append(i)
                     .append(")\">copy</button></div>");
