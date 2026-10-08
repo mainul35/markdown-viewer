@@ -161,7 +161,7 @@
         <HBox fx:id="statusBar" spacing="20" styleClass="status-bar">
             <Label fx:id="statusLabel" text="File: Untitled | Encoding: N/A"/>
             <Label fx:id="wordCountLabel" text="Words: 0"/>
-            <Label fx:id="modeLabel" text="Mode: SPLIT" HBox.hgrow="ALWAYS"/>
+            <Label fx:id="modeLabel" text="Mode: FULL PREVIEW" HBox.hgrow="ALWAYS"/>
         </HBox>
     </bottom>
 </BorderPane>

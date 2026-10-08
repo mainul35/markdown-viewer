@@ -197,7 +197,12 @@ public class MainController {
 
     private Stage primaryStage;
     private HostServices hostServices;
-    private EditorMode currentMode = EditorMode.SPLIT;
+    /**
+     * Reading is what the app is opened for; editing is the deliberate act. Starting in
+     * Full Preview means a document opens as the page it renders to, and the editor appears
+     * when somebody asks for it rather than taking half the window on the chance they will.
+     */
+    private EditorMode currentMode = EditorMode.FULL_PREVIEW;
 
     private FileTreePanel fileTreePanel;
     private FindBar findBar;
@@ -437,7 +442,10 @@ public class MainController {
            takes them out of the negotiation, and the editor area absorbs all of it. */
         workspaceTabs.setMinHeight(Region.USE_PREF_SIZE);
         workspaceTabs.setMaxHeight(Region.USE_PREF_SIZE);
-        VBox rightSide = new VBox(workspaceTabs, editorSplit);
+        /* The find bar sits above the split rather than inside the editor column, because
+           Full Preview does not mount that column - and a find bar that disappears with the
+           editor is why Ctrl+F used to drag the window back into Split to show itself. */
+        VBox rightSide = new VBox(workspaceTabs, findBar, editorSplit);
         VBox.setVgrow(editorSplit, Priority.ALWAYS);
         rightSide.setMinHeight(0);
         editorSplit.setMinHeight(0);
@@ -2338,6 +2346,7 @@ public class MainController {
         DocumentView document = activeDocument();
         if (document == null) {
             editorSplit.getItems().clear();
+            findBar.setTarget(null);
             if (currentMode != EditorMode.RAW) {
                 previewDebounce.stop();
                 updatePreview();
@@ -2364,6 +2373,9 @@ public class MainController {
             }
         }
 
+        // The pane the find bar searches has just changed under it.
+        pointFindBarAtVisiblePane();
+
         // Content may have changed while RAW mode suppressed preview updates.
         if (currentMode != EditorMode.RAW) {
             previewDebounce.stop();
@@ -2373,9 +2385,65 @@ public class MainController {
 
     /** Rebuilds the editor column for the active document and re-points the find bar. */
     private void mountEditorPane(DocumentView document) {
-        editorPane.getChildren().setAll(findBar, document.getEditor());
+        editorPane.getChildren().setAll(document.getEditor());
         VBox.setVgrow(document.getEditor(), Priority.ALWAYS);
         findBar.setTarget(document.getEditor());
+    }
+
+    /**
+     * Points the find bar at whichever of the two is actually on screen.
+     *
+     * <p>In Full Preview the editor is not mounted, so searching it would scroll and select
+     * text nobody can see. The rendered page is what the reader is looking at, so that is
+     * what gets searched - and because it is a different medium, Replace is not offered
+     * there: there is nothing in a rendered page to write back to.
+     */
+    private void pointFindBarAtVisiblePane() {
+        if (currentMode == EditorMode.FULL_PREVIEW) {
+            findBar.searchPreview(new PreviewSearch());
+            return;
+        }
+        DocumentView document = activeDocument();
+        findBar.setTarget(document == null ? null : document.getEditor());
+    }
+
+    /**
+     * Find over the rendered preview, handed to the find bar in Full Preview.
+     *
+     * <p>Leans on the engine's own {@code window.find}, which selects the match, scrolls it
+     * into view and steps through hits in document order - all of it already correct for
+     * text split across elements, which a hand-rolled DOM walk gets wrong on exactly the
+     * headings and inline code that Markdown produces most.
+     */
+    private final class PreviewSearch implements FindBar.PreviewTarget {
+
+        @Override
+        public boolean find(String query, boolean matchCase, boolean backwards) {
+            return Boolean.TRUE.equals(callPreview(
+                    "window.__mdFind(" + toJsStringLiteral(query) + ", " + matchCase
+                            + ", " + backwards + ")"));
+        }
+
+        @Override
+        public int count(String query, boolean matchCase) {
+            Object value = callPreview(
+                    "window.__mdFindCount(" + toJsStringLiteral(query) + ", " + matchCase + ")");
+            return value instanceof Number number ? number.intValue() : 0;
+        }
+
+        @Override
+        public void clear() {
+            callPreview("window.__mdFindClear()");
+        }
+
+        private Object callPreview(String script) {
+            try {
+                return webView.getEngine().executeScript(script);
+            } catch (RuntimeException pageNotReady) {
+                // Mid-reload the shell is gone; the next keystroke searches the new one.
+                return null;
+            }
+        }
     }
 
     // -------------------------------------------------------------------- find
@@ -2475,15 +2543,22 @@ public class MainController {
         });
     }
 
-    /** Find needs a visible editor, so Full Preview drops back to Split first. */
+    /**
+     * Opens the find bar against whatever is on screen.
+     *
+     * <p>Find no longer leaves Full Preview: the bar lives above the split and searches the
+     * rendered page there. <em>Replace</em> still does, because it writes to the Markdown
+     * source, and changing a document the reader cannot see is not something to do quietly.
+     */
     private void openFindBar(boolean withReplace) {
         if (activeDocument() == null) {
             setTransientStatus("Open a document before searching.");
             return;
         }
-        if (currentMode == EditorMode.FULL_PREVIEW) {
+        if (withReplace && currentMode == EditorMode.FULL_PREVIEW) {
             currentMode = EditorMode.SPLIT;
             updateLayout();
+            setTransientStatus("Replace needs the editor, so this is Split view.");
         }
         findBar.show(withReplace);
     }
@@ -4895,6 +4970,28 @@ public class MainController {
             window.__mdKeepScroll = function (y) {
               if (!window.__mdScrolled) { window.__mdScrollTo(y); }
             };
+            /* Find over the rendered page, for Full Preview. window.find does the hard
+               parts already - matching across element boundaries, stepping in document
+               order, scrolling the hit into view - and it leaves the DOM alone, so none of
+               the table, image or code-block handlers that key off the markup are
+               disturbed by a search. */
+            window.__mdFind = function (q, caseSensitive, backwards) {
+              if (!q) { window.getSelection().removeAllRanges(); return false; }
+              return window.find(q, !!caseSensitive, !!backwards, true, false, false, false);
+            };
+            /* Counted off innerText rather than the markup, so the total matches what a
+               reader can actually see: tag names and attributes are not findable text. */
+            window.__mdFindCount = function (q, caseSensitive) {
+              if (!q) { return 0; }
+              var hay = document.body.innerText || '';
+              var needle = q;
+              if (!caseSensitive) { hay = hay.toLowerCase(); needle = needle.toLowerCase(); }
+              var n = 0;
+              var at = hay.indexOf(needle);
+              while (at >= 0) { n++; at = hay.indexOf(needle, at + needle.length); }
+              return n;
+            };
+            window.__mdFindClear = function () { window.getSelection().removeAllRanges(); };
             window.__mdRunMermaid = function () {
               if (!window.mermaid) { return; }
               try {
