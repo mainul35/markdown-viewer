@@ -17,14 +17,35 @@ import javafx.scene.layout.VBox;
 import java.util.Locale;
 
 /**
- * Find and replace over the raw Markdown editor.
+ * Find and replace over whichever view of the document is on screen.
  *
- * <p>Operates on whichever {@link TextArea} is currently attached, so it follows the active
- * document rather than owning one. Matching is plain text, not regex: Markdown is full of
- * characters that are regex metacharacters, and typing a literal bracket or asterisk into a
- * search box should find that character.
+ * <p>Two targets, never both: the raw Markdown {@link TextArea} in Raw and Split, or the
+ * rendered page in Full Preview. It follows the active document rather than owning one.
+ * Matching is plain text, not regex: Markdown is full of characters that are regex
+ * metacharacters, and typing a literal bracket or asterisk into a search box should find
+ * that character.
+ *
+ * <p>Replace exists only against the editor. A rendered page has nothing to write back to.
  */
 public final class FindBar extends VBox {
+
+    /**
+     * The rendered preview, searched through the web engine rather than as Java text.
+     *
+     * <p>Deliberately not a {@code String} of the preview's text: the engine knows where a
+     * match sits on the page and can scroll to it, which a copy of the text could not.
+     */
+    public interface PreviewTarget {
+
+        /** Moves to the next match, wrapping. True when one was found. */
+        boolean find(String query, boolean matchCase, boolean backwards);
+
+        /** How many times the query appears in the visible text. */
+        int count(String query, boolean matchCase);
+
+        /** Drops the highlight, for when the bar closes or the query empties. */
+        void clear();
+    }
 
     private final TextField findField = new TextField();
     private final TextField replaceField = new TextField();
@@ -33,6 +54,7 @@ public final class FindBar extends VBox {
     private final HBox replaceRow;
 
     private TextArea target;
+    private PreviewTarget preview;
     private Runnable onClose = () -> { };
 
     /**
@@ -54,10 +76,7 @@ public final class FindBar extends VBox {
         findField.setPromptText("Find");
         findField.getStyleClass().add("find-field");
         HBox.setHgrow(findField, Priority.ALWAYS);
-        findField.textProperty().addListener((o, a, b) -> {
-            updateMatchCount();
-            findFrom(0, true, false); // Re-search from the top as the query is typed.
-        });
+        findField.textProperty().addListener((o, a, b) -> restartSearch());
         findField.addEventFilter(KeyEvent.KEY_PRESSED, this::onFieldKey);
 
         replaceField.setPromptText("Replace with");
@@ -67,10 +86,7 @@ public final class FindBar extends VBox {
 
         matchCase.setTooltip(new Tooltip("Match case"));
         matchCase.getStyleClass().add("find-toggle");
-        matchCase.setOnAction(e -> {
-            updateMatchCount();
-            findFrom(0, true, false);
-        });
+        matchCase.setOnAction(e -> restartSearch());
 
         matchLabel.getStyleClass().add("find-count");
         matchLabel.setMinWidth(90);
@@ -129,13 +145,61 @@ public final class FindBar extends VBox {
         this.onClose = onClose == null ? () -> { } : onClose;
     }
 
-    /** Points the bar at the editor of the active document. */
+    /** Points the bar at the editor of the active document, for Raw and Split. */
     public void setTarget(TextArea target) {
         // The old editor keeps the class otherwise, and stays loud after a tab switch.
         markSearching(this.target, false);
         this.target = target;
+        this.preview = null;
         markSearching(target, isVisible());
+        // Only the count: re-running the search here would move the caret on every tab
+        // switch and every layout pass, which is not something the user asked for.
         updateMatchCount();
+    }
+
+    /**
+     * Points the bar at the rendered page, for Full Preview.
+     *
+     * <p>Replace folds away with it: it writes to the Markdown source, which is not what is
+     * being searched here, and offering a button that silently edits an invisible document
+     * would be worse than not offering it.
+     */
+    public void searchPreview(PreviewTarget preview) {
+        markSearching(this.target, false);
+        this.target = null;
+        this.preview = preview;
+        if (preview != null && replaceRow.isVisible()) {
+            replaceRow.setVisible(false);
+            replaceRow.setManaged(false);
+        }
+        restartSearch();
+    }
+
+    /** True when the bar is searching the rendered page rather than the editor. */
+    private boolean searchingPreview() {
+        return preview != null;
+    }
+
+    /**
+     * Re-runs the search from the start: the query, the case rule or the pane just changed.
+     *
+     * <p>Guarded on visibility, so pointing the bar at a different pane while it is closed
+     * only recounts - it does not move anybody's selection behind a bar they cannot see.
+     */
+    private void restartSearch() {
+        if (searchingPreview()) {
+            preview.clear();
+            String needle = findField.getText();
+            if (isVisible() && needle != null && !needle.isEmpty()) {
+                preview.find(needle, matchCase.isSelected(), false);
+            }
+            updateMatchCount();
+            return;
+        }
+        updateMatchCount();
+        if (isVisible()) {
+            findFrom(0, true, false);
+        }
     }
 
     private static void markSearching(TextArea editor, boolean searching) {
@@ -161,8 +225,9 @@ public final class FindBar extends VBox {
      * selecting a word and hitting Ctrl+F should search for that word.
      */
     public void show(boolean withReplace) {
-        replaceRow.setVisible(withReplace);
-        replaceRow.setManaged(withReplace);
+        boolean replace = withReplace && !searchingPreview();
+        replaceRow.setVisible(replace);
+        replaceRow.setManaged(replace);
         setVisible(true);
         setManaged(true);
         markSearching(target, true);
@@ -182,6 +247,10 @@ public final class FindBar extends VBox {
         setVisible(false);
         setManaged(false);
         markSearching(target, false);
+        if (searchingPreview()) {
+            // Otherwise the last hit stays selected on the page after the bar is gone.
+            preview.clear();
+        }
         if (target != null) {
             target.requestFocus();
         }
@@ -201,7 +270,15 @@ public final class FindBar extends VBox {
     /** Moves to the next or previous match relative to the caret, wrapping around. */
     public void findNext(boolean forward) {
         String needle = findField.getText();
-        if (target == null || needle == null || needle.isEmpty()) {
+        if (needle == null || needle.isEmpty()) {
+            return;
+        }
+        if (searchingPreview()) {
+            preview.find(needle, matchCase.isSelected(), !forward);
+            updateMatchCount();
+            return;
+        }
+        if (target == null) {
             return;
         }
         int from = forward
@@ -237,6 +314,15 @@ public final class FindBar extends VBox {
         String needle = findField.getText();
         if (needle == null || needle.isEmpty()) {
             matchLabel.setText("");
+            return;
+        }
+        if (searchingPreview()) {
+            /* A total, not "3 of 9": the engine moves the selection without saying which
+               hit it landed on, and a position invented here would be wrong as soon as the
+               search wrapped. */
+            int total = preview.count(needle, matchCase.isSelected());
+            matchLabel.setText(total == 0 ? "No results"
+                    : total + (total == 1 ? " match" : " matches"));
             return;
         }
         String text = normalise(haystack());
